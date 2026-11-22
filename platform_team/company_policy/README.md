@@ -1,0 +1,16 @@
+# 전사 정책
+
+허브의 모든 정책이 들어가는 policy engine 하나(`<prefix>_pe`)를 만든다. 두 게이트웨이가 이 engine을 함께 쓰고 `ENFORCE`로 따른다. 정책은 Cedar로 쓴다. 개발팀의 공유 도구 permit(`dev_access`), 호스팅 심사가 주는 permit(도구, 요청), 플랫폼팀이 거는 전사 정책(가드레일, 차단)이 모두 이 engine에 있다.
+
+## 개념도에서의 위치
+
+⑫ "전사 정책 설정, 이상 에이전트 차단"이다. 플랫폼팀이 이 engine에 정책을 넣으면 두 게이트웨이가 바로 따른다. ④ "에이전트에 도구 권한 부여"와 ⑥ "요청 허용"의 permit도 여기에 들어간다.
+
+## 파일
+
+| 파일 | 역할 |
+|---|---|
+| `terraform/` | policy engine `<prefix>_pe`. 내보내는 값은 `policy_engine_id`, `policy_engine_arn`. |
+| `cedar_statements.py` | 템플릿에 값을 채워 Cedar 문장을 만든다(도구 permit, 요청 permit, 가드레일 정책). |
+| `policy_templates/` | Cedar 문장의 템플릿. `<account>` 같은 자리에 값을 채운다. Python과 Terraform이 같은 파일을 읽는다. |
+| `policy_engine.py` | 정책을 만들고(`ensure_policy`), 지우고(`drop_policy`), 목록을 읽는다(`list_policies`). 같은 이름의 정책이 있으면 그대로 둔다. |

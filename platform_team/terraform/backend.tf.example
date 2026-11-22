@@ -1,0 +1,15 @@
+# The state file stays local (terraform.tfstate here, ignored by git) unless you copy this file to backend.tf.
+# A shared S3 backend lets several people run the same hub. Create the bucket first; it is not part of the hub.
+#
+#   cp platform_team/terraform/backend.tf.example platform_team/terraform/backend.tf
+#   terraform -chdir=platform_team/terraform init -migrate-state
+
+terraform {
+  backend "s3" {
+    bucket       = "<state-bucket>"
+    key          = "agent-hosting-hub/terraform.tfstate"
+    region       = "us-west-2"
+    use_lockfile = true
+    encrypt      = true
+  }
+}

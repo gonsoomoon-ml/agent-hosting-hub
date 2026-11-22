@@ -10,6 +10,7 @@
 
 | 파일 | 역할 |
 |---|---|
+| `terraform/` | Lambda `<prefix>-tools`, 그 역할 `<prefix>-tools-lambda-role`, 로그 그룹. 코드는 허브의 코드 묶음 `build/platform_team.zip`(`make package`가 만든다)이다. 내보내는 값은 `lambda_arn`. |
 | `tool_handler.py` | Lambda 진입점. 도구 이름(`<Target>___<tool>`)을 읽어 알맞은 도구를 실행한다. 표준 라이브러리만 쓰고 상태를 저장하지 않는다. |
 | `tool_data.py` | 합성 검사 건, 부품, 시험 결과. |
 | `tool_schema.py` | 게이트웨이에 등록할 도구 스키마(`TARGETS`)와 승인된 공유 읽기 도구(`SHARED_READ`). |

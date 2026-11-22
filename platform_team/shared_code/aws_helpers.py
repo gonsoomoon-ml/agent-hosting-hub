@@ -53,6 +53,17 @@ def items(resp: dict) -> list:
     return next((v for v in resp.values() if isinstance(v, list)), [])
 
 
+def all_items(call, **kwargs) -> list:
+    """Every item of a List* call, page by page (nextToken)."""
+    out, token = [], None
+    while True:
+        resp = call(**kwargs, **({"nextToken": token} if token else {}))
+        out += items(resp)
+        token = resp.get("nextToken")
+        if not token:
+            return out
+
+
 def already_exists(err: ClientError) -> bool:
     """A step that runs again keeps what it made before."""
     e = err.response["Error"]
