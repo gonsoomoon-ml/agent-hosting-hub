@@ -16,3 +16,10 @@ def test_names_match_the_design():
 def test_prefix_comes_from_env(monkeypatch):
     monkeypatch.setenv("DEMO_PREFIX", "hubx")
     assert Settings.from_env().tool_gateway == "hubx-tools"
+
+def test_the_runtime_arn_of_an_agent_is_one_exact_form():          # final review M-2: Entry and the cleanup use it
+    import re
+    s, arn = Settings(), "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-eHcqNQ7n5v"
+    assert re.fullmatch(s.runtime_arn_pattern("quality_agent", "111122223333"), arn)
+    assert re.fullmatch(s.runtime_id_pattern("quality_agent"), arn.rsplit("/", 1)[1])
+    assert not re.fullmatch(s.runtime_arn_pattern("quality", "111122223333"), arn)

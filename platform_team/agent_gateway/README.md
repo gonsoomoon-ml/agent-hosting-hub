@@ -11,4 +11,4 @@
 | 파일 | 역할 |
 |---|---|
 | `terraform/` | 게이트웨이와 그 역할 `<prefix>-agents-role`(Runtime 호출, interceptor Lambda 호출, policy engine, `bedrock:InvokeGuardrailChecks`). 내보내는 값은 `gateway_id`, `gateway_arn`, `gateway_url`, `role_arn`. |
-| `gateway_targets.py` | 에이전트의 Runtime을 target으로 붙이고(`ensure_runtime_target`), 게이트웨이를 이름으로 찾고(`find_gateway`), target 목록을 읽는다(`targets`). |
+| `gateway_targets.py` | 에이전트의 Runtime을 target으로 붙이고(`ensure_runtime_target`), 게이트웨이를 이름으로 찾고(`find_gateway`), target 목록을 읽는다(`targets`). 같은 이름의 target이 이미 있으면 그 target이 같은 Runtime을 가리킬 때만 그대로 쓴다. 다른 Runtime을 가리키면 바꾸지 않고 오류를 낸다. |

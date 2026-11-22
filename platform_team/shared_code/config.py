@@ -9,6 +9,8 @@ DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 MAX_PROJECT_NAME = 23  # AgentCore CLI limit
 _PROJECT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+# A Runtime's ID is its name, "-" and 10 letters or digits AgentCore adds (as in the runs: <name>-eHcqNQ7n5v).
+RUNTIME_ID_TAIL = r"-[A-Za-z0-9]{10}"
 
 
 def _camel(snake: str) -> str:
@@ -79,6 +81,14 @@ class Settings:
 
     def runtime_name(self, agent: str) -> str:
         return f"{self.project_name(agent)}_default_agent"
+
+    def runtime_id_pattern(self, agent: str) -> str:
+        """The ID of this agent's Runtime, as a pattern to full-match: <runtime_name>-<10 letters or digits>."""
+        return re.escape(self.runtime_name(agent)) + RUNTIME_ID_TAIL
+
+    def runtime_arn_pattern(self, agent: str, account: str) -> str:
+        """The ARN of this agent's Runtime in this account and Region, as a pattern to full-match."""
+        return re.escape(f"arn:aws:bedrock-agentcore:{self.region}:{account}:runtime/") + self.runtime_id_pattern(agent)
 
     def stack_name(self, agent: str) -> str:
         return f"AgentCore-{self.project_name(agent)}-default"

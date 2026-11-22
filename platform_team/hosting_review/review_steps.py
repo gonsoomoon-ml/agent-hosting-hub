@@ -8,6 +8,7 @@ lambda_handler), whichever is shorter. A step that runs out of time stops with i
 half-made policy behind; without a deadline (unit tests, local runs) every wait gets its ceiling."""
 import hashlib
 import json
+import re
 import time
 import urllib.error
 
@@ -29,7 +30,7 @@ CALL_TIMEOUT = 180       # s, one test call
 # The fields of an application the later steps use: Read passes on these and nothing else (application()).
 REVIEWED_FIELDS = ("name", "team", "framework", "tools", "code_key", "code_version")
 SUBMISSIONS = "submissions/"     # where the dev team role uploads; the builds may read nothing else of the inbox
-SHOWN = 64                       # characters of a record's value an error message shows
+SHOWN = 160                      # characters of a record's (or SSM) value an error message shows
 MAX_ERROR = 2000                 # characters of Read's error: it travels in the review's state to the alert
 
 
@@ -144,7 +145,12 @@ def entry(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     """5 Put the deployed agent behind the agent gateway. Only the review's test call may enter so far."""
     deadline = deadline or Deadline()
     s, agent = _settings(env), ctx["spec"]["name"]
-    runtime_arn = c.ssm.get_parameter(Name=s.ssm("agents", agent, "runtime_arn"))["Parameter"]["Value"]
+    param = s.ssm("agents", agent, "runtime_arn")
+    runtime_arn = c.ssm.get_parameter(Name=param)["Parameter"]["Value"]
+    if not re.fullmatch(s.runtime_arn_pattern(agent, env["ACCOUNT"]), runtime_arn):     # the deploy build wrote it
+        raise ValueError(f"{param} holds {_shown(runtime_arn)!r}, which is not the ARN of this agent's Runtime "
+                         f"(runtime/{s.runtime_name(agent)}-<10 letters or digits> in this account and Region): "
+                         "no target is made")
     target = s.target_name(agent)
     target_id = ensure_runtime_target(c, env["AGENT_GW_ID"], target, runtime_arn,
                                       wait=deadline.wait(TARGET_WAIT, f"target {target}"))

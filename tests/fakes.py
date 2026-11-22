@@ -91,9 +91,11 @@ class _Ctl(_Client):
         return {"targetId": f"{name}-tid"}
 
     def get_gateway_target(self, gatewayIdentifier, targetId):
-        if targetId not in self.o.targets.values():
+        name = next((n for n, t in self.o.targets.items() if t == targetId), None)
+        if name is None:
             raise _client_error("ResourceNotFoundException", "no target", "GetGatewayTarget")
-        return {"status": "READY"}
+        return {"name": name, "targetId": targetId, "status": "READY",
+                "targetConfiguration": {"http": {"agentcoreRuntime": {"arn": self.o.target_arns.get(name)}}}}
 
     def delete_gateway_target(self, gatewayIdentifier, targetId):
         name = next((n for n, t in self.o.targets.items() if t == targetId), None)

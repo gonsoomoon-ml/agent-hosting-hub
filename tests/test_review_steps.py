@@ -5,6 +5,9 @@ from platform_team.hosting_review import lambda_handler, review_steps as steps
 from platform_team.shared_code.aws_helpers import Deadline, OutOfTime
 from tests.fakes import FakeClients, ENV, CTX, SPEC
 
+# The ARN the deploy build writes for quality_agent: runtime/<Settings.runtime_name>-<10 letters or digits>
+RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef"
+
 @pytest.fixture(autouse=True)
 def patched_post(monkeypatch):
     """The steps' signed_post answers from the FakeClients built in the test."""
@@ -36,7 +39,7 @@ def test_failed_policy_is_removed_and_reason_raised():               # Review Fo
     assert c.deleted_policies == [c.created_policies[0]["id"]]
 
 def test_entry_lets_only_the_test_call_in_before_approval():
-    c = FakeClients(runtime_arn="arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hub_quality_agent-x")
+    c = FakeClients(runtime_arn=RUNTIME_ARN)
     out = steps.entry({**CTX, "roleArn": "r"}, c, ENV)
     names = [p["name"] for p in c.created_policies]
     assert names == ["review_permit_quality_agent", "guard_secret_quality_agent"] and out["target"] == "QualityAgent"
@@ -91,7 +94,7 @@ def test_no_time_left_stops_the_step_before_it_makes_anything(clock):
     assert c.created_policies == [] and c.record_status == "PENDING_APPROVAL"
 
 def test_entry_shares_one_deadline_between_the_target_and_its_policies(clock):
-    c = FakeClients(runtime_arn="arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hub_quality_agent-x",
+    c = FakeClients(runtime_arn=RUNTIME_ARN,
                     policy_status="CREATING")
     t0, lambda_left = clock.t, 300           # less than the target's and the policies' ceilings together
     with pytest.raises(TimeoutError, match="deleted"):
@@ -136,8 +139,6 @@ def test_approve_refuses_a_record_that_changed_after_the_review_started():
 
 # ------------------------------------------------------------------ final review I-5: a second run keeps what the first made
 
-RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef"
-
 def _counting(c, client, method):
     calls = []
     original = getattr(getattr(c, client), method)
@@ -164,6 +165,31 @@ def test_entry_run_again_keeps_the_target_and_its_policies():              # Rev
     assert len(created) == 1 and list(c.targets) == ["QualityAgent"] and first["targetId"] == second["targetId"]
     assert [p["name"] for p in c.created_policies] == ["review_permit_quality_agent", "guard_secret_quality_agent"]
     assert (first["reviewPolicy"], first["guardPolicy"]) == (second["reviewPolicy"], second["guardPolicy"])
+
+# ------------------------------------------------------------------ final review M-2: Entry trusts no Runtime ARN but this agent's
+
+@pytest.mark.parametrize("arn", [
+    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubReleaseReview_default_agent-Ab12Cd34Ef",  # another agent
+    "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef",  # another account
+    "arn:aws:bedrock-agentcore:us-east-1:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef",  # another Region
+    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34",    # no Runtime ID
+    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef/x",
+    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hub_quality_agent-x",
+    "",
+])
+def test_entry_refuses_a_runtime_arn_that_is_not_this_agents(arn):
+    c = FakeClients(runtime_arn=arn)
+    with pytest.raises(ValueError, match="is not the ARN of this agent's Runtime"):
+        steps.entry({**CTX, "roleArn": "r"}, c, ENV)
+    assert c.targets == {} and c.created_policies == []
+
+def test_entry_refuses_a_target_of_this_name_that_points_to_another_runtime():
+    c = FakeClients(runtime_arn=RUNTIME_ARN)
+    other = RUNTIME_ARN.replace("Ab12Cd34Ef", "Zz98Yy76Xx")               # an older Runtime of the same agent, say
+    c.targets["QualityAgent"], c.target_arns["QualityAgent"] = "QualityAgent-tid", other
+    with pytest.raises(RuntimeError, match=f"target QualityAgent already exists and points to {other}"):
+        steps.entry({**CTX, "roleArn": "r"}, c, ENV)
+    assert c.target_arns == {"QualityAgent": other} and c.created_policies == []
 
 # ------------------------------------------------------------------ final review I-1: Read binds the application to its record
 

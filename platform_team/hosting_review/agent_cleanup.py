@@ -34,7 +34,7 @@ from platform_team.company_policy.policy_engine import drop_policy, list_policie
 from platform_team.company_policy.policy_names import policy_names
 from platform_team.sample_tools.tool_schema import TARGETS
 from platform_team.shared_code.aws_helpers import Clients, wait_status
-from platform_team.shared_code.config import Settings
+from platform_team.shared_code.config import RUNTIME_ID_TAIL, Settings
 from platform_team.shared_code.hub_state import Platform, load
 
 TARGET_WAIT = 300        # s, until a deleted gateway target is gone
@@ -43,7 +43,7 @@ STACK_STEP = 10          # s, between two looks at the stack
 # A Runtime's log group is /aws/bedrock-agentcore/runtimes/<Runtime ID>-<endpoint>, and its ID is
 # <Runtime name>-<10 letters or digits>. A Runtime name has no "-", so the name and the "-" after it are exact.
 RUNTIME_LOGS = "/aws/bedrock-agentcore/runtimes/"
-RUNTIME_ID_TAIL = r"[A-Za-z0-9]{10}(-.*)?"
+RUNTIME_LOG_TAIL = RUNTIME_ID_TAIL + r"(-.*)?"
 RUNTIME_TYPE = "AWS::BedrockAgentCore::Runtime"     # its physical ID in a stack is the Runtime ID (Task 0's run)
 
 
@@ -153,7 +153,7 @@ def _check_stack(c, stack: str, runtime: str) -> None:
     try:
         held = [r.get("PhysicalResourceId") or "" for page in c.cfn.get_paginator("list_stack_resources").paginate(
             StackName=stack) for r in page["StackResourceSummaries"] if r["ResourceType"] == RUNTIME_TYPE]
-        own = re.compile(re.escape(runtime) + r"-[A-Za-z0-9]{10}")
+        own = re.compile(re.escape(runtime) + RUNTIME_ID_TAIL)
         if any(own.fullmatch(h) for h in held):
             return
         made = [h for h in held if h]
@@ -239,7 +239,7 @@ def _remove_stack(c, name: str) -> list[str]:
 
 def _remove_log_groups(c, runtime: str) -> list[str]:
     prefix = f"{RUNTIME_LOGS}{runtime}-"
-    own = re.compile(re.escape(prefix) + RUNTIME_ID_TAIL)
+    own = re.compile(re.escape(f"{RUNTIME_LOGS}{runtime}") + RUNTIME_LOG_TAIL)
     names = sorted(g["logGroupName"] for page in c.logs.get_paginator("describe_log_groups").paginate(
         logGroupNamePrefix=prefix) for g in page["logGroups"])
     return [f"log group {n}" for n in names

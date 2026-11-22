@@ -198,6 +198,34 @@ def test_approve_calls_match_the_service_models(aws):
     assert out["recordStatus"] == "APPROVED" and out["entryPolicy"] == pol["policyId"]
 
 
+RUNTIME_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/{RUNTIME_ID}"
+
+
+def _target(arn):
+    """GetGatewayTarget's answer for a Runtime target that points to `arn`."""
+    return {"gatewayArn": f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/{GW}", "targetId": TID,
+            "createdAt": NOW, "updatedAt": NOW, "status": "READY", "statusReasons": [], "name": "QualityAgent",
+            "targetConfiguration": {"http": {"agentcoreRuntime": {"arn": arn, "qualifier": "DEFAULT"}}},
+            "credentialProviderConfigurations": [{"credentialProviderType": "GATEWAY_IAM_ROLE"}]}
+
+
+def test_a_found_target_is_kept_only_when_it_points_to_this_runtime(aws):
+    """final review M-2: ensure_runtime_target reads the found target's Runtime from GetGatewayTarget's answer."""
+    from platform_team.agent_gateway.gateway_targets import ensure_runtime_target
+    c, stubs = aws
+    ctl = stubs["ctl"]
+    listed = {"items": [{"targetId": TID, "name": "QualityAgent", "status": "READY", "createdAt": NOW, "updatedAt": NOW}]}
+    ctl.add_response("list_gateway_targets", listed, {"gatewayIdentifier": GW, "maxResults": 100})
+    ctl.add_response("get_gateway_target", _target(RUNTIME_ARN), {"gatewayIdentifier": GW, "targetId": TID})
+    ctl.add_response("get_gateway_target", _target(RUNTIME_ARN), {"gatewayIdentifier": GW, "targetId": TID})   # READY
+    assert ensure_runtime_target(c, GW, "QualityAgent", RUNTIME_ARN) == TID
+    other = RUNTIME_ARN.replace("Ab12Cd34Ef", "Zz98Yy76Xx")
+    ctl.add_response("list_gateway_targets", listed, {"gatewayIdentifier": GW, "maxResults": 100})
+    ctl.add_response("get_gateway_target", _target(other), {"gatewayIdentifier": GW, "targetId": TID})
+    with pytest.raises(RuntimeError, match="already exists and points to .*Zz98Yy76Xx"):
+        ensure_runtime_target(c, GW, "QualityAgent", RUNTIME_ARN)
+
+
 def test_a_stack_without_a_made_runtime_is_checked_by_its_template(aws):
     c, stubs = aws
     stubs["iam"].add_client_error("get_role", "NoSuchEntity", http_status_code=404, expected_params={"RoleName": ROLE})

@@ -29,12 +29,23 @@ def targets(c, gateway_id: str) -> dict[str, dict]:
     return {t["name"]: t for t in all_items(c.ctl.list_gateway_targets, gatewayIdentifier=gateway_id, maxResults=100)}
 
 
+def _check_points_to(c, gateway_id: str, target: str, target_id: str, runtime_arn: str) -> None:
+    """A target found by its name is kept only when it puts this Runtime behind the gateway."""
+    found = c.ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=target_id)
+    arn = (((found.get("targetConfiguration") or {}).get("http") or {}).get("agentcoreRuntime") or {}).get("arn")
+    if arn != runtime_arn:
+        raise RuntimeError(f"target {target} already exists and points to {arn or 'no Runtime'}, not to {runtime_arn}: "
+                           "it is left as it is")
+
+
 def ensure_runtime_target(c, gateway_id: str, target: str, runtime_arn: str, wait: int = 300) -> str:
     """Put a Runtime behind the gateway as target `target` and wait up to `wait` seconds until it is READY; return
-    the target ID. A target with this name is kept as it is."""
+    the target ID. A target with this name is kept as it is when it points to this Runtime; one that points
+    elsewhere raises RuntimeError and is not changed."""
     found = targets(c, gateway_id).get(target)
     if found:
         tid = found["targetId"]
+        _check_points_to(c, gateway_id, target, tid, runtime_arn)
     else:
         try:
             tid = c.ctl.create_gateway_target(
@@ -47,6 +58,7 @@ def ensure_runtime_target(c, gateway_id: str, target: str, runtime_arn: str, wai
             if not already_exists(e):
                 raise
             tid = targets(c, gateway_id)[target]["targetId"]        # made a moment ago by another run
+            _check_points_to(c, gateway_id, target, tid, runtime_arn)
     wait_status(lambda: c.ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=tid), ("READY",),
                 f"target {target}", timeout=wait, step=3)
     return tid
