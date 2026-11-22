@@ -122,7 +122,7 @@ TestCall은 HTTP 상태만 본다. 보통 질문(`What is the spec of part P-100
 
 2026-11-22의 실행에서 새 버전의 심사 둘은 모두 `SUCCEEDED`였고 308초와 296초 걸렸다(Deploy 266초와 244초). 역할, 정책, target이 이미 있을 때 Grant, Entry, Approve는 각각 2~3초였다. 끝나자 record는 `APPROVED`였다.
 
-같은 날의 운영 확인(`make e2e-ops`)에서 지금의 코드로 `quality_agent`의 새 버전을 두 번 심사했다(사고 버전 `v2-loop`, 그다음 에이전트가 멈춘 동안 고친 버전). 둘 다 `SUCCEEDED`였고 304초와 298초였다(Deploy 255초와 244초, 새 버전 `2`와 `3`이 `READY`가 되기까지 221초씩). Read는 같은 record의 앞선 심사를 찾으려고 실행 목록과 입력을 읽었고 거부된 것이 없었다. Grant가 적은 `entryPermitBefore`는 둘 다 `true`였고 Approve까지 닿았다. 도구가 바뀌지 않았으므로 지운 도구 정책(`removedToolPolicies`)은 없었다. 사고 버전의 심사 중에 개발팀 역할로 검색하자 그 에이전트가 나왔다. 멈춘 동안의 심사에서 시험 호출의 보통 질문은 200이었다(멈춤 정책의 예외).
+같은 날의 운영 확인(`make e2e-ops`)에서 지금의 심사 코드로 `quality_agent`의 새 버전을 두 번 심사했다(사고 버전 `v2-loop`, 그다음 에이전트가 멈춘 동안 고친 버전). 둘 다 `SUCCEEDED`였고 304초와 298초였다(Deploy 255초와 244초, 새 버전 `2`와 `3`이 `READY`가 되기까지 221초씩). Read는 같은 record의 앞선 심사를 찾으려고 실행 목록과 입력을 읽었고 거부된 것이 없었다. Grant가 적은 `entryPermitBefore`는 둘 다 `true`였고 Approve까지 닿았다. 도구가 바뀌지 않았으므로 지운 도구 정책(`removedToolPolicies`)은 없었다. 사고 버전의 심사 중에 개발팀 역할로 검색하자 그 에이전트가 나왔다. 멈춘 동안의 심사에서 시험 호출의 보통 질문은 200이었다(멈춤 정책의 예외).
 
 새 버전이 어느 단계에서 떨어지면 알림이 가고, 돌고 있는 에이전트는 그때의 상태로 남는다. Read나 Scan에서 떨어지면 바뀐 것이 없다. Grant에서 떨어지면 이전 버전의 코드가 돌고, 도구 정책은 Grant가 멈춘 데까지 바뀌어 있다. Deploy에서 떨어지면 무엇이 도는지는 Runtime이 어디까지 고쳐졌느냐에 달렸다(해 보지 않았다). Entry, TestCall, Approve에서 떨어지면 새 코드가 돈다. 반려하면 record만 `REJECTED`가 되고 아무것도 지우지 않는다(아래 "반려"). 이 경우들은 코드로 본 것이고, 새 버전이 떨어지는 심사는 AWS에서 해 보지 않았다.
 

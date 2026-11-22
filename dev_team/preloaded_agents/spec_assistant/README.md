@@ -43,7 +43,7 @@ print(ask_harness(c, arn, 'What is the spec of part P-100?'))"
 
 ## 허브에서 받는 통제
 
-에이전트 게이트웨이에 진입 target이 없으므로 진입의 통제를 받지 않는다. 진입 정책, 비밀값 검사, 전사 정책(`rollout.sh`), 커스텀 가드레일이 이 에이전트에 닿지 않고, 멈춤 명령(`stop.sh`)도 이 에이전트를 거부한다. 도구 호출은 도구 게이트웨이를 지나므로, 실행 역할에 걸린 도구 permit 둘만큼만 도구를 부를 수 있다. `allowedTools`는 harness가 모델에게 보여 줄 도구를 고르는 설정이고 권한이 아니다. 서비스 모델(botocore 1.44.9)의 `InvokeHarness`는 호출마다 `tools`, `allowedTools`, `systemPrompt`, `model`을 받으므로, `InvokeHarness`를 부를 수 있는 사람은 호출에서 이것들을 바꿔 보낼 수 있다. 그래도 도구 게이트웨이를 지나는 호출은 이 역할의 permit에 묶인다. 호출에서 바꿔 보내는 것은 `allowedTools` 하나만, 한 번 해 봤다(아래의 운영 확인). 모델이 그 도구를 부르지 않았으므로 도구 게이트웨이가 permit이 없는 호출을 거부하는지는 그때도 보지 못했다. `tools`, `systemPrompt`, `model`을 바꿔 보내는 것은 해 보지 않았다.
+에이전트 게이트웨이에 진입 target이 없으므로 진입의 통제를 받지 않는다. 진입 정책, 비밀값 검사, 전사 정책(`rollout.sh`), 커스텀 가드레일이 이 에이전트에 닿지 않고, 멈춤 명령(`stop.sh`)도 이 에이전트를 거부한다. 도구 호출은 도구 게이트웨이를 지나므로, 실행 역할에 걸린 도구 permit 둘만큼만 도구를 부를 수 있다. `allowedTools`는 harness가 모델에게 보여 줄 도구를 고르는 설정이고 권한이 아니다. 서비스 모델(botocore 1.44.9)의 `InvokeHarness`는 호출마다 `tools`, `allowedTools`, `systemPrompt`, `model`을 받으므로, `InvokeHarness`를 부를 수 있는 사람은 호출에서 이것들을 바꿔 보낼 수 있다. 그래도 도구 게이트웨이를 지나는 호출은 이 역할의 permit에 묶인다. 호출에서 바꿔 보내는 것은 `allowedTools` 하나만, 두 번(운영 확인의 두 실행에서 한 번씩) 해 봤다(아래). 모델이 그 도구를 부르지 않았으므로 도구 게이트웨이가 permit이 없는 호출을 거부하는지는 그때도 보지 못했다. `tools`, `systemPrompt`, `model`을 바꿔 보내는 것은 해 보지 않았다.
 
 ## 2026-11-22의 실행에서 본 것
 
@@ -63,7 +63,7 @@ print(ask_harness(c, arn, 'What is the spec of part P-100?'))"
 같은 날 `make e2e-ops`(`e2e_checks/e2e_operations.py`)가 `make preload`로 이 에이전트를 올렸다. 그때 허브에는 커스텀 가드레일과 적용 모드의 전사 정책 `guard_prompt`가 켜져 있었다. 둘 다 에이전트 게이트웨이에 걸리므로 이 에이전트에는 닿지 않는다.
 
 - `What is the spec of part P-100?`에 도구 `Parts___get_part_spec`을 불러 `M4 x 12 mm, steel`이 든 답을 했다(stream으로 읽었다).
-- 호출에서 쓸 수 있는 도구의 목록(`allowedTools`)에 permit이 없는 도구를 더해 한 번 물었다. 목록은 `@hub_tools/Parts___get_part_spec`, `@hub_tools/Parts___get_test_result`, `@hub_tools/Quality___get_inspection_data`였고, 질문은 `What is the result of inspection Q-1001?`이었다. stream에 도구 호출이 없었다. 모델은 검사 ID로 찾는 도구가 없고 부품 ID로 찾는 도구만 있다고 답했다. 그 시간 동안 도구 게이트웨이에는 `tools/list`가 셋 있었고(이 harness를 세 번 불렀다), 그때마다 `AgentCore.Gateway.ListTools`와 `AgentCore.Policy.PartiallyAuthorizeActions`의 span이 있었다. 이 둘이 무엇을 거르는지는 확인하지 않았다.
+- 호출에서 쓸 수 있는 도구의 목록(`allowedTools`)에 permit이 없는 도구를 더해 두 번(두 실행에서 한 번씩) 물었다. 목록은 `@hub_tools/Parts___get_part_spec`, `@hub_tools/Parts___get_test_result`, `@hub_tools/Quality___get_inspection_data`였고, 질문은 `What is the result of inspection Q-1001?`이었다. 두 번 다 stream에 도구 호출이 없었다. 모델은 검사 ID로 찾는 도구가 없고 부품 ID로 찾는 도구만 있다고 답했다. 첫 실행의 그 시간 동안 도구 게이트웨이에는 `tools/list`가 셋 있었고(이 harness를 세 번 불렀다), `AgentCore.Gateway.ListTools`와 `AgentCore.Policy.PartiallyAuthorizeActions`의 span도 셋씩 있었다. 이 둘이 무엇을 거르는지는 확인하지 않았다.
 - `quality_agent`가 `stop.sh`로 멈춰 있는 동안 같은 질문에 답했다(`M4 x 12 mm`).
 - `usage.sh 60`의 표에 `spec_assistant 3 3 0 0.000000 0.000000`이 있었다(부른 수, 세션, 오류, CPU, 메모리). 같은 허브에서 다시 돌린 두 번째 실행에서는 `spec_assistant 6 6 0 0.028382 1.744684`였다. CPU와 메모리도 harness가 도는 Runtime의 이름으로 읽혔다.
 - 같은 허브에서 `make e2e-ops`를 다시 돌릴 때 `make preload`는 이 에이전트를 그대로 두었다.

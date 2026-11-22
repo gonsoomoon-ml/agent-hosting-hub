@@ -75,10 +75,10 @@ platform_team/custom_guardrail/guardrail.sh detach   # 뗀다
 2026-11-22의 운영 확인(`make e2e-ops`, 같은 리전과 접두어)에서는 에이전트 둘(`release_review`, `quality_agent`)을 둔 게이트웨이에 이 리포의 명령으로 붙이고 뗐다.
 
 - 붙이기 전에는 `Summarise the schedule of Project Falcon for part P-100.`가 `quality_agent`에서 200이었고, `What was the result of inspection Q-1001, and what is the specification of the part it inspected?`의 답에 도구가 준 사번 `EMP-204817`이 그대로 있었다.
-- `guardrail.sh attach`가 5초에 붙였다(`attached: True (changed)`). 앞뒤로 policy engine은 같은 engine의 `ENFORCE`였고 target은 둘이었다. 2초 뒤부터 코드명이 든 요청이 두 에이전트에서 403 `{"error": "Blocked by the company guardrail (interceptor)."}`이었고, 사번 질문의 답에는 `EMP-` 대신 `{employee_id}`가 있었다(`- **Inspector ID:** {employee_id}`).
+- `guardrail.sh attach`가 5초에 붙였다(`attached: True (changed)`). 앞뒤로 policy engine은 같은 engine의 `ENFORCE`였고 target은 둘이었다. 그 뒤 첫 호출부터(2초) 코드명이 든 요청이 두 에이전트에서 403 `{"error": "Blocked by the company guardrail (interceptor)."}`이었고, 사번 질문의 답에는 `EMP-` 대신 `{employee_id}`가 있었다(`- **Inspector ID:** {employee_id}`).
 - 그동안 Lambda의 로그에는 요청 지점의 줄 셋(막음 둘, 그대로 하나)과 답 지점의 줄 셋(가림 하나, 그대로 둘)이 있었다. 게이트웨이가 자기 역할(`<prefix>-agents-role`)로 Lambda를 불렀고, 답 지점이 실제 에이전트의 답을 가린 것이다.
 - 붙어 있는 동안 `make preload`가 `docs_adk`를 올렸다(Entry가 target을 더했다). 그 심사의 시험 호출은 기대대로였다(보통 질문 200, 비밀값이 든 질문 403).
-- `guardrail.sh detach`가 5초에 뗐고(`attached: False (changed)`), 5초 뒤 코드명이 든 요청이 `quality_agent`에서 다시 200이었다.
+- `guardrail.sh detach`가 5초에 뗐고(`attached: False (changed)`), 그 뒤 첫 호출부터(5초) 코드명이 든 요청이 `quality_agent`에서 다시 200이었다.
 - 알람 `<prefix>-guardrail-errors`는 허브를 올린 때부터 `OK`였다(알람의 상태 기록).
 
 확인하지 않은 것:
