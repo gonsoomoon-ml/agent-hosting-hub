@@ -5,6 +5,8 @@ application whose names would not fit, the review's steps make the policies, and
     review_permit_<agent>            Entry: only the review's test call may call it before approval
     tool_<agent>_<Target>_<tool>     Grant: the agent may call this tool (tool gateway)
     guard_secret_<agent>             Entry: a prompt that holds a secret is refused
+    guard_prompt_<agent>             a prompt that attacks the agent is refused (agent gateway)
+    stop_agent_<agent>               every call to the agent is refused, the review's test call excepted
 
 One name has one kind, one agent and one tool: no kind's prefix is a prefix of another's; an agent name is
 lower-case segments joined by single underscores (application_form); and a catalog target starts with an upper-case
@@ -20,6 +22,8 @@ KINDS = {                       # kind -> the prefix of its names
     "review_permit": "review_permit_",
     "tool": "tool_",
     "guard_secret": "guard_secret_",
+    "guard_prompt": "guard_prompt_",
+    "stop_agent": "stop_agent_",
 }
 
 
@@ -47,8 +51,18 @@ def guard_secret_name(agent: str) -> str:
     return f"{KINDS['guard_secret']}{agent}"
 
 
+def guard_prompt_name(agent: str) -> str:
+    return f"{KINDS['guard_prompt']}{agent}"
+
+
+def stop_agent_name(agent: str) -> str:
+    return f"{KINDS['stop_agent']}{agent}"
+
+
 def policy_names(agent: str, tools) -> list[str]:
     """Every policy name the review makes for an agent with these tool IDs, in the order the cleanup removes them:
-    the entry permits first, then the tool permits, the guard last (no call gets in unguarded while they go)."""
+    the entry permits first (a stopped agent must not open while the cleanup runs), then the tool permits, the guards,
+    and the stop policy last."""
     return [entry_permit_name(agent), review_permit_name(agent),
-            *(tool_policy_name(agent, t) for t in sorted(tools)), guard_secret_name(agent)]
+            *(tool_policy_name(agent, t) for t in sorted(tools)), guard_secret_name(agent),
+            guard_prompt_name(agent), stop_agent_name(agent)]

@@ -35,8 +35,8 @@ from platform_team.agent_catalog.application_form import name_problems
 from platform_team.agent_catalog.catalog_records import drop_record, records
 from platform_team.agent_gateway.gateway_targets import drop_target, targets
 from platform_team.company_policy.policy_engine import drop_policy, list_policies
-from platform_team.company_policy.policy_names import (entry_permit_name, guard_secret_name, review_permit_name,
-                                                       tool_policy_pattern)
+from platform_team.company_policy.policy_names import (entry_permit_name, guard_prompt_name, guard_secret_name,
+                                                       review_permit_name, stop_agent_name, tool_policy_pattern)
 from platform_team.shared_code.aws_helpers import Clients, all_items, wait_status
 from platform_team.shared_code.config import PACKAGES, RUNTIME_ID_TAIL, Settings
 from platform_team.shared_code.hub_state import Platform, load
@@ -174,7 +174,7 @@ def check_agent(c, s: Settings, agent: str) -> None:
 # ================================================================== one agent
 
 def _remove_policies(c, p: Platform, agent: str) -> list[str]:
-    """The agent's policies, entry permits first and the guard last. Its tool permits are found by the shape of their
+    """The agent's policies, entry permits first and the stop policy last. Its tool permits are found by the shape of their
     names (tool_policy_pattern), not by the catalog of this checkout: a permit for a tool since removed from the
     catalog goes too."""
     if not p.engine_id:
@@ -187,7 +187,8 @@ def _remove_policies(c, p: Platform, agent: str) -> list[str]:
         raise
     tool_permit = re.compile(tool_policy_pattern(agent))
     names = [entry_permit_name(agent), review_permit_name(agent),
-             *sorted(n for n in found if tool_permit.fullmatch(n)), guard_secret_name(agent)]
+             *sorted(n for n in found if tool_permit.fullmatch(n)), guard_secret_name(agent),
+             guard_prompt_name(agent), stop_agent_name(agent)]
     removed = []
     for name in names:
         policy = found.get(name)

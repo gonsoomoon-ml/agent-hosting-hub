@@ -13,6 +13,14 @@ def test_reject_removes_what_the_review_made():
     assert out["removed"] == ["policy tool_quality_agent_Parts_get_part_spec", "role hub-agent-quality_agent-role"]
     assert "tool_release_review_Release_file_review_request" in c.policies      # another agent's permit stays
 
+def test_reject_removes_the_prompt_guard_and_the_stop_policy_too_and_leaves_another_agents():
+    mine = ["entry_permit_quality_agent", "guard_secret_quality_agent", "guard_prompt_quality_agent",
+            "stop_agent_quality_agent"]
+    c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={*mine, "stop_agent_quality", "guard_prompt_release"})
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "why")
+    assert out["removed"] == [f"policy {n}" for n in mine]                    # the entry permit first, the stop policy last
+    assert set(c.policies) == {"stop_agent_quality", "guard_prompt_release"}
+
 def test_an_approved_agent_is_not_rejected():
     with pytest.raises(ValueError, match="approved agents are stopped, not rejected"):
         reject(FakeClients(record_status="APPROVED"), Settings(), PLATFORM, "quality_agent", "x")

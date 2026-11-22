@@ -22,14 +22,21 @@ APP = {"name": "quality_agent", "team": "appliance", "framework": "strands", "to
 
 def test_no_kind_prefix_is_a_prefix_of_another():
     prefixes = list(names.KINDS.values())
-    assert len(prefixes) == len(set(prefixes)) >= 4
+    assert len(prefixes) == len(set(prefixes)) >= 6
     assert [(a, b) for a, b in itertools.permutations(prefixes, 2) if b.startswith(a)] == []
 
 
 def test_the_policy_names_are_the_ruled_ones():
     assert names.policy_names("quality_agent", ["Quality___get_inspection_data", "Parts___get_part_spec"]) == [
         "entry_permit_quality_agent", "review_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec",
-        "tool_quality_agent_Quality_get_inspection_data", "guard_secret_quality_agent"]
+        "tool_quality_agent_Quality_get_inspection_data", "guard_secret_quality_agent", "guard_prompt_quality_agent",
+        "stop_agent_quality_agent"]
+
+
+def test_cleanup_removes_the_entry_permit_first_and_the_stop_policy_last():
+    found = names.policy_names("quality_agent", ["Parts___get_part_spec"])
+    assert found[0] == "entry_permit_quality_agent"
+    assert found[-2:] == ["guard_prompt_quality_agent", "stop_agent_quality_agent"]
 
 
 def test_names_of_different_agents_kinds_and_tools_never_meet():

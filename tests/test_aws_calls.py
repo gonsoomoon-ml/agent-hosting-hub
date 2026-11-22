@@ -12,6 +12,7 @@ import pytest
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
+from platform_team.company_policy.policy_engine import ensure_policy, set_mode
 from platform_team.hosting_review import agent_cleanup, deploy_build, reject_agent, review_steps
 from platform_team.shared_code.aws_helpers import Clients
 from platform_team.shared_code.config import Settings
@@ -368,3 +369,24 @@ def test_a_submission_the_rules_refuse_is_not_installed(aws, monkeypatch, tmp_pa
     _get_submission(stubs, buf.getvalue())
     with pytest.raises(SystemExit, match="deploy refused: requirements.txt: pip options are not allowed"):
         deploy_build.main(DEPLOY_ENV, c)
+
+
+def test_set_mode_calls_match_the_service_models(aws):
+    c, stubs = aws
+    pol = _policy("guard_prompt_quality_agent")
+    stubs["ctl"].add_response("update_policy", {**pol, "status": "UPDATING"},
+                              {"policyEngineId": ENGINE, "policyId": pol["policyId"], "enforcementMode": "LOG_ONLY"})
+    stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    set_mode(c, ENGINE, pol["policyId"], "LOG_ONLY")
+
+
+def test_a_policy_in_another_mode_is_listed_and_switched_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    pol = _policy("guard_prompt_quality_agent")
+    stubs["ctl"].add_response("list_policies", {"policies": [{**pol, "enforcementMode": "LOG_ONLY"}]},
+                              {"policyEngineId": ENGINE, "maxResults": 100})
+    stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    stubs["ctl"].add_response("update_policy", {**pol, "status": "UPDATING"},
+                              {"policyEngineId": ENGINE, "policyId": pol["policyId"], "enforcementMode": "ACTIVE"})
+    stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    assert ensure_policy(c, ENGINE, pol["name"], "forbid ...;", guardrail=True, mode="ACTIVE") == pol["policyId"]

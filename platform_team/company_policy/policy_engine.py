@@ -3,6 +3,8 @@ from botocore.exceptions import ClientError
 
 from platform_team.shared_code.aws_helpers import all_items, already_exists, wait_status
 
+MODES = ("ACTIVE", "LOG_ONLY")      # enforcementMode: ACTIVE decides, LOG_ONLY only records what it would decide
+
 
 def list_policies(c, engine_id: str) -> dict[str, dict]:
     return {p["name"]: p for p in all_items(c.ctl.list_policies, policyEngineId=engine_id, maxResults=100)}
@@ -14,7 +16,10 @@ def ensure_policy(c, engine_id: str, name: str, statement: str, guardrail: bool 
     with this name is kept as it is (one still CREATING is waited on). A policy that does not become ACTIVE is
     deleted, found or new: a FAILED status raises RuntimeError with the reasons, still not ACTIVE after `wait`
     seconds raises TimeoutError. Guardrail policies (BedrockGuardrails::...) use the definition key `policy`,
-    the others `cedar`."""
+    the others `cedar`. `mode` is the enforcement mode (MODES): a new policy is made in it, and a policy of this
+    name in another mode is switched to it (set_mode), not made again. Any other mode raises ValueError."""
+    if mode not in MODES:
+        raise ValueError(f"unknown enforcement mode {mode!r}: one of {MODES}")
     found = list_policies(c, engine_id).get(name)
     if found:
         pid = found["policyId"]
@@ -30,10 +35,21 @@ def ensure_policy(c, engine_id: str, name: str, statement: str, guardrail: bool 
     try:
         wait_status(lambda: c.ctl.get_policy(policyEngineId=engine_id, policyId=pid), ("ACTIVE",), f"policy {name}",
                     timeout=wait)
+        if found and found.get("enforcementMode", mode) != mode:
+            set_mode(c, engine_id, pid, mode, wait)
     except (RuntimeError, TimeoutError) as e:                      # leave nothing half-made, and say why
         drop_policy(c, engine_id, pid)
         raise type(e)(f"{e} (deleted)") from None
     return pid
+
+
+def set_mode(c, engine_id: str, policy_id: str, mode: str, wait: int = 300) -> None:
+    """Switch a policy to this enforcement mode and wait until its status is ACTIVE again."""
+    if mode not in MODES:
+        raise ValueError(f"unknown enforcement mode {mode!r}: one of {MODES}")
+    c.ctl.update_policy(policyEngineId=engine_id, policyId=policy_id, enforcementMode=mode)
+    wait_status(lambda: c.ctl.get_policy(policyEngineId=engine_id, policyId=policy_id), ("ACTIVE",),
+                f"policy {policy_id}", timeout=wait)
 
 
 def drop_policy(c, engine_id: str, policy_id: str) -> bool:

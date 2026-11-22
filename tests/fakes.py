@@ -48,8 +48,21 @@ def _client_error(code: str, message: str, op: str) -> ClientError:
 class _Client:
     """One fake service. get_paginator(name).paginate(**kw) gives one page: the answer of the method of that name."""
 
+    service = ""            # the name in FakeClients.calls
+
     def __init__(self, owner):
         self.o = owner
+
+    def __getattribute__(self, name):
+        """A call of a public method is written to owner.calls as (service, method), in the order it happens."""
+        attr = super().__getattribute__(name)
+        if name.startswith("_") or name in ("o", "service", "exceptions") or not callable(attr):
+            return attr
+
+        def recorded(*args, **kw):
+            self.o.calls.append((self.service, name))
+            return attr(*args, **kw)
+        return recorded
 
     def get_paginator(self, name):
         return types.SimpleNamespace(paginate=lambda **kw: [getattr(self, name)(**kw)])
@@ -63,15 +76,19 @@ class _Ctl(_Client):
     create_agent_runtime, in turn, before it works. A deleted Runtime is gone at once, or shows DELETING to the next
     runtime_delete_polls looks (with runtime_delete_keeps_status: the status it had before the delete), or ends
     DELETE_FAILED with runtime_delete_failure. workload_identities: the names list_workload_identities gives."""
+    service = "ctl"
+
 
     def list_policies(self, **kw):
-        return {"policies": [{"policyId": p["id"], "name": n, "definition": {p["kind"]: {"statement": p["statement"]}}}
+        return {"policies": [{"policyId": p["id"], "name": n, "status": "ACTIVE", "enforcementMode": p["mode"],
+                              "definition": {p["kind"]: {"statement": p["statement"]}}}
                              for n, p in self.o.policies.items()]}
 
-    def create_policy(self, name, definition, **kw):
+    def create_policy(self, name, definition, enforcementMode="ACTIVE", **kw):
         pid = f"{name}-id"
         kind = next(iter(definition))
-        rec = {"id": pid, "name": name, "statement": definition[kind]["statement"], "kind": kind}
+        rec = {"id": pid, "name": name, "statement": definition[kind]["statement"], "kind": kind,
+               "mode": enforcementMode}
         self.o.policies[name] = rec
         self.o.created_policies.append(rec)
         return {"policyId": pid}
@@ -81,6 +98,13 @@ class _Ctl(_Client):
         if name in self.o.existing_policies:
             return {"status": "ACTIVE"}
         return {"status": self.o.policy_status, "statusReasons": self.o.policy_reasons}
+
+    def update_policy(self, policyEngineId, policyId, enforcementMode=None, **kw):
+        name = next(n for n, p in self.o.policies.items() if p["id"] == policyId)
+        if enforcementMode:
+            self.o.policies[name]["mode"] = enforcementMode
+            self.o.mode_changes.append((name, enforcementMode))
+        return {"policyId": policyId, "name": name, "status": "UPDATING"}
 
     def delete_policy(self, policyEngineId, policyId):
         self.o.deleted_policies.append(policyId)
@@ -179,6 +203,8 @@ class _Iam(_Client):
     """Roles: existing_roles (made before, each with the inline policy "agent") and roles (made by the test). A role's
     permissions boundary is the hub's agent boundary unless role_boundaries says otherwise (None: no boundary);
     attached and instance_profiles give a role's managed policies and instance profiles by name."""
+    service = "iam"
+
 
     def __init__(self, owner):
         super().__init__(owner)
@@ -239,6 +265,7 @@ class _Iam(_Client):
 
 
 class _Ssm(_Client):
+    service = "ssm"
     def put_parameter(self, Name, Value, Type, Overwrite=False):
         if Name in self.o.parameters and not Overwrite:
             raise _client_error("ParameterAlreadyExists", Name, "PutParameter")
@@ -264,6 +291,8 @@ class _Ssm(_Client):
 
 class _S3(_Client):
     """The inbox bucket (its name is not checked): objects {key: [version IDs, oldest first]}."""
+    service = "s3"
+
 
     def put_object(self, Bucket, Key, Body=b"", **kw):
         versions = self.o.objects.setdefault(Key, [])
@@ -284,6 +313,7 @@ class _S3(_Client):
 
 
 class _Logs(_Client):
+    service = "logs"
     def describe_log_groups(self, logGroupNamePrefix, **kw):
         return {"logGroups": [{"logGroupName": n} for n in sorted(self.o.log_groups) if n.startswith(logGroupNamePrefix)]}
 
@@ -295,6 +325,8 @@ class _Logs(_Client):
 
 class _Reg(_Client):
     """The catalog: the record quality_agent (rec-1, status record_status; None means no record) and other_records."""
+    service = "reg"
+
 
     def list_registry_records(self, registryId, **kw):
         main = [{"name": "quality_agent", "recordId": "rec-1", "recordType": "AGENT", "status": self.o.record_status}]
@@ -323,6 +355,8 @@ class _Reg(_Client):
 
 class _Sfn(_Client):
     """Step Functions: `running` holds (execution name, record ID) for each review still RUNNING."""
+    service = "sfn"
+
 
     def list_executions(self, stateMachineArn, statusFilter=None, **kw):
         return {"executions": [{"executionArn": f"{stateMachineArn}:{n}", "name": n, "status": "RUNNING"}
@@ -338,7 +372,10 @@ class FakeClients:
     """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
-    Recorded: created_policies (id, name, statement), deleted_policies, policies, roles, inline (role -> inline
+    policy_mode: the enforcement mode of the existing_policies; parameters: the SSM values at the start; targets: the
+    names of the targets the agent gateway already has.
+    Recorded: created_policies (id, name, statement, kind, mode), mode_changes ((name, mode) of each update_policy),
+    calls ((service, method) of every fake call, in order), deleted_policies, policies, roles, inline (role -> inline
     policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
     "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects. Tests may also fill
     log_groups, parameters, objects, other_records, runtime_create_errors and running (the reviews still running)."""
@@ -348,7 +385,8 @@ class FakeClients:
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, record_name=None,
                  record_type="AGENT", runtime_status="READY", runtime_failure=None, runtime_ready_after=0,
-                 runtime_delete_failure=None, runtime_delete_polls=0, runtime_delete_keeps_status=False):
+                 runtime_delete_failure=None, runtime_delete_polls=0, runtime_delete_keeps_status=False,
+                 policy_mode="ACTIVE", parameters=None, targets=()):
         self.record_spec = SPEC if record_spec is None else record_spec
         self.record_name, self.record_type = record_name, record_type
         self.record_status, self.status_reason = record_status, None
@@ -356,11 +394,14 @@ class FakeClients:
         self.policy_status, self.policy_reasons = policy_status, policy_reasons
         self.runtime_arn = runtime_arn
         self.http = list(http or [(200, '{"answer": "ok"}'), (403, "refused")])
-        self.policies = {n: {"id": f"{n}-id", "name": n, "statement": "", "kind": "cedar"} for n in self.existing_policies}
-        self.created_policies, self.deleted_policies = [], []
-        self.roles, self.targets, self.target_arns, self.posts = {}, {}, {}, []
+        self.policies = {n: {"id": f"{n}-id", "name": n, "statement": "", "kind": "cedar", "mode": policy_mode}
+                         for n in self.existing_policies}
+        self.created_policies, self.deleted_policies, self.mode_changes, self.calls = [], [], [], []
+        self.roles, self.posts = {}, []
+        self.targets = {n: f"{n}-tid" for n in targets}
+        self.target_arns = {}
         self.inline = {r: {"agent"} for r in self.existing_roles}
-        self.log_groups, self.parameters, self.other_records, self.objects = set(), {}, [], {}
+        self.log_groups, self.parameters, self.other_records, self.objects = set(), dict(parameters or {}), [], {}
         self.runtimes, self.runtime_calls, self.runtime_gets, self.runtime_create_tries = {}, [], 0, 0
         self.runtime_status, self.runtime_failure, self.runtime_ready_after = runtime_status, runtime_failure, runtime_ready_after
         self.runtime_delete_failure, self.runtime_delete_polls = runtime_delete_failure, runtime_delete_polls

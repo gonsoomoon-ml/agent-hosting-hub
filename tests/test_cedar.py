@@ -19,6 +19,25 @@ def test_guard_secret_is_the_verified_statement():
         'when guardrails { BedrockGuardrails::SensitiveInformation(["AWS_ACCESS_KEY", "AWS_SECRET_KEY", "PASSWORD"], '
         '[context.input.prompt]).count() > 0 };')
 
+GW_AGENTS = "arn:aws:bedrock-agentcore:us-west-2:123456789012:gateway/hub-agents-abcdefghij"
+
+def test_the_prompt_guard_names_one_action_of_one_gateway():
+    assert cedar.guard_prompt("QualityAgent", GW_AGENTS) == (
+        'forbid (principal, action == AgentCore::Action::"QualityAgent___POST:/invocations", '
+        f'resource == AgentCore::Gateway::"{GW_AGENTS}") when guardrails {{ BedrockGuardrails::PromptAttack('
+        '["PROMPT_INJECTION"], [context.input.prompt])["PROMPT_INJECTION"].confidenceScore.greaterThan(decimal("0.4")) };')
+
+def test_the_stop_policy_lets_the_reviews_test_call_through():
+    assert cedar.stop_agent("QualityAgent", GW_AGENTS, "123456789012", "hub-review-testcall-role") == (
+        'forbid (principal, action == AgentCore::Action::"QualityAgent___POST:/invocations", '
+        f'resource == AgentCore::Gateway::"{GW_AGENTS}") unless {{ principal == AgentCore::IamEntity::'
+        '"arn:aws:sts::123456789012:assumed-role/hub-review-testcall-role" };')
+
+def test_the_stop_policy_without_a_test_call_role_is_not_made():
+    for account, role in (("123456789012", ""), ("", "hub-review-testcall-role")):
+        with pytest.raises(ValueError, match="empty value"):
+            cedar.stop_agent("QualityAgent", GW_AGENTS, account, role)       # an empty role would stop the test call too
+
 # ------------------------------------------------------------------ final review M-1: no statement opens more than asked
 
 def test_the_permit_for_everyone_cannot_be_asked_for_by_accident():

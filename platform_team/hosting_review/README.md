@@ -39,11 +39,13 @@ Lambda 단계는 제한 시간(가장 길어도 900초)에 끊기기 전에 스�
 | `tool_<에이전트>_<Target>_<도구>` | Grant | 에이전트가 이 도구를 부를 수 있다(도구 게이트웨이). |
 | `review_permit_<에이전트>` | Entry | 승인 전에는 심사의 시험 호출만 에이전트를 부를 수 있다. |
 | `guard_secret_<에이전트>` | Entry | 비밀값이 든 질문을 거부한다. |
+| `guard_prompt_<에이전트>` | 운영 | 프롬프트 공격(`PROMPT_INJECTION`, 신뢰도 0.4 초과)인 질문을 거부한다. 심사는 만들지 않는다. 반려와 삭제가 지운다. |
+| `stop_agent_<에이전트>` | 운영 | 심사의 시험 호출 말고는 그 에이전트의 모든 호출을 거부한다. 심사는 만들지 않는다. 반려와 삭제가 지운다. |
 | `entry_permit_<에이전트>` | Approve | 사용자가 에이전트를 부를 수 있다. |
 
 예를 들면 `tool_quality_agent_Quality_get_inspection_data`(46자), `review_permit_release_review`(28자)다.
 
-한 이름은 한 종류, 한 에이전트, 한 도구의 것이다. 종류의 앞부분(`tool_`, `review_permit_`, `guard_secret_`, `entry_permit_`)은 어느 것도 다른 것의 앞부분이 아니다. 에이전트 이름은 소문자로 시작하는 소문자와 숫자의 마디를 밑줄 하나로 이은 것이다(`quality_agent`, 3~31자). 카탈로그의 target 이름은 대문자로 시작하고 밑줄이 없다(`Quality`). 그래서 도구 정책의 이름에서 에이전트 이름은 첫 대문자 앞에서 끝난다. 같은 규칙 덕분에 에이전트 이름으로 만드는 Runtime 이름(`<prefix>_<에이전트>`, 예: `hub_quality_agent`)과 target 이름(CamelCase, 예: `QualityAgent`)도 에이전트마다 다르다.
+한 이름은 한 종류, 한 에이전트, 한 도구의 것이다. 종류의 앞부분(`tool_`, `review_permit_`, `guard_secret_`, `guard_prompt_`, `stop_agent_`, `entry_permit_`)은 어느 것도 다른 것의 앞부분이 아니다. 에이전트 이름은 소문자로 시작하는 소문자와 숫자의 마디를 밑줄 하나로 이은 것이다(`quality_agent`, 3~31자). 카탈로그의 target 이름은 대문자로 시작하고 밑줄이 없다(`Quality`). 그래서 도구 정책의 이름에서 에이전트 이름은 첫 대문자 앞에서 끝난다. 같은 규칙 덕분에 에이전트 이름으로 만드는 Runtime 이름(`<prefix>_<에이전트>`, 예: `hub_quality_agent`)과 target 이름(CamelCase, 예: `QualityAgent`)도 에이전트마다 다르다.
 
 policy engine은 정책 이름을 48자까지 받는다. 신청서 검사는 한도를 넘는 정책 이름이 생기는 신청서를 거부하고, 에이전트 이름이 몇 자까지 될 수 있는지 알려 준다. Runtime 이름은 AgentCore가 48자까지 받는다(`CreateAgentRuntime`의 서비스 모델, `[a-zA-Z][a-zA-Z0-9_]{0,47}`). 접두어(10자까지)와 밑줄과 에이전트 이름(31자까지)을 이어도 42자이므로 따로 검사하지 않는다(`tests/test_config.py`가 확인한다). 검사는 제출할 때(`publish.sh`)와 심사의 Read 단계에서 돌므로, 넘는 이름으로는 아무것도 만들어지지 않는다. 이름을 자르거나 바꾸지 않는다. 이름은 나중에 화면에 그대로 보인다.
 
@@ -121,7 +123,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 | 순서 | 무엇 | 만든 단계 | 이름 | 지우는 방법 |
 |---|---|---|---|---|
-| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `review_permit_<에이전트>`, 그 에이전트의 `tool_<에이전트>_<Target>_<도구>` 모두, `guard_secret_<에이전트>` (이 순서). 도구 정책은 이름의 모양으로 찾으므로, 그 사이에 카탈로그에서 빠진 도구의 정책도 지운다 | `DeletePolicy`. 사라질 때까지 기다린다. |
+| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `review_permit_<에이전트>`, 그 에이전트의 `tool_<에이전트>_<Target>_<도구>` 모두, `guard_secret_<에이전트>`, `guard_prompt_<에이전트>`, `stop_agent_<에이전트>` (이 순서). `guard_prompt_`와 `stop_agent_`는 없으면 건너뛴다. 도구 정책은 이름의 모양으로 찾으므로, 그 사이에 카탈로그에서 빠진 도구의 정책도 지운다 | `DeletePolicy`. 사라질 때까지 기다린다. |
 | 2 | 에이전트 게이트웨이의 target | Entry | 에이전트 이름의 CamelCase(예: `QualityAgent`) | `DeleteGatewayTarget`. 사라질 때까지 기다린다. |
 | 3 | Runtime | Deploy(`CreateAgentRuntime`) | `<prefix>_<에이전트>` | `DeleteAgentRuntime`. 사라질 때까지 기다린다(10분까지). 이미 `DELETING`이면 다시 지우지 않고 기다린다. `DELETE_FAILED`면 Runtime 이름과 이유(`failureReason`)를 말하고 멈춘다. |
 | 4 | Runtime의 로그 그룹 | Runtime 자신 | `/aws/bedrock-agentcore/runtimes/<Runtime 이름>-<ID 10자>-<endpoint>` | `DeleteLogGroup` |
@@ -129,7 +131,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 | 6 | 실행 역할 | Grant | `<prefix>-agent-<에이전트>-role` | inline 정책을 먼저 지우고(`DeleteRolePolicy`) 역할을 지운다(`DeleteRole`). 권한 경계는 역할에 달려 있을 뿐이라 그대로 둔다. |
 | 7 | SSM 값 | Deploy | `/<prefix>/agents/<에이전트>/` 아래 | `DeleteParameter` |
 
-순서에는 이유가 있다. 정책은 들여보내는 정책을 먼저 지우고 막는 `guard_secret_<에이전트>`를 마지막에 지운다. 그래서 지우는 동안 막는 정책 없이 들어오는 때가 없다. target은 Runtime을 가리키므로 Runtime보다 먼저 지운다. 로그 그룹은 Runtime이 사라진 뒤에 지워야 다시 생기지 않는다. 코드 묶음은 Runtime의 코드 위치이고, 실행 역할은 Runtime이 쓰므로 둘 다 Runtime 다음에 지운다. 역할과 SSM 값은 `make destroy`가 에이전트를 찾는 곳이라 맨 뒤에 둔다. 그래서 중간에 멈춰도 다시 돌리면 그 에이전트를 다시 찾는다.
+순서에는 이유가 있다. 정책은 들여보내는 정책을 먼저 지우고 막는 정책(`guard_secret_`, `guard_prompt_`, `stop_agent_`)을 뒤에 지운다. 들여보내는 `entry_permit_<에이전트>`가 먼저 사라지므로 멈춘 에이전트가 정리 도중에 열리지 않는다. 이 순서는 코드와 시험이 정한 것이고, 실제 AWS에서는 여기서 확인하지 않았다. target은 Runtime을 가리키므로 Runtime보다 먼저 지운다. 로그 그룹은 Runtime이 사라진 뒤에 지워야 다시 생기지 않는다. 코드 묶음은 Runtime의 코드 위치이고, 실행 역할은 Runtime이 쓰므로 둘 다 Runtime 다음에 지운다. 역할과 SSM 값은 `make destroy`가 에이전트를 찾는 곳이라 맨 뒤에 둔다. 그래서 중간에 멈춰도 다시 돌리면 그 에이전트를 다시 찾는다.
 
 이름은 모두 그 에이전트 하나의 것으로만 만든다. `Settings`와 `company_policy/policy_names.py`의 이름 함수로 만들고, 접두어로 넓게 찾아 지우지 않는다. 두 에이전트나 두 종류가 같은 이름을 만드는 일은 없다(위의 "정책 이름"). 그래서 `quality`를 반려해도 `quality_agent`의 `tool_quality_agent_...`, target `QualityAgent`, Runtime `hub_quality_agent`, 로그 그룹, 코드 묶음 `packages/quality_agent/`, 역할, SSM 값은 그대로다.
 
