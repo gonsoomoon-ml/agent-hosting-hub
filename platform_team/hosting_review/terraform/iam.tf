@@ -1,7 +1,7 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
 # found by running. The steps that handle submitted code (scan, deploy) can read the submission and hold no action
-# that grants. Scan only reads. Deploy can create a Runtime (of any name: IAM checks the create against runtime/*),
+# that grants. Scan only reads. Deploy can create a Runtime and its endpoint (of any name: IAM checks both creates against runtime/*),
 # update and read the hub's Runtimes, and pass a Runtime a role named <prefix>-agent-*-role; it cannot make a role, a
 # policy, a gateway target or an approval. Grant makes roles of that name only under the agent boundary (its role's
 # iam:PermissionsBoundary condition); a role of that name made outside the hub would not be bounded, and making one
@@ -199,7 +199,7 @@ resource "aws_iam_policy" "agent_boundary" {
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
 # The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
-# can create a Runtime of any name (CreateTheRuntime); everything else it does on a Runtime reaches only the Runtimes
+# can create a Runtime and its endpoint of any name (CreateTheRuntime); everything else it does on a Runtime reaches only the Runtimes
 # whose names start with <prefix>_ and their workload identities. It passes only roles named <prefix>-agent-*-role, to
 # AgentCore only.
 
@@ -225,14 +225,14 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime against runtime/* (the new Runtime has no ID yet), and denies it on runtime/<prefix>_*. So the role can create a Runtime of any name
-    actions   = ["bedrock-agentcore:CreateAgentRuntime"]
+    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (the new Runtime has no ID yet), and denies both on runtime/<prefix>_*. So the role can create a Runtime and its endpoint of any name
+    actions   = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateAgentRuntimeEndpoint"]
     resources = ["${local.agentcore}:runtime/*"]
   }
   statement {
     sid = "TheAgentsRuntime" # update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Not run yet with this code
     actions = ["bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
-      "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
+      "bedrock-agentcore:GetAgentRuntimeEndpoint",
     "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity"]
     resources = ["${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/default",
     "${local.agentcore}:workload-identity-directory/default/workload-identity/${var.prefix}_*"]
