@@ -1,7 +1,10 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
 # found by running (checks/whole-process). The steps that handle submitted code (scan, deploy) can read the
-# submission and grant nothing. The steps that grant (Lambda) never open the submitted code.
+# submission, and their own policies hold no action that grants. The deploy role, though, assumes the CDK bootstrap
+# roles, and with the default bootstrap these reach the CloudFormation execution role, which is AdministratorAccess:
+# in the default setup the separation is whole for scan only (hosting_review/README.md, the deploy step's known
+# limit). The steps that grant (Lambda) never open the submitted code.
 
 locals {
   agentcore  = "arn:aws:bedrock-agentcore:${local.region}:${local.account}"
@@ -192,7 +195,8 @@ resource "aws_iam_policy" "agent_boundary" {
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
 # The CLI path (agentcore deploy): CloudFormation creates the Runtime through the CDK bootstrap roles, so this role
 # needs no bedrock-agentcore action and no iam:PassRole. Known limit: the CDK roles lead to the CDK execution role,
-# which the default bootstrap makes broad (README.md).
+# which the default bootstrap makes AdministratorAccess, so code run in the deploy build is an administrator of the
+# account (README.md).
 
 data "aws_iam_policy_document" "deploy" {
   statement {

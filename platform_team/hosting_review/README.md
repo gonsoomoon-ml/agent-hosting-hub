@@ -2,7 +2,7 @@
 
 개발팀이 올린 에이전트를 허브에 올려도 되는지 자동으로 심사하고, 통과하면 올리고 승인한다. 카탈로그의 record가 승인 요청 상태(`PENDING_APPROVAL`)가 되면 EventBridge rule `<prefix>-on-submit`이 Step Functions의 state machine `<prefix>-review`를 시작한다. state machine은 순서와 기다림과 실패했을 때의 갈림만 맡고, 일은 단계마다 Lambda 함수나 CodeBuild 프로젝트가 한다. 어느 단계든 실패하면 알림 주제(`<prefix>-alerts`)에 알리고 심사를 멈춘다. 알림의 제목은 `Hosting review failed at <단계>`이고, 내용은 심사의 상태(에이전트의 신청서 `spec`, 실패한 단계 `failedStep`, 오류 `error`)를 담은 JSON이다. Scan이나 Deploy가 실패하면 `error`에 build의 기록이 들어 있고, 거기 적힌 로그 그룹과 stream에서 build 로그를 찾는다. Read가 실패하면 신청서를 읽기 전이므로 `spec` 대신 심사를 시작한 Registry의 이벤트(record의 ID)가 들어 있다(Step Functions의 `TestState`로 확인했다. 실제로 Read가 실패한 적은 아직 없다). record는 `PENDING_APPROVAL`에 남는다. 플랫폼팀이 사유를 적어 반려하면 record가 `REJECTED`가 되고 심사가 만든 것이 지워진다(아래 "반려").
 
-일을 나누는 기준은 하나다. 제출된 코드를 다루는 단계(Scan, Deploy)는 CodeBuild가 하고, 권한을 줄 수 없다. 권한을 주는 단계(Read, Grant, Entry, TestCall, Approve)는 Lambda가 하고, 제출된 코드를 열지 않는다. 단계마다 역할이 따로 있다.
+일을 나누는 기준은 하나다. 제출된 코드를 다루는 단계(Scan, Deploy)는 CodeBuild가 하고, 그 역할에는 권한을 주는 action이 없다. 권한을 주는 단계(Read, Grant, Entry, TestCall, Approve)는 Lambda가 하고, 제출된 코드를 열지 않는다. 단계마다 역할이 따로 있다. 다만 Deploy의 역할은 CDK bootstrap 역할을 거쳐 CloudFormation 실행 역할에 닿고, 기본 bootstrap에서 그 역할은 관리자 권한이다. 그래서 기본 구성에서 이 분리가 온전한 것은 Scan뿐이다(아래 "알려진 한계: 배포 단계의 권한").
 
 ## 개념도에서의 위치
 
@@ -53,9 +53,13 @@ Grant의 역할은 IAM 역할을 만들고 그 inline 정책을 쓸 수 있다. 
 
 ## 알려진 한계: 배포 단계의 권한
 
-배포 단계는 AgentCore CLI(`agentcore deploy`)로 올린다. CLI는 CDK를 쓰고, CDK는 계정의 bootstrap 역할(`cdk-hnb659fds-*`)을 맡아 CloudFormation 스택을 만든다. 배포 역할 자체는 이 bootstrap 역할을 맡는 권한만 갖는다. 다만 CloudFormation은 CDK의 실행 역할(`cdk-hnb659fds-cfn-exec-role-*`)로 자원을 만들고, 기본 bootstrap에서 이 실행 역할의 권한은 넓다(`AdministratorAccess`). 그래서 배포 단계에서는 역할을 나눈 효과가 약하다. 검사 단계의 분리는 그대로다.
+배포 단계는 AgentCore CLI(`agentcore deploy`)로 올린다. CLI는 CDK를 쓰고, CDK는 계정의 bootstrap 역할(`cdk-hnb659fds-*`)을 맡아 CloudFormation 스택을 만든다. 배포 역할 자체가 가진 권한은 다섯 가지다. 자기 build 로그 쓰기, 제출물과 허브의 코드 묶음 읽기, Transaction Search 설정 읽기(`xray:GetTraceSegmentDestination`), Runtime ARN을 SSM에 쓰기, 그리고 이 bootstrap 역할을 맡기다. 이 가운데 권한을 주는 action은 없다.
 
-운영 환경이라면 CDK를 전용 qualifier로 다시 bootstrap하고, 실행 역할에는 Runtime 스택에 필요한 권한만 담은 실행 정책(`--cloudformation-execution-policies`)을 준다. 배포 역할은 그 qualifier의 역할만 맡게 한다.
+그러나 bootstrap의 배포 역할(`cdk-hnb659fds-deploy-role-*`)은 어떤 스택이든 만들 수 있고, 그 스택에 CDK의 실행 역할(`cdk-hnb659fds-cfn-exec-role-*`)을 넘긴다. 기본 bootstrap에서 이 실행 역할의 권한은 `AdministratorAccess`다. 그래서 배포 build 안에서 코드를 실행할 수 있는 사람은 이 계정의 관리자와 같다. 기본 구성에서 역할의 분리가 온전한 것은 Scan뿐이다.
+
+지금 배포 build를 지키는 것은 제출된 파일이 그 안에서 실행되지 않게 하는 장치다. 배포 build는 wheel만 설치하므로 sdist의 `setup.py`가 돌지 않는다. 무엇을 설치할지는 플랫폼이 `requirements.txt`로 쓴 `pyproject.toml`에서 읽는다. 제출물에 든 `pyproject.toml`, `uv.lock`, `uv.toml`, `.python-version`은 지우고, uv는 설정 파일을 하나도 읽지 않는다(`UV_NO_CONFIG=1`). 그래서 제출된 파일은 배포 build에서 실행되지 않는다(제출물에 심은 `uv.toml`로 실제 CLI를 돌려 확인했다. [런타임 뼈대](runtime_skeleton/README.md)). 이 장치에 틈이 생기면 위의 관리자 권한이 그대로 드러난다.
+
+운영 환경이라면 CDK를 전용 qualifier로 다시 bootstrap하고, 실행 역할에는 Runtime 스택에 필요한 권한만 담은 실행 정책(`--cloudformation-execution-policies`)을 준다. 배포 역할은 그 qualifier의 역할만 맡게 한다. 그래야 배포 단계에서도 분리가 온전해진다.
 
 ## 알려진 한계: 시험 호출
 

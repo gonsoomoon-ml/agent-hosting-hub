@@ -11,7 +11,9 @@ def actions(doc):
     """Every action named in the `actions = [...]` lists of a policy document."""
     return [a for block in re.findall(r"actions\s*=\s*\[(.*?)\]", doc, re.S) for a in re.findall(r'"([^"]+)"', block)]
 
-def test_steps_that_handle_submitted_code_cannot_grant_or_approve():
+def test_steps_that_handle_submitted_code_cannot_grant_or_approve_by_their_own_policy():
+    """Their own policy documents only. The deploy role reaches more through the CDK bootstrap roles, which with the
+    default bootstrap lead to an AdministratorAccess execution role (hosting_review/README.md, the known limit)."""
     for step in ("scan", "deploy"):
         doc = document(step)
         for forbidden in ("agent-registry:Update", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:CreateGatewayTarget", "iam:CreateRole"):

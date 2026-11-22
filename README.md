@@ -101,7 +101,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 각 기능의 문서에 있다.
 
-- 배포 단계의 권한: CDK bootstrap 역할을 거치므로 배포 단계에서는 역할을 나눈 효과가 약하다. [호스팅 심사, 알려진 한계](platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
+- 배포 단계의 권한: 배포 역할은 CDK bootstrap 역할을 거쳐 CloudFormation 실행 역할에 닿고, 기본 bootstrap에서 그 역할은 관리자 권한이다. 그래서 기본 구성에서 역할의 분리가 온전한 것은 검사(Scan) 단계뿐이고, 배포 build 안에서 코드를 실행할 수 있으면 계정의 관리자와 같다. [호스팅 심사, 알려진 한계](platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
 - 시험 호출은 HTTP 상태만 보고 답의 내용은 보지 않는다. [호스팅 심사, 시험 호출](platform_team/hosting_review/README.md#알려진-한계-시험-호출)
 - 반려의 한계: 심사가 도는 동안에는 반려가 거부한다. 이미 승인된 에이전트의 새 버전에는 반려를 쓰지 않는다. [호스팅 심사, 반려의 한계](platform_team/hosting_review/README.md#한계)
 - 개발팀 역할의 카탈로그 권한은 모든 record에 걸린다. [개발팀의 권한](platform_team/dev_access/README.md#카탈로그-권한의-범위)

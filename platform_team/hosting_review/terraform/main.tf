@@ -1,7 +1,10 @@
 # The hosting review: a catalog record that asks for approval starts a Step Functions state machine.
 # Read, Grant, Entry, TestCall and Approve are Lambda functions (review_steps.py): they grant, and never open the
-# submitted code. Scan and Deploy are CodeBuild projects (the buildspecs in ../): they handle the submitted code and
-# can grant nothing. Every step has its own role (iam.tf). A failed step publishes to the alert topic.
+# submitted code. Scan and Deploy are CodeBuild projects (the buildspecs in ../): they handle the submitted code, and
+# their roles' own policies hold no action that grants. Deploy's role assumes the CDK bootstrap roles, which with the
+# default bootstrap lead to an AdministratorAccess execution role, so by default the separation is whole for Scan
+# only (../README.md, the deploy step's known limit). Every step has its own role (iam.tf). A failed step publishes
+# to the alert topic.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
