@@ -50,3 +50,26 @@ def ensure_runtime_target(c, gateway_id: str, target: str, runtime_arn: str, wai
     wait_status(lambda: c.ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=tid), ("READY",),
                 f"target {target}", timeout=wait, step=3)
     return tid
+
+
+def drop_target(c, gateway_id: str, target_id: str, target: str, wait: int = 300) -> bool:
+    """Delete a target and wait up to `wait` seconds until the gateway no longer has it. A target that is already
+    gone is fine: returns False. A target that fails to delete raises RuntimeError with the reasons."""
+    def _gone(e: ClientError) -> bool:
+        return e.response["Error"]["Code"] == "ResourceNotFoundException"
+    try:
+        c.ctl.delete_gateway_target(gatewayIdentifier=gateway_id, targetId=target_id)
+    except ClientError as e:
+        if _gone(e):
+            return False
+        raise
+
+    def read() -> dict:
+        try:
+            return c.ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=target_id)
+        except ClientError as e:
+            if _gone(e):
+                return {"status": "GONE"}
+            raise
+    wait_status(read, ("GONE",), f"target {target}", timeout=wait, step=3)
+    return True

@@ -42,19 +42,27 @@ def _client_error(code: str, message: str, op: str) -> ClientError:
     return ClientError({"Error": {"Code": code, "Message": message}}, op)
 
 
-class _Ctl:
-    """bedrock-agentcore-control: policies and gateway targets."""
+class _Client:
+    """One fake service. get_paginator(name).paginate(**kw) gives one page: the answer of the method of that name."""
 
     def __init__(self, owner):
         self.o = owner
 
+    def get_paginator(self, name):
+        return types.SimpleNamespace(paginate=lambda **kw: [getattr(self, name)(**kw)])
+
+
+class _Ctl(_Client):
+    """bedrock-agentcore-control: policies and gateway targets."""
+
     def list_policies(self, **kw):
-        return {"policies": [{"policyId": p["id"], "name": n} for n, p in self.o.policies.items()]}
+        return {"policies": [{"policyId": p["id"], "name": n, "definition": {p["kind"]: {"statement": p["statement"]}}}
+                             for n, p in self.o.policies.items()]}
 
     def create_policy(self, name, definition, **kw):
         pid = f"{name}-id"
-        statement = next(iter(definition.values()))["statement"]
-        rec = {"id": pid, "name": name, "statement": statement}
+        kind = next(iter(definition))
+        rec = {"id": pid, "name": name, "statement": definition[kind]["statement"], "kind": kind}
         self.o.policies[name] = rec
         self.o.created_policies.append(rec)
         return {"policyId": pid}
@@ -81,19 +89,52 @@ class _Ctl:
         return {"targetId": f"{name}-tid"}
 
     def get_gateway_target(self, gatewayIdentifier, targetId):
+        if targetId not in self.o.targets.values():
+            raise _client_error("ResourceNotFoundException", "no target", "GetGatewayTarget")
         return {"status": "READY"}
 
+    def delete_gateway_target(self, gatewayIdentifier, targetId):
+        name = next((n for n, t in self.o.targets.items() if t == targetId), None)
+        if name is None:
+            raise _client_error("ResourceNotFoundException", "no target", "DeleteGatewayTarget")
+        del self.o.targets[name]
+        return {"targetId": targetId, "status": "DELETING"}
 
-class _Iam:
+
+class _Iam(_Client):
+    """Roles: existing_roles (made before, each with the inline policy "agent") and roles (made by the test)."""
+
     def __init__(self, owner):
-        self.o = owner
+        super().__init__(owner)
         self.exceptions = types.SimpleNamespace(NoSuchEntityException=type("NoSuchEntityException", (ClientError,), {}))
 
-    def get_role(self, RoleName):
+    def _no_role(self, RoleName, op):
         if RoleName not in self.o.existing_roles and RoleName not in self.o.roles:
-            raise self.exceptions.NoSuchEntityException(
-                {"Error": {"Code": "NoSuchEntity", "Message": "no role"}}, "GetRole")
+            raise self.exceptions.NoSuchEntityException({"Error": {"Code": "NoSuchEntity", "Message": "no role"}}, op)
+
+    def get_role(self, RoleName):
+        self._no_role(RoleName, "GetRole")
         return {"Role": {"Arn": f"arn:aws:iam::{ACCOUNT}:role/{RoleName}"}}
+
+    def list_roles(self, **kw):
+        return {"Roles": [{"RoleName": n} for n in sorted(self.o.existing_roles | set(self.o.roles))]}
+
+    def list_role_policies(self, RoleName):
+        self._no_role(RoleName, "ListRolePolicies")
+        return {"PolicyNames": sorted(self.o.inline.get(RoleName, ()))}
+
+    def delete_role_policy(self, RoleName, PolicyName):
+        if PolicyName not in self.o.inline.get(RoleName, ()):
+            raise self.exceptions.NoSuchEntityException(
+                {"Error": {"Code": "NoSuchEntity", "Message": "no policy"}}, "DeleteRolePolicy")
+        self.o.inline[RoleName].discard(PolicyName)
+
+    def delete_role(self, RoleName):
+        self._no_role(RoleName, "DeleteRole")
+        if self.o.inline.get(RoleName):
+            raise _client_error("DeleteConflict", "Cannot delete entity, must delete policies first.", "DeleteRole")
+        self.o.existing_roles.discard(RoleName)
+        self.o.roles.pop(RoleName, None)
 
     def create_role(self, RoleName, AssumeRolePolicyDocument, PermissionsBoundary=None, **kw):
         self.o.roles[RoleName] = {"trust": json.loads(AssumeRolePolicyDocument), "boundary": PermissionsBoundary}
@@ -101,21 +142,72 @@ class _Iam:
 
     def put_role_policy(self, RoleName, PolicyName, PolicyDocument):
         self.o.roles.setdefault(RoleName, {})["permissions"] = json.loads(PolicyDocument)
+        self.o.inline.setdefault(RoleName, set()).add(PolicyName)
 
 
-class _Ssm:
-    def __init__(self, owner):
-        self.o = owner
-
+class _Ssm(_Client):
     def get_parameter(self, Name):
+        if Name in self.o.parameters:
+            return {"Parameter": {"Name": Name, "Value": self.o.parameters[Name]}}
         if self.o.runtime_arn is None:
             raise _client_error("ParameterNotFound", Name, "GetParameter")
         return {"Parameter": {"Value": self.o.runtime_arn}}
 
+    def get_parameters_by_path(self, Path, Recursive=False, **kw):
+        """Matches by plain prefix, wider than SSM's hierarchy: code that trusts the path alone is caught."""
+        return {"Parameters": [{"Name": n, "Value": v} for n, v in sorted(self.o.parameters.items()) if n.startswith(Path)]}
 
-class _Reg:
-    def __init__(self, owner):
-        self.o = owner
+    def delete_parameter(self, Name):
+        if Name not in self.o.parameters:
+            raise _client_error("ParameterNotFound", Name, "DeleteParameter")
+        del self.o.parameters[Name]
+
+
+class _Cfn(_Client):
+    """CloudFormation: stacks {name: {"status", "reason"}}. A stack deletes at once, or ends DELETE_FAILED with
+    stack_delete_reason."""
+
+    def describe_stacks(self, StackName):
+        st = self.o.stacks.get(StackName)
+        if st is None:
+            raise _client_error("ValidationError", f"Stack with id {StackName} does not exist", "DescribeStacks")
+        return {"Stacks": [{"StackName": StackName, "StackStatus": st["status"],
+                            **({"StackStatusReason": st["reason"]} if st.get("reason") else {})}]}
+
+    def delete_stack(self, StackName):
+        if StackName in self.o.stacks:
+            if self.o.stack_delete_reason:
+                self.o.stacks[StackName] = {"status": "DELETE_FAILED", "reason": self.o.stack_delete_reason}
+            else:
+                del self.o.stacks[StackName]
+        return {}
+
+
+class _Logs(_Client):
+    def describe_log_groups(self, logGroupNamePrefix, **kw):
+        return {"logGroups": [{"logGroupName": n} for n in sorted(self.o.log_groups) if n.startswith(logGroupNamePrefix)]}
+
+    def delete_log_group(self, logGroupName):
+        if logGroupName not in self.o.log_groups:
+            raise _client_error("ResourceNotFoundException", "The specified log group does not exist.", "DeleteLogGroup")
+        self.o.log_groups.discard(logGroupName)
+
+
+class _Reg(_Client):
+    """The catalog: the record quality_agent (rec-1, status record_status; None means no record) and other_records."""
+
+    def list_registry_records(self, registryId, **kw):
+        main = [{"name": "quality_agent", "recordId": "rec-1", "recordType": "AGENT", "status": self.o.record_status}]
+        return {"registryRecords": (main if self.o.record_status else []) + list(self.o.other_records)}
+
+    def delete_registry_record(self, registryId, recordId):
+        if recordId == "rec-1" and self.o.record_status:
+            self.o.record_status = None
+        elif any(r["recordId"] == recordId for r in self.o.other_records):
+            self.o.other_records = [r for r in self.o.other_records if r["recordId"] != recordId]
+        else:
+            raise _client_error("ResourceNotFoundException", "no record", "DeleteRegistryRecord")
+        return {}
 
     def get_registry_record(self, registryId, recordId):
         return {"name": "quality_agent", "status": self.o.record_status,
@@ -127,26 +219,31 @@ class _Reg:
 
 
 class FakeClients:
-    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg).
+    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, cfn, logs).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
-    Recorded: created_policies (id, name, statement), deleted_policies, policies, roles, targets,
-    posts (url, body), status_reason."""
+    Recorded: created_policies (id, name, statement), deleted_policies, policies, roles, inline (role -> inline
+    policy names), targets, posts (url, body), record_status, status_reason. Tests may also fill stacks, log_groups,
+    parameters and other_records."""
 
     latest = None       # the most recently built fake, for the patched signed_post
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
-                 policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None):
+                 policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, stack_delete_reason=None):
         self.record_spec = SPEC if record_spec is None else record_spec
         self.record_status, self.status_reason = record_status, None
         self.existing_policies, self.existing_roles = set(existing_policies), set(existing_roles)
         self.policy_status, self.policy_reasons = policy_status, policy_reasons
         self.runtime_arn = runtime_arn
         self.http = list(http or [(200, '{"answer": "ok"}'), (403, "refused")])
-        self.policies = {n: {"id": f"{n}-id", "name": n, "statement": ""} for n in self.existing_policies}
+        self.policies = {n: {"id": f"{n}-id", "name": n, "statement": "", "kind": "cedar"} for n in self.existing_policies}
         self.created_policies, self.deleted_policies = [], []
         self.roles, self.targets, self.target_arns, self.posts = {}, {}, {}, []
+        self.inline = {r: {"agent"} for r in self.existing_roles}
+        self.stacks, self.log_groups, self.parameters, self.other_records = {}, set(), {}, []
+        self.stack_delete_reason = stack_delete_reason
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
+        self.cfn, self.logs = _Cfn(self), _Logs(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):

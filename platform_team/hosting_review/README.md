@@ -1,6 +1,6 @@
 # 호스팅 심사
 
-개발팀이 올린 에이전트를 허브에 올려도 되는지 자동으로 심사하고, 통과하면 올리고 승인한다. 카탈로그의 record가 승인 요청 상태(`PENDING_APPROVAL`)가 되면 EventBridge rule `<prefix>-on-submit`이 Step Functions의 state machine `<prefix>-review`를 시작한다. state machine은 순서와 기다림과 실패했을 때의 갈림만 맡고, 일은 단계마다 Lambda 함수나 CodeBuild 프로젝트가 한다. 어느 단계든 실패하면 알림 주제(`<prefix>-alerts`)에 알리고 심사를 멈춘다. record는 `PENDING_APPROVAL`에 남는다.
+개발팀이 올린 에이전트를 허브에 올려도 되는지 자동으로 심사하고, 통과하면 올리고 승인한다. 카탈로그의 record가 승인 요청 상태(`PENDING_APPROVAL`)가 되면 EventBridge rule `<prefix>-on-submit`이 Step Functions의 state machine `<prefix>-review`를 시작한다. state machine은 순서와 기다림과 실패했을 때의 갈림만 맡고, 일은 단계마다 Lambda 함수나 CodeBuild 프로젝트가 한다. 어느 단계든 실패하면 알림 주제(`<prefix>-alerts`)에 알리고 심사를 멈춘다. record는 `PENDING_APPROVAL`에 남는다. 플랫폼팀이 사유를 적어 반려하면 record가 `REJECTED`가 되고 심사가 만든 것이 지워진다(아래 "반려").
 
 일을 나누는 기준은 하나다. 제출된 코드를 다루는 단계(Scan, Deploy)는 CodeBuild가 하고, 권한을 줄 수 없다. 권한을 주는 단계(Read, Grant, Entry, TestCall, Approve)는 Lambda가 하고, 제출된 코드를 열지 않는다. 단계마다 역할이 따로 있다.
 
@@ -40,6 +40,52 @@ Grant의 역할은 IAM 역할을 만들고 그 inline 정책을 쓸 수 있다. 
 
 운영 환경이라면 CDK를 전용 qualifier로 다시 bootstrap하고, 실행 역할에는 Runtime 스택에 필요한 권한만 담은 실행 정책(`--cloudformation-execution-policies`)을 준다. 배포 역할은 그 qualifier의 역할만 맡게 한다.
 
+## 반려
+
+심사가 실패하면 state machine은 실패한 단계에서 멈추고 알림을 보낸다. record는 `PENDING_APPROVAL`에 남고, 앞 단계가 만든 것도 남는다. Grant의 실행 역할과 `tool_permit`, Deploy의 Runtime, Entry의 target과 정책이다. 플랫폼팀은 알림을 읽고 사유를 적어 반려한다. 반려는 record를 `REJECTED`로 바꾸고 남은 것을 지운다.
+
+```
+platform_team/hosting_review/reject.sh <에이전트> "<사유>"
+platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has published advisories"
+```
+
+어느 폴더에서 불러도 된다. 지운 것을 한 줄에 하나씩 찍는다. 실패하면 무엇이 실패했는지 한 줄로 찍고 0이 아닌 값으로 끝난다. 플랫폼팀의 자격 증명으로 돈다.
+
+- 사유는 꼭 적는다(255자까지). 팀은 record에서 사유를 읽고, 고친 것을 다시 제출한다. 다시 제출하면 심사가 처음부터 돈다.
+- record의 상태에 따라 다르게 한다. `PENDING_APPROVAL`이면 `REJECTED`로 바꾸고 지운다. Registry가 반려를 받는 것은 승인 요청 상태의 record뿐이다. 이미 `REJECTED`면 상태와 사유는 그대로 두고 지우는 일만 다시 한다. 앞의 실행이 중간에 멈췄을 때 쓴다. `APPROVED`면 거부한다(`approved agents are stopped, not rejected`). 승인된 에이전트는 반려하지 않고 정지한다. 그 밖의 상태이거나 record가 없어도 거부한다. 거부하면 아무것도 바꾸지 않는다.
+
+### 지우는 것과 순서
+
+| 순서 | 무엇 | 만든 단계 | 이름 | 지우는 방법 |
+|---|---|---|---|---|
+| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `entry_permit_review_<에이전트>`, 카탈로그의 도구마다 `tool_permit_<에이전트>_<Target>_<도구>`, `guard_secret_<에이전트>` (이 순서) | `DeletePolicy`. 사라질 때까지 기다린다. |
+| 2 | 에이전트 게이트웨이의 target | Entry | 에이전트 이름의 CamelCase(예: `QualityAgent`) | `DeleteGatewayTarget`. 사라질 때까지 기다린다. |
+| 3 | Runtime이 든 CloudFormation 스택 | Deploy(`agentcore deploy`, CDK) | `AgentCore-<프로젝트>-default` | `DeleteStack`. 사라질 때까지 기다린다(15분까지). `DELETE_FAILED`면 스택 이름과 이유를 말하고 멈춘다. |
+| 4 | Runtime의 로그 그룹 | Runtime 자신 | `/aws/bedrock-agentcore/runtimes/<Runtime 이름>-<ID 10자>-<endpoint>` | `DeleteLogGroup` |
+| 5 | 실행 역할 | Grant | `<prefix>-agent-<에이전트>-role` | inline 정책을 먼저 지우고(`DeleteRolePolicy`) 역할을 지운다(`DeleteRole`). 권한 경계는 역할에 달려 있을 뿐이라 그대로 둔다. |
+| 6 | SSM 값 | Deploy | `/<prefix>/agents/<에이전트>/` 아래 | `DeleteParameter` |
+
+순서에는 이유가 있다. 정책은 들여보내는 정책을 먼저 지우고 막는 `guard_secret`을 마지막에 지운다. 그래서 지우는 동안 막는 정책 없이 들어오는 때가 없다. target은 Runtime을 가리키므로 Runtime보다 먼저 지운다. 로그 그룹은 Runtime이 사라진 뒤에 지워야 다시 생기지 않는다. 실행 역할은 Runtime이 쓰므로 Runtime 다음에 지운다. 역할과 SSM 값은 `make destroy`가 에이전트를 찾는 곳이라 맨 뒤에 둔다. 그래서 중간에 멈춰도 다시 돌리면 그 에이전트를 다시 찾는다.
+
+이름은 모두 그 에이전트 하나의 것으로만 만든다. `Settings`와 심사 단계의 이름 함수(`review_steps.tool_permit_name` 등)로 만들고, 접두어로 넓게 찾아 지우지 않는다. 그래서 `quality`를 반려해도 `quality_agent`의 `tool_permit_quality_agent_...`, target `QualityAgent`, 스택, 로그 그룹, 역할, SSM 값은 그대로다. 예외가 하나 있다. `entry_permit_<에이전트>`와 `entry_permit_review_<에이전트>`는 두 에이전트의 이름이 같아질 수 있다. `review_quality`의 사용자 진입 정책과 `quality`의 시험 호출 정책이 둘 다 `entry_permit_review_quality`다. 그래서 이 두 가지는 정책의 statement가 그 에이전트의 target을 가리킬 때만 지운다.
+
+없는 것은 이미 지워진 것으로 본다. 그래서 두 번 돌려도 되고, 두 번째에는 지우는 것이 없다. 그 밖의 오류(권한이 없을 때 같은)가 나면 어느 단계에서 멈췄는지와 그 전에 지운 것을 말하고 멈춘다. 뒤의 단계는 돌지 않는다.
+
+### 남기는 것
+
+- 제출함의 zip. 무엇이 제출됐는지의 기록이다. bucket은 `terraform destroy`가 지운다.
+- CDK가 계정의 CDK bootstrap bucket에 올린 사본. 이 bucket은 다른 스택과 함께 쓰므로 허브가 지우지 않는다.
+- 카탈로그 record. `REJECTED`와 사유가 남아 팀이 읽고 다시 제출한다.
+
+### `make destroy`
+
+`make destroy`는 확인을 받은 뒤, `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지우고 `terraform destroy`를 돌린다.
+
+### 한계
+
+- 심사가 돌고 있는 동안에는 반려하지 않는다. 아직 도는 단계가 지운 것을 다시 만든다. 알림이나 Step Functions 콘솔에서 실행이 `FAILED`로 멈춘 것을 확인한 뒤 반려한다.
+- 이미 승인된 에이전트의 새 버전이 심사에서 떨어졌을 때는 반려하지 않는다. 새 버전도 같은 이름의 역할, 스택, target, 정책을 쓰므로 반려하면 운영 중인 에이전트까지 지워진다. 새 버전의 흐름은 계획 2가 다룬다.
+
 ## 파일
 
 | 파일 | 역할 |
@@ -52,3 +98,5 @@ Grant의 역할은 IAM 역할을 만들고 그 inline 정책을 쓸 수 있다. 
 | `lambda_handler.py` | Lambda의 진입점. 환경 변수 `ACTION`이 단계를 고르고, 제한 시간 60초 전을 단계의 마감으로 넘긴다. |
 | `buildspec_scan.yml`, `submission_check.py` | 검사 단계. 제출물의 압축을 안전하게 풀고 모양과 `requirements.txt`를 확인한 뒤 `pip-audit`를 돌린다. |
 | `buildspec_deploy.yml`, `deploy_build.py`, `runtime_skeleton/` | 배포 단계. 플랫폼의 배포 설정에 제출된 코드를 넣어 `agentcore deploy`를 돌린다(`runtime_skeleton/README.md`). |
+| `reject.sh`, `reject_agent.py` | 반려. record를 `REJECTED`로 바꾸고 심사가 만든 것을 지운다(위의 "반려"). |
+| `agent_cleanup.py` | 심사가 에이전트 하나에 만든 것을 지운다(`remove_agent`). `make destroy`는 모든 에이전트에 부른다(`clean_agents`). |

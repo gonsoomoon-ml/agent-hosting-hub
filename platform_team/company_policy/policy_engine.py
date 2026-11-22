@@ -36,12 +36,13 @@ def ensure_policy(c, engine_id: str, name: str, statement: str, guardrail: bool 
     return pid
 
 
-def drop_policy(c, engine_id: str, policy_id: str) -> None:
-    """Delete a policy and wait until it is gone. A policy that is already gone is fine."""
+def drop_policy(c, engine_id: str, policy_id: str) -> bool:
+    """Delete a policy and wait until it is gone. A policy that is already gone is fine: returns False."""
     try:
         c.ctl.delete_policy(policyEngineId=engine_id, policyId=policy_id)
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceNotFoundException":
-            return
+            return False
         raise
     c.ctl.get_waiter("policy_deleted").wait(policyEngineId=engine_id, policyId=policy_id)
+    return True

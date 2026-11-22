@@ -17,6 +17,7 @@ from platform_team.shared_code.config import Settings
 _SERVICES = {
     "iam": "iam", "s3": "s3", "lam": "lambda", "sts": "sts", "ssm": "ssm", "sns": "sns", "sqs": "sqs",
     "sfn": "stepfunctions", "events": "events", "codebuild": "codebuild", "cw": "cloudwatch", "logs": "logs",
+    "cfn": "cloudformation",
     "ctl": "bedrock-agentcore-control", "data": "bedrock-agentcore",
     "reg": "agent-registry-control", "disc": "agent-registry",
 }
