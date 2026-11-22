@@ -1,0 +1,1 @@
+permit (principal == AgentCore::IamEntity::"arn:aws:sts::<account>:assumed-role/<role_name>", action == AgentCore::Action::"<target>___POST:/invocations", resource == AgentCore::Gateway::"<gateway_arn>");

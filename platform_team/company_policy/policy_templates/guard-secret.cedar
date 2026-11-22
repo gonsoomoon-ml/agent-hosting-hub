@@ -1,0 +1,1 @@
+forbid (principal, action == AgentCore::Action::"<target>___POST:/invocations", resource == AgentCore::Gateway::"<gateway_arn>") when guardrails { BedrockGuardrails::SensitiveInformation(["AWS_ACCESS_KEY", "AWS_SECRET_KEY", "PASSWORD"], [context.input.prompt]).count() > 0 };
