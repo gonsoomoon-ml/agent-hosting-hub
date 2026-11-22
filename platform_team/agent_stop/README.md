@@ -27,22 +27,22 @@ platform_team/agent_stop/resume.sh <에이전트>                         # 다�
    forbid (principal, action == AgentCore::Action::"<Target>___POST:/invocations", resource == AgentCore::Gateway::"<에이전트 게이트웨이 ARN>") unless { principal == AgentCore::IamEntity::"arn:aws:sts::<ACCOUNT>:assumed-role/<prefix>-review-testcall-role" };
    ```
 
-2. 세션을 끝낸다. 세션마다 `StopRuntimeSession`(`runtimeSessionId`, `agentRuntimeArn`, `qualifier` `DEFAULT`)을 부른다. 끝내지 못한 세션은 이유와 함께 한 줄(`session <ID>: not stopped (<이유>)`)로 찍고 다음 세션으로 넘어간다. 하나라도 끝내지 못하면 명령은 0이 아닌 값으로 끝난다. 진입은 그때도 막혀 있다.
+2. 세션을 끝낸다. 세션마다 `StopRuntimeSession`(`runtimeSessionId`, `agentRuntimeArn`, `qualifier` `DEFAULT`)을 부른다. 끝내지 못한 세션은 이유와 함께 한 줄(`session <ID>: not stopped (<이유>)`)로 찍고 다음 세션으로 넘어간다. 하나라도 끝내지 못하면 명령은 0이 아닌 값으로 끝난다. 만든 멈춤 정책은 그때도 지우지 않는다.
 
-진입을 먼저 막는 이유: 세션을 먼저 끝내면, 끝내는 사이에 사용자의 새 호출이 새 세션을 열 수 있다. 그래서 진입을 먼저 막고, 세션은 정책이 `ACTIVE`가 된 뒤에 찾는다. 막기 직전에 열린 세션도 그 목록에 든다.
+진입을 먼저 막는 이유: 세션을 먼저 끝내면, 끝내는 사이에 사용자의 새 호출이 새 세션을 열 수 있다(헤더 없는 호출도 세션이 되었다. 아래 "세션을 어디서 찾나"의 2026-11-22 관찰). 그래서 진입을 먼저 막는다. 세션은 정책이 `ACTIVE`가 된 뒤에 찾으므로, 그때 stream이 있는 세션은 막기 직전에 열린 것이라도 목록에 든다. 세션을 연 뒤 stream이 얼마 만에 생기는지는 확인하지 않았다(2026-11-22에 요청을 연 지 30초에는 있었다).
 
 멈춤은 에이전트의 도구 permit을 지우지 않는다. 아래의 관찰처럼 세션을 끝내면 돌던 일이 멎었기 때문이다.
 
 2026-11-22의 확인 시험에서 본 것(두 번):
 
-- 같은 문장의 정책 `stop_agent_quality_agent`가 13초 만에 `ACTIVE`가 되었고, 그 뒤 사용자의 첫 호출부터 403이었다. 본문이 정책의 이름을 담는다: `Request Denied: Gateway Target request not allowed due to policy enforcement [Policy evaluation denied due to stop_agent_quality_agent-<10자>]`. 이 에이전트는 승인된 에이전트였다. 곧 사용자를 들이는 `entry_permit_quality_agent`가 있는데도 forbid가 거부했다.
+- 같은 문장의 정책 `stop_agent_quality_agent`가 13초 만에 `ACTIVE`가 되었고, 그 뒤 사용자의 첫 호출부터 403이었다. 본문이 정책의 이름을 담는다: `Request Denied: Gateway Target request not allowed due to policy enforcement [Policy evaluation denied due to stop_agent_quality_agent-<10자>]`. 확인 시험은 두 에이전트가 승인된 허브(`make deploy seed e2e` 뒤)에서 돌았고, 승인은 사용자를 들이는 `entry_permit_<에이전트>`를 건다. 그런 에이전트를 forbid가 거부한 것이다. 정책을 지운 뒤 사용자의 호출은 다시 200이었다(아래 "재개").
 - 5초마다 도구를 부르며 도는 요청에 `StopRuntimeSession`을 부르자 `statusCode` 200이 돌아왔고, 돌던 일은 그 뒤 10초에서 16초 사이에 멎었다. 멈춘 요청의 호출자는 멈춘 지 약 22초 뒤에 HTTP 500(`{"message":"An unexpected error occurred while processing the request."}`)을 받았다.
 
-같은 명령을 두 번 돌리면 정책은 하나로 남고, 그때 찾은 세션을 다시 끝낸다.
+같은 명령을 두 번 돌리면 정책은 하나로 남고, 그때 찾은 세션마다 `StopRuntimeSession`을 다시 부른다.
 
 ## 멈춘 동안에도 심사의 시험 호출이 지나가는 이유
 
-멈춤 정책의 `unless` 때문이다. forbid는 심사의 시험 호출 역할(`<prefix>-review-testcall-role`)의 호출에는 걸리지 않는다. 그래서 팀이 고친 버전을 제출하면, 에이전트가 멈춘 동안에도 그 심사의 TestCall 단계가 에이전트를 게이트웨이로 부를 수 있다.
+멈춤 정책의 `unless` 때문이다. 문장은 심사의 시험 호출 역할(`<prefix>-review-testcall-role`)인 호출을 forbid에서 뺀다. 그래서 팀이 고친 버전을 제출하면, 에이전트가 멈춘 동안에도 그 심사의 TestCall 단계가 에이전트를 게이트웨이로 부를 수 있다. 그렇게 되는 것은 아래의 관찰로 봤다.
 
 2026-11-22의 확인 시험에서 이 정책이 걸린 동안 시험 호출 Lambda(`<prefix>-review-testcall`)를 직접 부르자 두 호출이 모두 기대대로였다(보통 질문은 200, 예시 access key가 든 질문은 403). 그 앞뒤의 사용자 호출은 403이었다. 고친 버전의 심사 전체를 멈춘 동안 돌려 보지는 않았다.
 
@@ -54,11 +54,11 @@ platform_team/agent_stop/resume.sh <에이전트>                         # 다�
 
 그래서 이렇게 한다.
 
-- 최근이란: stream의 시간 셋, 곧 만든 때(`creationTime`), 마지막 이벤트(`lastEventTimestamp`), 마지막 수집(`lastIngestionTime`) 가운데 가장 늦은 것이 지난 30분 안이다. 만든 때는 stream이 생길 때 정해지므로 1분 전에 시작한 세션도 찾는다. 서비스 모델의 `DescribeLogStreams` 설명(botocore 1.44.9)은 나머지 두 시간이 바로 맞지 않고 보통 한 시간 안에 갱신된다고 적는다(여기서는 확인하지 않았다).
+- 최근이란: stream의 시간 셋, 곧 만든 때(`creationTime`), 마지막 이벤트(`lastEventTimestamp`), 마지막 수집(`lastIngestionTime`) 가운데 가장 늦은 것이 지난 30분 안이다. 만든 때는 stream이 생길 때 정해지므로, 1분 전에 생긴 stream의 세션도 찾는다. 세션을 연 뒤 stream이 얼마 만에 생기는지는 확인하지 않았다(2026-11-22에 요청을 연 지 30초에는 있었다). 서비스 모델의 `DescribeLogStreams` 설명(botocore 1.44.9)은 나머지 두 시간이 바로 맞지 않고 보통 한 시간 안에 갱신된다고 적는다(여기서는 확인하지 않았다).
 - 그래서 30분보다 오래 돌고 있는 세션은 마지막 이벤트나 수집 시간이 지난 30분 안으로 갱신되어 있을 때만 찾는다. 갱신이 늦으면 찾지 못한다. 그런 세션은 `--session <ID>`로 준다.
 - 30분 안에 stream이 있는 세션은 이미 끝났어도 끝내려 한다. 이미 끝난 세션이나 Runtime이 모르는 세션에 `StopRuntimeSession`이 무엇을 돌려주는지는 해 보지 않았다. 거부하면 그 세션은 끝내지 못한 것으로 찍히고, 명령은 0이 아닌 값으로 끝난다.
 - 서비스 모델은 `runtimeSessionId`를 33~256자로 정한다. 그보다 짧은 이름의 stream은 건너뛴다. `--session`으로 준 ID가 그 길이가 아니면 보내지 않고 끝내지 못한 것으로 찍는다.
-- 로그 그룹이 없으면(한 번도 불리지 않은 에이전트) 끝낼 세션이 없다.
+- 로그 그룹이 없으면 끝낼 세션 없이 넘어간다(오류로 멈추지 않는다). Runtime의 로그 그룹이 언제 생기는지는 확인하지 않았다.
 - 서비스 모델의 설명대로 `DescribeLogStreams`는 이름의 앞부분(`logStreamNamePrefix`)과 이벤트 시간 순서(`orderBy` `LastEventTime`)를 함께 받지 않는다. 그래서 앞부분으로 모든 페이지를 읽고, 시간은 코드가 고른다.
 
 Runtime의 ARN은 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에서 읽는다. 이 값은 심사의 배포 역할이 쓸 수 있다. 그래서 그 에이전트의 Runtime(이 계정과 리전의 `runtime/<prefix>_<에이전트>-<10자>`)의 ARN이 아니면, 정책을 만들거나 세션을 끝내기 전에 거부한다. 에이전트 게이트웨이에 그 에이전트의 진입 target이 없을 때도 아무것도 하지 않고 거부한다.
@@ -70,7 +70,7 @@ Runtime의 ARN은 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에서 읽는
 ## 멈춤과 재개가 바꾸지 않는 것
 
 - 멈춘 에이전트도 `entry_permit_<에이전트>`를 그대로 갖는다. 멈춤 정책은 그 옆에 거는 forbid다. 멈춤도 재개도 진입 permit, 도구 permit, guard, 전사 정책, Runtime을 건드리지 않는다.
-- 그래서 반려와 심사가 보는 것은 바뀌지 않는다. 반려는 멈춤 정책을 보지 않는다. `entry_permit_<에이전트>`가 있는지로 정하고, 그 permit이 있으면 아무것도 지우지 않고 그 permit이 있다는 것만 말한다. 멈춘 에이전트에도 반려는 멈추기 전과 같은 일을 한다. 심사는 멈춤 정책을 만들지도 지우지도 않는다. 그래서 고친 버전이 승인되어도 에이전트는 `resume.sh`를 돌릴 때까지 멈춰 있다.
+- 그래서 반려와 심사가 보는 것은 바뀌지 않는다. 반려는 멈춤 정책을 보지 않는다. `entry_permit_<에이전트>`가 있는지로 정하고, 그 permit이 있으면 아무것도 지우지 않고 그 permit이 있다는 것만 말한다. 멈춘 에이전트에도 반려는 멈추기 전과 같은 일을 한다. 심사는 멈춤 정책을 만들지도 지우지도 않는다. 그래서 고친 버전이 승인되어도 멈춤 정책은 `resume.sh`를 돌릴 때까지 남는다.
 - 반려와 `make destroy`가 에이전트의 것을 지울 때는 멈춤 정책도 지운다. 정책 가운데 가장 나중이다([호스팅 심사, 지우는 것과 순서](../hosting_review/README.md#지우는-것과-순서)).
 
 ## 한계
@@ -78,7 +78,7 @@ Runtime의 ARN은 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에서 읽는
 - 게이트웨이의 진입만 막는다. Runtime을 직접 부르는 길은 남는다. 이 허브를 만들기 전 2026-11-21의 확인 실행(따로 만든 echo 에이전트, 예외가 없는 forbid)에서, 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었다. Runtime의 resource-based policy로 직접 호출을 막는 것은 해 보지 않았다.
 - harness 에이전트는 에이전트 게이트웨이에 진입 target이 없어 이 명령으로 멈출 수 없다. `stop.sh`는 진입 target이 없는 에이전트를 거부한다.
 - 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다(위의 "세션을 어디서 찾나").
-- 멈춘 동안 `stop.sh`를 다시 돌리면 그때 찾은 세션을 모두 끝낸다. 그사이에 심사의 시험 호출이 연 세션도 30분 안이면 그 안에 든다.
+- 멈춘 동안 `stop.sh`를 다시 돌리면 그때 찾은 세션마다 `StopRuntimeSession`을 부른다. 그사이에 심사의 시험 호출이 연 세션도 그 stream이 지난 30분 안의 것이면 그 안에 든다.
 - AWS에서 해 보지 않은 것: 두 명령 자체, 에이전트가 모델의 답을 기다리는 동안 멈추기, 끝낸 세션 ID로 다시 부르기, Runtime이 모르는 세션에 `StopRuntimeSession`.
 - 명령이 부르는 API는 `ListGatewayTargets`, `GetParameter`(SSM), `ListPolicies`, `CreatePolicy`, `GetPolicy`, `DeletePolicy`, `DescribeLogStreams`, `StopRuntimeSession`이다. 이것에 필요한 IAM 권한은 확인하지 않았다. 확인 시험은 관리자 권한의 자격 증명으로 돌았다.
 

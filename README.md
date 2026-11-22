@@ -113,4 +113,4 @@ CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `
 - 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. `requirements.txt`에 적은 줄은 검사와 배포가 같은 파일을 쓴다. [호스팅 심사, requirements.txt 규칙](platform_team/hosting_review/README.md#requirementstxt-규칙)
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)
 - 커스텀 가드레일: interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부한다(알람이 알린다). 스트리밍 응답과, 에이전트를 둔 게이트웨이 너머의 호출은 이 리포의 코드로 확인하지 않았다. [커스텀 가드레일](platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
-- 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남는다. harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다. `stop.sh`와 `resume.sh`는 아직 AWS에서 돌려 보지 않았다. [에이전트 멈추기와 재개, 한계](platform_team/agent_stop/README.md#한계)
+- 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남는다(2026-11-21의 확인 실행에서 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었다). harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다. `stop.sh`와 `resume.sh`는 아직 AWS에서 돌려 보지 않았다. [에이전트 멈추기와 재개, 한계](platform_team/agent_stop/README.md#한계)
