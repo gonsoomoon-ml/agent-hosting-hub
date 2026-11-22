@@ -1,14 +1,17 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
 # found by running. The steps that handle submitted code (scan, deploy) can read the submission and hold no action
-# that grants. Scan only reads. Deploy can create a Runtime and its endpoint (of any name: IAM checks both creates against runtime/*),
-# update and read the hub's Runtimes, and pass a Runtime a role named <prefix>-agent-*-role; it cannot make a role, a
-# policy, a gateway target or an approval. Grant makes roles of that name only under the agent boundary (its role's
-# iam:PermissionsBoundary condition); a role of that name made outside the hub would not be bounded, and making one
-# takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code that
-# runs in the deploy build could change another agent's Runtime or pass it another agent's role; and such code could
-# create a Runtime whose name does not start with <prefix>_, which the hub's cleanup does not find
-# (hosting_review/README.md, the known limit).
+# that grants. Scan only reads. Deploy can create a Runtime and its endpoint: the policy allows both creates on
+# runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so it does not hold a
+# create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after
+# its ID, and the role reaches workload identities only for <prefix>_* names), and a condition key was not looked into.
+# Deploy can update and read the hub's Runtimes and pass a Runtime a role named <prefix>-agent-*-role; it cannot make a
+# role, a policy, a gateway target or an approval. Grant makes roles of that name only under the agent boundary (its
+# role's iam:PermissionsBoundary condition); a role of that name made outside the hub would not be bounded, and making
+# one takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code
+# that runs in the deploy build could change another agent's Runtime or pass it another agent's role; and the policy
+# leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
+# cleanup would not find (hosting_review/README.md, the known limit).
 # The steps that grant (Lambda) never open the submitted code.
 
 locals {
@@ -199,8 +202,9 @@ resource "aws_iam_policy" "agent_boundary" {
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
 # The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
-# can create a Runtime and its endpoint of any name (CreateTheRuntime); everything else it does on a Runtime reaches only the Runtimes
-# whose names start with <prefix>_ and their workload identities. It passes only roles named <prefix>-agent-*-role, to
+# creates a Runtime and its endpoint under CreateTheRuntime, on runtime/*, which does not hold a create to the hub's
+# names; everything else it does on a Runtime reaches only the Runtimes whose names start with <prefix>_ and their
+# workload identities. It passes only roles named <prefix>-agent-*-role, to
 # AgentCore only.
 
 data "aws_iam_policy_document" "deploy" {
@@ -225,7 +229,7 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (perhaps because the new Runtime has no ID yet; not checked), and denies both on runtime/<prefix>_*. So the role can create a Runtime and its endpoint of any name
+    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (perhaps because the new Runtime has no ID yet; not checked), and denies both on runtime/<prefix>_*. So this statement does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after its ID, which TheAgentsRuntime reaches only for <prefix>_* names); a condition key was not looked into
     actions   = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateAgentRuntimeEndpoint"]
     resources = ["${local.agentcore}:runtime/*"]
   }

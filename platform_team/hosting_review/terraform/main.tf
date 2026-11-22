@@ -1,14 +1,17 @@
 # The hosting review: a catalog record that asks for approval starts a Step Functions state machine.
 # Read, Grant, Entry, TestCall and Approve are Lambda functions (review_steps.py): they grant, and never open the
 # submitted code. Scan and Deploy are CodeBuild projects (the buildspecs in ../): they handle the submitted code, and
-# their roles hold no action that grants. Scan only reads. Deploy can create a Runtime and its endpoint (of any name:
-# IAM checks both creates against runtime/*), update and read the hub's Runtimes, and pass a Runtime a role named
+# their roles hold no action that grants. Scan only reads. Deploy can create a Runtime and its endpoint: the policy
+# allows both creates on runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so
+# it does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload
+# identity named after its ID, and the role reaches workload identities only for <prefix>_* names), and a condition
+# key was not looked into. Deploy can update and read the hub's Runtimes and pass a Runtime a role named
 # <prefix>-agent-*-role; it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
 # name only under the agent boundary; a role of that name made outside the hub would not be bounded, and making one
 # takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code
-# that runs in the deploy build could change another agent's Runtime or pass it another agent's role; and such code
-# could create a Runtime whose name does not start with <prefix>_, which the hub's cleanup does not find
-# (../README.md, the known limit). Every step has its own role (iam.tf). A failed step publishes to the alert topic.
+# that runs in the deploy build could change another agent's Runtime or pass it another agent's role; and the policy
+# leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
+# cleanup would not find (../README.md, the known limit). Every step has its own role (iam.tf). A failed step publishes to the alert topic.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
