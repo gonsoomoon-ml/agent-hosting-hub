@@ -6,6 +6,10 @@ from platform_team.hosting_review import lambda_handler, review_steps as steps
 from platform_team.shared_code.aws_helpers import Deadline, OutOfTime
 from tests.fakes import FakeClients, ENV, CTX, EVENT, PLATFORM, SPEC, read_input
 
+# What Approve gets for the record SPEC: Read's context with what Entry adds (target) and what Grant saw (no entry
+# permit before the review)
+AT_APPROVE = {**CTX, "target": "QualityAgent", "entryPermitBefore": False}
+
 # The ARN the deploy build writes for quality_agent: runtime/<Settings.runtime_name>-<10 letters or digits>
 RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hub_quality_agent-Ab12Cd34Ef"
 
@@ -91,7 +95,7 @@ def test_a_policy_that_would_outlast_the_lambda_is_dropped_with_the_steps_own_er
 def test_no_time_left_stops_the_step_before_it_makes_anything(clock):
     c = FakeClients()
     with pytest.raises(OutOfTime, match="no time left"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV, deadline=lambda_deadline(lambda_handler.MARGIN))
+        steps.approve(AT_APPROVE, c, ENV, deadline=lambda_deadline(lambda_handler.MARGIN))
     assert c.created_policies == [] and c.record_status == "PENDING_APPROVAL"
 
 def test_entry_shares_one_deadline_between_the_target_and_its_policies(clock):
@@ -129,13 +133,13 @@ def test_grant_creates_the_agent_role_under_the_boundary():
 
 def test_approve_approves_a_record_that_did_not_change():
     c = FakeClients()
-    out = steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    out = steps.approve(AT_APPROVE, c, ENV)
     assert out["recordStatus"] == "APPROVED" and [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]
 
 def test_approve_refuses_a_record_that_changed_after_the_review_started():
     c = FakeClients(record_spec={**SPEC, "code_version": "v2"})                     # changed after Read
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
 
 # ------------------------------------------------------------------ final review I-5: a second run keeps what the first made
@@ -223,7 +227,7 @@ def test_a_record_that_is_not_an_agent_is_never_approved():
     with pytest.raises(ValueError, match="record type is MCP, not AGENT"):
         steps.application(c.reg.get_registry_record(registryId="reg-1", recordId="rec-1"), ENV)
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
-        steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)
+        steps.approve({**ctx, "target": "QualityAgent", "entryPermitBefore": False}, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.created_policies == []
 
 def test_an_agent_role_may_call_its_model_and_no_other():
@@ -274,7 +278,7 @@ def test_read_passes_on_the_reviewed_fields_only():
 def test_approve_reads_the_record_through_the_same_check_as_read():
     c = FakeClients(record_spec={**SPEC, "description": "an agent"})
     ctx = steps.read(read_input(), c, ENV)
-    assert steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)["recordStatus"] == "APPROVED"
+    assert steps.approve({**ctx, "target": "QualityAgent", "entryPermitBefore": False}, c, ENV)["recordStatus"] == "APPROVED"
 
 @pytest.mark.parametrize("change", [
     lambda c: setattr(c, "record_spec", {**c.record_spec, "description": "changed"}),   # a field Read does not pass on
@@ -286,7 +290,7 @@ def test_approve_refuses_a_record_that_changed_in_any_way_after_read(change):
     ctx = steps.read(read_input(), c, ENV)
     change(c)
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
-        steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)
+        steps.approve({**ctx, "target": "QualityAgent", "entryPermitBefore": False}, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
 
 # ------------------------------------------------------------------ final review I-2: Approve requires the record to be pending
@@ -295,7 +299,7 @@ def test_approve_refuses_a_record_that_changed_in_any_way_after_read(change):
 def test_approve_refuses_a_record_that_is_no_longer_pending(status):
     c = FakeClients(record_status=status)              # rejected while the review ran, changed, or approved already
     with pytest.raises(RuntimeError, match=f"record quality_agent is {status}, not PENDING_APPROVAL"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert c.created_policies == [] and c.record_status == status and c.status_reason is None
 
 def _changes_while_the_entry_permit_waits(c, change):
@@ -315,7 +319,7 @@ def test_approve_checks_the_record_again_right_before_approving(change, message)
     c = FakeClients()
     _changes_while_the_entry_permit_waits(c, change)
     with pytest.raises(RuntimeError, match=message):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]    # made between the checks
     assert c.status_reason is None                                                        # never approved
 
@@ -323,7 +327,7 @@ def test_approve_checks_the_record_again_right_before_approving(change, message)
 
 def test_approve_gives_a_new_agent_the_deployed_policies_in_their_mode():
     c = FakeClients(parameters={"/hub/policies/guard_prompt": "LOG_ONLY"})
-    out = steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)       # the ctx the existing approve tests pass
+    out = steps.approve(AT_APPROVE, c, ENV)       # the ctx the existing approve tests pass
     made = [(p["name"], p["mode"], p["kind"]) for p in c.created_policies]
     assert made == [("guard_prompt_quality_agent", "LOG_ONLY", "policy"), ("entry_permit_quality_agent", "ACTIVE", "cedar")]
     assert out["companyPolicies"] == {"guard_prompt": "LOG_ONLY"} and out["recordStatus"] == "APPROVED"
@@ -332,19 +336,19 @@ def test_approve_gives_a_new_agent_the_deployed_policies_in_their_mode():
 
 def test_approve_with_no_company_policy_deployed_makes_only_the_entry_permit():
     c = FakeClients()
-    out = steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    out = steps.approve(AT_APPROVE, c, ENV)
     assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]
     assert out["companyPolicies"] == {} and out["recordStatus"] == "APPROVED"
 
 def test_approve_checks_the_record_before_the_company_policies():
     c = FakeClients(record_spec={**SPEC, "code_version": "v2"}, parameters={"/hub/policies/guard_prompt": "ACTIVE"})
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert c.created_policies == [] and ("ssm", "get_parameters_by_path") not in c.calls
 
 def test_approve_runs_record_check_company_policies_entry_permit_record_check_approval():
     c = FakeClients(parameters={"/hub/policies/guard_prompt": "ACTIVE"})
-    steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    steps.approve(AT_APPROVE, c, ENV)
     order = [call for call in c.calls if call in {("reg", "get_registry_record"), ("ssm", "get_parameters_by_path"),
                                                   ("ctl", "create_policy"), ("reg", "update_registry_record_status")}]
     assert order == [("reg", "get_registry_record"), ("ssm", "get_parameters_by_path"), ("ctl", "create_policy"),
@@ -355,7 +359,7 @@ def test_approve_stops_at_a_company_policy_in_another_mode_and_opens_nothing():
     c = FakeClients(parameters={"/hub/policies/guard_prompt": "ACTIVE"}, existing_policies={"guard_prompt_quality_agent"},
                     policy_mode="LOG_ONLY")
     with pytest.raises(RuntimeError, match="the approval does not switch modes"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert c.created_policies == [] and c.mode_changes == [] and c.record_status == "PENDING_APPROVAL"
 
 def test_company_policies_made_before_a_stopped_approval_stay():
@@ -364,7 +368,7 @@ def test_company_policies_made_before_a_stopped_approval_stay():
     c = FakeClients(parameters={"/hub/policies/guard_prompt": "LOG_ONLY"})
     _changes_while_the_entry_permit_waits(c, lambda c: setattr(c, "record_status", "REJECTED"))
     with pytest.raises(RuntimeError, match="is REJECTED, not PENDING_APPROVAL"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert set(c.policies) == {"guard_prompt_quality_agent"} and c.deleted_policies == ["entry_permit_quality_agent-id"]
     assert c.status_reason is None
 
@@ -431,7 +435,7 @@ def test_approve_takes_back_the_entry_permit_it_made_when_the_record_changed():
     c = FakeClients()
     _changes_after_the_first_record_check(c, lambda c: setattr(c, "record_spec", {**SPEC, "code_version": "v2"}))
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]      # made between the checks
     assert c.policies == {} and c.deleted_policies == ["entry_permit_quality_agent-id"]   # and taken back
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None
@@ -441,7 +445,7 @@ def test_approve_leaves_an_entry_permit_that_was_there_before():
     c = FakeClients(existing_policies={"entry_permit_quality_agent"})
     _changes_after_the_first_record_check(c, lambda c: setattr(c, "record_status", "DRAFT"))
     with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve({**AT_APPROVE, "entryPermitBefore": True}, c, ENV)
     assert set(c.policies) == {"entry_permit_quality_agent"} and c.deleted_policies == [] and c.created_policies == []
 
 def test_approve_takes_back_the_entry_permit_when_the_second_record_check_cannot_read_the_record():
@@ -452,7 +456,7 @@ def test_approve_takes_back_the_entry_permit_when_the_second_record_check_cannot
         c.reg.get_registry_record = throttled
     _changes_after_the_first_record_check(c, unreadable)
     with pytest.raises(ClientError, match="ThrottlingException"):
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert c.policies == {} and c.deleted_policies == ["entry_permit_quality_agent-id"] and c.status_reason is None
 
 def test_a_failed_take_back_still_says_why_the_approval_stopped():
@@ -462,7 +466,69 @@ def test_a_failed_take_back_still_says_why_the_approval_stopped():
         raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "not allowed"}}, "DeletePolicy")
     c.ctl.delete_policy = denied
     with pytest.raises(RuntimeError) as e:
-        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+        steps.approve(AT_APPROVE, c, ENV)
     assert "record quality_agent is REJECTED, not PENDING_APPROVAL" in str(e.value)
     assert "taking back entry_permit_quality_agent" in str(e.value) and "AccessDeniedException" in str(e.value)
     assert c.status_reason is None
+
+# ------------------------------------------------------------------ fix round 1: every failure after the entry permit takes it back
+
+def _status_update_fails(c):
+    def unavailable(**kw):
+        raise ClientError({"Error": {"Code": "ServiceUnavailableException", "Message": "try later"}},
+                          "UpdateRegistryRecordStatus")
+    c.reg.update_registry_record_status = unavailable
+
+def test_a_failed_status_update_takes_back_the_entry_permit_this_review_made():
+    c = FakeClients()
+    _status_update_fails(c)
+    with pytest.raises(ClientError, match="ServiceUnavailableException"):
+        steps.approve(AT_APPROVE, c, ENV)
+    assert c.policies == {} and c.deleted_policies == ["entry_permit_quality_agent-id"]
+    assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None
+
+def test_a_failed_status_update_leaves_an_entry_permit_that_was_there_before_the_review():
+    c = FakeClients(existing_policies={"entry_permit_quality_agent"})
+    _status_update_fails(c)
+    with pytest.raises(ClientError, match="ServiceUnavailableException"):
+        steps.approve({**AT_APPROVE, "entryPermitBefore": True}, c, ENV)
+    assert set(c.policies) == {"entry_permit_quality_agent"} and c.deleted_policies == []
+
+def test_a_retried_approval_that_fails_takes_back_the_permit_an_earlier_attempt_made():
+    # the earlier attempt made the permit and stopped without taking it back (here: the permit is in the fake);
+    # the retry gets the same input, so it knows the permit was not there before the review
+    c = FakeClients(existing_policies={"entry_permit_quality_agent"})
+    _changes_after_the_first_record_check(c, lambda c: setattr(c, "record_status", "DRAFT"))
+    with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
+        steps.approve(AT_APPROVE, c, ENV)
+    assert c.policies == {} and c.deleted_policies == ["entry_permit_quality_agent-id"] and c.created_policies == []
+
+def test_a_retried_approval_that_passes_approves_and_keeps_the_permit():
+    c = FakeClients(existing_policies={"entry_permit_quality_agent"})
+    out = steps.approve(AT_APPROVE, c, ENV)
+    assert out["recordStatus"] == "APPROVED" and c.record_status == "APPROVED"
+    assert set(c.policies) == {"entry_permit_quality_agent"} and c.deleted_policies == [] and c.created_policies == []
+
+def test_a_failure_while_the_entry_permit_is_made_takes_back_what_was_made():
+    # the wait for ACTIVE raises an AWS error, which ensure_policy does not clean up after
+    c = FakeClients()
+    get = c.ctl.get_policy
+    def throttled(**kw):
+        raise ClientError({"Error": {"Code": "ThrottlingException", "Message": "slow down"}}, "GetPolicy")
+    c.ctl.get_policy = throttled
+    with pytest.raises(ClientError, match="ThrottlingException"):
+        steps.approve(AT_APPROVE, c, ENV)
+    assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"] and c.policies == {}
+    assert get                                                           # the fake's own get_policy is not needed
+
+@pytest.mark.parametrize("existing, before", [((), False), (("entry_permit_quality_agent",), True)])
+def test_grant_says_whether_the_entry_permit_was_there_before_the_review(existing, before):
+    c = FakeClients(existing_policies={*existing, "entry_permit_quality"})       # another agent's permit
+    assert steps.grant(dict(CTX), c, ENV)["entryPermitBefore"] is before
+
+@pytest.mark.parametrize("ctx", [{**CTX, "target": "QualityAgent"}, {**AT_APPROVE, "entryPermitBefore": "no"}])
+def test_approve_refuses_an_input_that_does_not_say_whether_the_entry_permit_was_there(ctx):
+    c = FakeClients()
+    with pytest.raises(ValueError, match="entryPermitBefore"):
+        steps.approve(ctx, c, ENV)
+    assert c.calls == [] and c.created_policies == [] and c.record_status == "PENDING_APPROVAL"

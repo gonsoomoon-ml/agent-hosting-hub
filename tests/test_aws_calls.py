@@ -9,6 +9,7 @@ import zipfile
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
@@ -247,7 +248,8 @@ def test_read_stops_at_an_earlier_review_of_the_record_with_calls_the_model_acce
 
 APPROVE_CTX = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
                "spec": {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS},
-               "applicationDigest": review_steps.application_digest(APPLICATION)}
+               "applicationDigest": review_steps.application_digest(APPLICATION),
+               "entryPermitBefore": False}                    # Grant saw no entry permit of the agent
 
 
 def _made_policy(ctl, name, definition, mode="ACTIVE"):
@@ -277,7 +279,6 @@ def test_approve_calls_match_the_service_models(aws):
     env = {**ENV, "ENGINE_ID": ENGINE}
     reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
     stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
-    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # made by this run?
     pol = _made_policy(ctl, "entry_permit_quality_agent",
                        {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
     _approval(reg)
@@ -298,7 +299,6 @@ def test_approve_with_a_company_policy_deployed_calls_match_the_service_models(a
     _made_policy(ctl, "guard_prompt_quality_agent",
                  {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", ENV["AGENT_GW_ARN"])}},
                  mode="LOG_ONLY")
-    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # made by this run?
     _made_policy(ctl, "entry_permit_quality_agent",
                  {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
     _approval(reg)
@@ -513,7 +513,9 @@ def test_grant_removes_a_dropped_tools_permit_with_calls_the_models_accept(aws):
     iam.add_response("put_role_policy", {}, {"RoleName": ROLE, "PolicyName": "agent", "PolicyDocument": ANY})
     kept, dropped, other = (_policy(n) for n in ("tool_quality_agent_Parts_get_part_spec",
                                                   "tool_quality_agent_Parts_get_test_result", "tool_quality_Parts_get_test_result"))
-    ctl.add_response("list_policies", {"policies": [kept, dropped, other]}, {"policyEngineId": ENGINE, "maxResults": 100})
+    entry = _policy("entry_permit_quality_agent")                       # an approved version runs
+    ctl.add_response("list_policies", {"policies": [kept, dropped, other, entry]},
+                     {"policyEngineId": ENGINE, "maxResults": 100})
     ctl.add_response("delete_policy", {**dropped, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": dropped["policyId"]})
     ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
                          expected_params={"policyEngineId": ENGINE, "policyId": dropped["policyId"]})
@@ -522,23 +524,45 @@ def test_grant_removes_a_dropped_tools_permit_with_calls_the_models_accept(aws):
     out = review_steps.grant(dict(APPROVE_CTX), c, env)
     assert out["removedToolPolicies"] == ["tool_quality_agent_Parts_get_test_result"]
     assert out["toolPolicies"] == [kept["policyId"]] and out["roleArn"] == _role()["Arn"]
+    assert out["entryPermitBefore"] is True                            # from the same list: no call of its own
+
+
+def _taken_back(ctl, pol):
+    """Approve's take-back: find the entry permit by name, delete it, wait until it is gone."""
+    ctl.add_response("list_policies", {"policies": [pol]}, {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+
+
+def _up_to_the_entry_permit(stubs):
+    """Approve up to the entry permit: the record, no company policy deployed, the permit made."""
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
+    return _made_policy(stubs["ctl"], "entry_permit_quality_agent",
+                        {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
 
 
 def test_approve_takes_back_the_entry_permit_it_made_with_calls_the_models_accept(aws):
     c, stubs = aws
-    reg, ctl = stubs["reg"], stubs["ctl"]
-    env = {**ENV, "ENGINE_ID": ENGINE}
-    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
-    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
-    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # not there before
-    pol = _made_policy(ctl, "entry_permit_quality_agent",
-                       {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
-    reg.add_response("get_registry_record", _full_record("DRAFT"), {"registryId": REG, "recordId": REC})   # the team edited it
-    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
-    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
-                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    pol = _up_to_the_entry_permit(stubs)
+    stubs["reg"].add_response("get_registry_record", _full_record("DRAFT"), {"registryId": REG, "recordId": REC})  # edited
+    _taken_back(stubs["ctl"], pol)
     with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
-        review_steps.approve(dict(APPROVE_CTX), c, env)
+        review_steps.approve(dict(APPROVE_CTX), c, {**ENV, "ENGINE_ID": ENGINE})
+
+
+def test_a_failed_status_update_takes_back_the_entry_permit_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    pol = _up_to_the_entry_permit(stubs)
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    # botocore retries a throttle itself; an error it does not retry stands for one that outlasted those retries
+    stubs["reg"].add_client_error("update_registry_record_status", "AccessDeniedException", http_status_code=403,
+                                  expected_params={"registryId": REG, "recordId": REC, "status": "APPROVED",
+                                                   "statusReason": "passed the hosting review"})
+    _taken_back(stubs["ctl"], pol)
+    with pytest.raises(ClientError, match="AccessDeniedException"):
+        review_steps.approve(dict(APPROVE_CTX), c, {**ENV, "ENGINE_ID": ENGINE})
 
 
 def test_rejecting_a_new_version_calls_match_the_service_models(aws):
@@ -556,4 +580,5 @@ def test_rejecting_a_new_version_calls_match_the_service_models(aws):
         {"registryId": REG, "recordId": REC, "status": "REJECTED", "statusReason": "why"})
     with_machine = Platform(**{**P.__dict__, "machine_arn": MACHINE})
     assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
-        "status": "REJECTED", "removed": [], "note": "an approved version is running and was left as it is"}
+        "status": "REJECTED", "removed": [], "note": "entry_permit_quality_agent is there: an approved version is running, "
+                                                     "or an approval that stopped left it; nothing was removed"}

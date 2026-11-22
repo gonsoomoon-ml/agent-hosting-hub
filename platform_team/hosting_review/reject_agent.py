@@ -8,9 +8,11 @@ things (agent_cleanup.remove_agent). Reject only after the review has stopped: s
 things again, so a review of the record that is still running stops reject before anything changes.
 
 A new version of an approved agent uses the same role, Runtime, target and permits as the version that runs. So when
-the agent's entry permit is there (only Approve makes it, and it takes back one it made when it stops), reject marks
-the record REJECTED and removes nothing. A record the team changed while its review ran is a DRAFT: reject keeps it
-as it is and removes what the review made.
+the agent's entry permit is there, reject marks the record REJECTED and removes nothing. Only Approve makes that
+permit, and when Approve fails after making it, it takes back the one its review made; the permit stays only when
+that delete fails too, or when the Lambda is stopped (its time limit) between making it and the end of the step.
+Reject sees the permit, not whether the record was ever approved, and says so. A record the team changed while its
+review ran is a DRAFT: reject keeps it as it is and removes what the review made.
 """
 import json
 import sys
@@ -25,7 +27,8 @@ from platform_team.shared_code.hub_state import Platform, load
 
 MAX_REASON = 255        # statusReason of UpdateRegistryRecordStatus
 REJECTABLE = ("PENDING_APPROVAL", "REJECTED", "DRAFT")
-RUNNING_VERSION = "an approved version is running and was left as it is"
+# Why the entry permit may be there: reject cannot tell which, as it cannot see whether the record was ever approved
+ENTRY_PERMIT_WHY = "an approved version is running, or an approval that stopped left it"
 DRAFT_KEPT = "the record is a draft (the team changed it) and keeps its status"
 
 
@@ -47,8 +50,9 @@ def running_reviews(c, p: Platform, record_id: str) -> list[str]:
     return [name for _, name in sorted(found)]
 
 
-def _approved_version_runs(c, p: Platform, agent: str) -> bool:
-    """The agent's entry permit is there: a version of it was approved and still runs."""
+def _has_entry_permit(c, p: Platform, agent: str) -> bool:
+    """The agent's entry permit is there: a version of it was approved and runs, or an approval that stopped left it
+    (Approve could not take it back). Users can call the agent either way."""
     return bool(p.engine_id) and entry_permit_name(agent) in list_policies(c, p.engine_id)
 
 
@@ -56,12 +60,13 @@ def reject(c, s: Settings, p: Platform, agent: str, reason: str) -> dict:
     """Reject the agent's submission. Returns {"status": <the record's status>, "removed": [...]}, with "note" when
     the record or the agent was left as it is.
 
-    An approved version runs (its entry permit is there): the record is marked REJECTED with the reason and nothing
-    is removed; "note" says so. Otherwise the review's things are removed (agent_cleanup.remove_agent): a record
-    pending approval is marked REJECTED first (the registry rejects only such a record); a record already REJECTED
-    keeps its status and reason and is cleaned again (a run after one that stopped part way); a DRAFT keeps its
-    status (a review that stopped because the team changed the record). Refused, with nothing changed: an APPROVED
-    record (approved agents are stopped, not rejected), any other status, a DRAFT while an approved version runs, a
+    The agent's entry permit is there (an approved version runs, or an approval that stopped left it): the record is
+    marked REJECTED with the reason and nothing is removed; "note" says what reject saw. Otherwise the review's things
+    are removed (agent_cleanup.remove_agent): a record pending approval is marked REJECTED first (the registry
+    rejects only such a record); a record already REJECTED keeps its status and reason and is cleaned again (a run
+    after one that stopped part way); a DRAFT keeps its status (a review that stopped because the team changed the
+    record). Refused, with nothing changed: an APPROVED
+    record (approved agents are stopped, not rejected), any other status, a DRAFT with the entry permit there, a
     missing record, a blank reason, a record whose review is still running (running_reviews), and an agent whose
     role or Runtime is not this hub's (agent_cleanup.check_agent). When the removal fails, the CleanupFailed carries
     the record's status as record_status."""
@@ -84,13 +89,15 @@ def reject(c, s: Settings, p: Platform, agent: str, reason: str) -> dict:
     if running:                     # its steps would make again what this removes
         raise ValueError(f"a review of record {agent} is still running ({', '.join(running)}): reject after it stops")
     check_agent(c, s, agent)        # reads only: a role or Runtime that is not this hub's stops it here
-    if _approved_version_runs(c, p, agent):           # the role, Runtime and permits are the running version's too
+    if _has_entry_permit(c, p, agent):                # the role, Runtime and permits may be a running version's
+        permit = entry_permit_name(agent)
         if status == "DRAFT":
-            raise ValueError(f"record {agent} is DRAFT and an approved version of it is running: "
-                             "there is nothing to reject or remove")
+            raise ValueError(f"record {agent} is DRAFT and {permit} is there ({ENTRY_PERMIT_WHY}): "
+                             "reject changes nothing")
         if status == "PENDING_APPROVAL":
             set_status(c, p.registry_id, rec["recordId"], "REJECTED", reason)
-        return {"status": "REJECTED", "removed": [], "note": RUNNING_VERSION}
+        return {"status": "REJECTED", "removed": [],
+                "note": f"{permit} is there: {ENTRY_PERMIT_WHY}; nothing was removed"}
     if status == "PENDING_APPROVAL":
         set_status(c, p.registry_id, rec["recordId"], "REJECTED", reason)
     kept = "DRAFT" if status == "DRAFT" else "REJECTED"

@@ -180,12 +180,11 @@ def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
     return trust, perms
 
 
-def _drop_unnamed_tool_permits(c, env: dict, agent: str, tools) -> list[str]:
+def _drop_unnamed_tool_permits(c, env: dict, agent: str, tools, found: dict) -> list[str]:
     """Delete this agent's tool permits for tools the application does not name (a version approved before named
-    them) and return their names. They are found by the shape of their names (tool_policy_pattern), which is exact for
-    one agent, so another agent's permits are never touched."""
+    them) and return their names. `found` is the engine's policies by name. The permits are found by the shape of
+    their names (tool_policy_pattern), which is exact for one agent, so another agent's permits are never touched."""
     named, own = {tool_policy_name(agent, t) for t in tools}, re.compile(tool_policy_pattern(agent))
-    found = list_policies(c, env["ENGINE_ID"])
     return [name for name in sorted(n for n in found if own.fullmatch(n) and n not in named)
             if drop_policy(c, env["ENGINE_ID"], found[name]["policyId"])]
 
@@ -193,7 +192,11 @@ def _drop_unnamed_tool_permits(c, env: dict, agent: str, tools) -> list[str]:
 def grant(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     """3 Create the agent's execution role and permit the tools named in the application (tool gateway). A permit of
     this agent for a tool the application no longer names is deleted first (removedToolPolicies): the permits follow
-    the application under review. The deletes come before the policy waits, which take the step's deadline."""
+    the application under review. The deletes come before the policy waits, which take the step's deadline.
+
+    From the same list of the engine's policies, Grant notes whether the agent's entry permit is there
+    (entryPermitBefore). Only Approve makes it, and Approve runs after Grant: so the value says whether it was there
+    before this review, and it is the same for every attempt of Approve (approve)."""
     deadline = deadline or Deadline()
     s, agent = _settings(env), ctx["spec"]["name"]
     role = s.agent_role(agent)
@@ -205,11 +208,13 @@ def grant(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
                                 Description="hosting review: agent execution role",
                                 PermissionsBoundary=env["AGENT_BOUNDARY"])["Role"]["Arn"]
     c.iam.put_role_policy(RoleName=role, PolicyName="agent", PolicyDocument=json.dumps(perms))
-    removed = _drop_unnamed_tool_permits(c, env, agent, ctx["spec"]["tools"])
+    found = list_policies(c, env["ENGINE_ID"])
+    removed = _drop_unnamed_tool_permits(c, env, agent, ctx["spec"]["tools"], found)
     made = [_policy(c, env, deadline, tool_policy_name(agent, tool),
                     cedar.tool_permit(env["ACCOUNT"], role, tool, env["TOOL_GW_ARN"]))
             for tool in ctx["spec"]["tools"]]
-    return {**ctx, "roleArn": arn, "toolPolicies": made, "removedToolPolicies": removed}
+    return {**ctx, "roleArn": arn, "toolPolicies": made, "removedToolPolicies": removed,
+            "entryPermitBefore": entry_permit_name(agent) in found}
 
 
 def entry(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
@@ -284,38 +289,51 @@ def _platform(env: dict) -> Platform:
                     agent_gw={"id": env["AGENT_GW_ID"], "arn": env["AGENT_GW_ARN"]})
 
 
-def _take_back(c, env: dict, name: str, policy_id: str, why: Exception) -> None:
-    """Delete the entry permit this approval made, because the approval stopped (why). A delete that fails is said
-    together with why the approval stopped."""
+def _take_back(c, env: dict, name: str, why: Exception) -> None:
+    """Delete the entry permit this review made, found by its name, because the approval stopped (why). One that is
+    not there (never made, or ensure_policy deleted it) is fine. A delete that fails is said together with why the
+    approval stopped."""
     try:
-        drop_policy(c, env["ENGINE_ID"], policy_id)
+        found = list_policies(c, env["ENGINE_ID"]).get(name)
+        if found:
+            drop_policy(c, env["ENGINE_ID"], found["policyId"])
     except Exception as e:
-        raise RuntimeError(f"{why}; taking back {name}, which this approval made, failed too: {e}") from why
+        raise RuntimeError(f"{why}; taking back {name}, which this review made, failed too: {e}") from why
 
 
 def approve(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     """7 Give the agent the company policies the platform team has deployed, each in its mode (policy_rollout), let
     users in and mark the record approved, only if the record still holds the reviewed application. In this order:
-    record check, company policies, entry permit, record check, APPROVED. When the second check stops the approval,
-    the entry permit is taken back if this run made it, and the error is raised again; an entry permit that was there
-    before (a version approved earlier runs) stays, and so do the company policies made in this run (a forbid lets
-    nobody in)."""
+    record check, company policies, entry permit, record check, APPROVED.
+
+    Whether the entry permit was there before this review is entryPermitBefore, which Grant put in the context: an
+    input without it (true or false) stops the approval before anything is made. When it was not there, any failure
+    from making the entry permit on (the permit's wait, the second record check, the status update) takes the permit
+    back and raises the error again. Step Functions may call Approve again with the same input, so a retry takes back
+    a permit an earlier attempt made, too. If the status update in fact succeeded but its answer was lost, the record
+    is APPROVED without an entry permit: users are refused until the agent is submitted again. An entry permit that
+    was there before (a version approved earlier runs) stays, and so do the company policies made in this run (a
+    forbid lets nobody in). A failure before the entry permit takes nothing back: a retry after an attempt that
+    approved finds the record APPROVED there, and that permit must stay."""
+    before = ctx.get("entryPermitBefore")
+    if not isinstance(before, bool):
+        raise ValueError("the review's state does not say whether the entry permit was there before the review "
+                         "(entryPermitBefore, from Grant): nothing is approved")
     deadline = deadline or Deadline()
     _record_unchanged(ctx, c, env)
     agent = ctx["spec"]["name"]
     company = apply_to_agent(c, _settings(env), _platform(env), agent,
                              wait=deadline.wait(POLICY_WAIT, "the company policies"))
     name = entry_permit_name(agent)
-    there_before = name in list_policies(c, env["ENGINE_ID"])
-    policy = _policy(c, env, deadline, name, cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
     try:
+        policy = _policy(c, env, deadline, name, cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
         _record_unchanged(ctx, c, env)            # once more right before approving: the policy waits take a while
-    except Exception as e:                        # also a failed read: an entry permit must not outlive a stop
-        if not there_before:
-            _take_back(c, env, name, policy, e)
+        r = c.reg.update_registry_record_status(registryId=ctx["registryId"], recordId=ctx["recordId"],
+                                                status="APPROVED", statusReason="passed the hosting review")
+    except Exception as e:                        # any failure: an entry permit this review made must not outlive it
+        if not before:
+            _take_back(c, env, name, e)
         raise
-    r = c.reg.update_registry_record_status(registryId=ctx["registryId"], recordId=ctx["recordId"],
-                                            status="APPROVED", statusReason="passed the hosting review")
     return {**ctx, "companyPolicies": company, "entryPolicy": policy, "recordStatus": r["status"]}
 
 

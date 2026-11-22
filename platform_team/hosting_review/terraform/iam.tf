@@ -160,7 +160,7 @@ data "aws_iam_policy_document" "grant" {
     }
   }
   statement {
-    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed; delete the agent's permits of tools the application no longer names
+    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed; delete the agent's permits of tools the application no longer names; from the same list, whether entry_permit_<agent> is there before the review (entryPermitBefore)
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }
@@ -345,7 +345,7 @@ data "aws_iam_policy_document" "approve" {
     resources = ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
   }
   statement {
-    sid       = "CompanyPoliciesAndEntryPermit" # ensure_policy: the deployed company policies (guard_prompt_<agent>), entry_permit_<agent>; delete the entry permit this run made when the second record check stops the approval
+    sid       = "CompanyPoliciesAndEntryPermit" # ensure_policy: the deployed company policies (guard_prompt_<agent>), entry_permit_<agent>; when the approval fails after the permit, list the policies and delete the permit this review made (entryPermitBefore false)
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }

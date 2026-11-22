@@ -464,12 +464,16 @@ def test_make_destroy_removes_the_records_last_after_the_agents_and_the_seed():
 
 # ------------------------------------------------------------------ the review of a new version
 
+# What reject can know: it sees the agent's entry permit, not whether the record was ever approved
+NOTE = ("entry_permit_quality_agent is there: an approved version is running, or an approval that stopped left it; "
+        "nothing was removed")
+
 def test_rejecting_a_new_version_leaves_the_running_agent():
     c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={"entry_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec"},
                     existing_roles={"hub-agent-quality_agent-role"})
     out = reject(c, Settings(), PLATFORM, "quality_agent", "the new version fails its test call")
     assert out["removed"] == [] and "approved version is running" in out["note"] and c.deleted_policies == []
-    assert out == {"status": "REJECTED", "removed": [], "note": "an approved version is running and was left as it is"}
+    assert out == {"status": "REJECTED", "removed": [], "note": NOTE}
     assert c.record_status == "REJECTED" and c.status_reason == "the new version fails its test call"
     assert set(c.policies) == {"entry_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec"}
     assert c.existing_roles == {ROLE}
@@ -510,7 +514,9 @@ def test_a_draft_left_by_a_stopped_review_can_be_cleaned():
 def test_a_draft_of_an_agent_whose_approved_version_runs_is_refused():
     c = FakeClients(record_status="DRAFT", existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE})
     before = _state(c)
-    with pytest.raises(ValueError, match="record quality_agent is DRAFT and an approved version of it is running"):
+    with pytest.raises(ValueError, match="record quality_agent is DRAFT and entry_permit_quality_agent is there "
+                                         r"\(an approved version is running, or an approval that stopped left it\): "
+                                         "reject changes nothing"):
         reject(c, Settings(), PLATFORM, "quality_agent", "why")
     assert c.record_status == "DRAFT" and c.status_reason is None and _state(c) == before
 
@@ -518,8 +524,7 @@ def test_a_draft_of_an_agent_whose_approved_version_runs_is_refused():
 def test_reject_main_says_that_the_running_version_was_left(monkeypatch, capsys):
     _wire(monkeypatch, reject_agent, FakeClients(existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE}))
     assert reject_agent.main(["quality_agent", "the new version fails its test call"]) == 0
-    assert capsys.readouterr().out.splitlines() == ["record quality_agent: REJECTED (prefix hub, region us-west-2)",
-                                                    "an approved version is running and was left as it is"]
+    assert capsys.readouterr().out.splitlines() == ["record quality_agent: REJECTED (prefix hub, region us-west-2)", NOTE]
 
 
 def test_a_draft_whose_cleanup_fails_is_said_to_be_a_draft(monkeypatch, capsys):
