@@ -24,11 +24,11 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ### `.env`
 
-`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `e2e_checks/`의 스크립트 셋(`e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`)이 모두 같은 규칙을 따른다.
+`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `e2e_checks/`의 스크립트 셋(`e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`)이 모두 같은 규칙을 따른다.
 
 - `.env`에서 읽는 것은 이 세 줄뿐이다. 다른 줄은 읽지도 내보내지도 않는다. 그래서 `.env`에 자격 증명을 적어 두어도 명령이 쓰는 자격 증명은 바뀌지 않는다.
-- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다. 값이 빈 줄(`DEMO_PREFIX=`)은 없는 줄과 같아서, 그 이름은 셸의 값이나 기본값을 쓴다. `make`, `publish.sh`, `reject.sh`, `e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`가 같은 규칙을 따른다.
-- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
+- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다. 값이 빈 줄(`DEMO_PREFIX=`)은 없는 줄과 같아서, 그 이름은 셸의 값이나 기본값을 쓴다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`가 같은 규칙을 따른다.
+- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `rollout.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
 - 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자다(`hub`, `demo2`). 정책 엔진, Runtime, 게이트웨이, bucket의 이름이 접두어로 시작하는데, 그 이름들의 규칙을 모두 지키는 모양이 이것이다. 다른 모양이면 Terraform(`make deploy`)과 Python 명령이 아무것도 만들기 전에 거부한다.
 
 `.env`를 읽는 규칙과 `Settings`의 접두어 거절은 단위 시험(`tests/test_hub_env.py`)이 확인한다. Terraform의 거절은 Terraform의 `validation`이 하는 것이고, 2026-11-22에 `terraform plan -var prefix=…`로 `my-hub`, `Hub`, `hub_1`이 `Invalid value for variable`로 거절되는 것을 봤다. AWS에서는 `.env` 없이 셸의 `AWS_REGION`과 기본값으로만 돌렸으므로, `.env`를 읽는 길은 AWS에서 확인하지 않았다.
@@ -84,12 +84,13 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ## `make destroy`가 지우는 것과 남기는 것
 
-`make destroy`는 지울 것의 계획을 보여 주고 `yes`를 받은 뒤(이 실행은 `AUTO_APPROVE=1`로 묻지 않고 돌렸다) 네 번에 나눠 지운다.
+`make destroy`는 지울 것의 계획을 보여 주고 `yes`를 받은 뒤(이 실행은 `AUTO_APPROVE=1`로 묻지 않고 돌렸다) 다섯 번에 나눠 지운다.
 
-1. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`, 운영 중에 더하면 `guard_prompt_`, `stop_agent_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다.
-2. `make seed`가 넣은 공유 도구 record.
-3. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 1에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
-4. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, SSM 값, 로그 그룹.
+1. 전사 정책의 모드(SSM `/<prefix>/policies/` 아래의 값. `rollout.sh`가 적는다). 먼저 지우므로, 정리하는 동안 승인되는 에이전트에는 전사 정책이 걸리지 않는다. 정책 자체는 다음 단계가 에이전트와 함께 지운다. 이 단계는 아직 AWS에서 돌려 보지 않았다. [전사 정책](platform_team/company_policy/README.md#make-destroy)
+2. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`, 운영 중에 더하면 `guard_prompt_`, `stop_agent_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다.
+3. `make seed`가 넣은 공유 도구 record.
+4. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 2에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
+5. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, SSM 값, 로그 그룹.
 
 마지막에 `e2e_checks/check_cleanup.py`가 접두어로 시작하는 자원이 남았는지 종류마다 찾아보고 `still present: nothing`(또는 남은 종류)을 찍는다. 읽기만 한다.
 

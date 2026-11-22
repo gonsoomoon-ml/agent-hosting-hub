@@ -13,8 +13,10 @@
 # that runs in the deploy build could change another agent's Runtime, pass it another agent's role, or write another
 # agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves open that such
 # code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's cleanup would not find
-# (../README.md, the known limit). Every step has its own role (iam.tf). A record the review does not host (not an
-# AGENT record, or a harness) ends after Read, with no alert. A failed step publishes to the alert topic.
+# (../README.md, the known limit). Every step has its own role (iam.tf). Approve reads one SSM path, /<prefix>/policies
+# (the modes of the company policies, GetParametersByPath), and makes those policies and the entry permit; it cannot
+# switch a policy's mode (no UpdatePolicy). A record the review does not host (not an AGENT record, or a harness)
+# ends after Read, with no alert. A failed step publishes to the alert topic.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
@@ -31,7 +33,7 @@ locals {
     grant    = 900 # one policy per tool of the application
     entry    = 900 # a target and two policies
     testcall = 900 # a new target and a new policy take a while before they answer
-    approve  = 420 # one policy
+    approve  = 900 # the deployed company policies and the entry permit
   }
   # What the steps read from their environment (review_steps.py, lambda_handler.py); ACTION names the step.
   step_env = {

@@ -14,7 +14,9 @@
 # role, or write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy
 # leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
 # cleanup would not find (hosting_review/README.md, the known limit).
-# The steps that grant (Lambda) never open the submitted code.
+# The steps that grant (Lambda) never open the submitted code. Approve reads one SSM path, /<prefix>/policies (the
+# modes of the company policies, GetParametersByPath), and makes those policies and the entry permit; it cannot
+# switch a policy's mode (no UpdatePolicy).
 
 locals {
   agentcore  = "arn:aws:bedrock-agentcore:${local.region}:${local.account}"
@@ -326,7 +328,12 @@ data "aws_iam_policy_document" "approve" {
     resources = ["${aws_cloudwatch_log_group.step["approve"].arn}:*"]
   }
   statement {
-    sid       = "EntryPermit" # ensure_policy: entry_permit_<agent>
+    sid       = "CompanyPolicyModes" # get_parameters_by_path /<prefix>/policies (policy_rollout.deployed). The resource is the path as the call passes it, as the dev role's denial for /<prefix>/platform named it; not tried for this role
+    actions   = ["ssm:GetParametersByPath"]
+    resources = ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
+  }
+  statement {
+    sid       = "CompanyPoliciesAndEntryPermit" # ensure_policy: the deployed company policies (guard_prompt_<agent>), entry_permit_<agent>
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }

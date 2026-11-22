@@ -22,7 +22,7 @@
 | 4 | Deploy | CodeBuild `<prefix>-review-deploy` (`<prefix>-review-deploy-role`) | 제출물과 허브의 코드 묶음을 읽고, 의존성을 Runtime의 플랫폼용 wheel로 받아 제출된 `.py` 파일과 함께 묶는다(아래 "배포 build가 하는 일"). 묶음을 제출함의 `packages/` 아래에 쓰고, Runtime 목록에서 `<prefix>_<에이전트>`를 찾아 없으면 만들고(`CreateAgentRuntime`) 있으면 고친다(`UpdateAgentRuntime`). 그 Runtime에 Grant가 만든 실행 역할(`ROLE_ARN`)을 넘긴다. 정책이 허락하는 것은 이름이 `<prefix>-agent-*-role`인 역할을 AgentCore에 넘기는 것이다(`iam:PassRole`). Runtime ARN을 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에 쓴다. 정책이 허락하는 SSM 값은 이 모양의 이름뿐이다. | 역할이나 정책 만들기, target 만들기, record 승인하기, 이름이 `<prefix>_`로 시작하지 않는 Runtime을 고치거나 읽기(그런 Runtime을 만드는 것은 정책이 막지 않는다. 실제로 되는지는 해 보지 않았다), 이름이 `<prefix>-agent-*-role`이 아닌 역할 넘기기, `/<prefix>/agents/<에이전트>/runtime_arn`이 아닌 SSM 값 쓰기. 아래의 한계를 보라. |
 | 5 | Entry | Lambda `<prefix>-review-entry` (`<prefix>-review-entry-role`) | SSM에서 Runtime ARN을 읽고, 그 ARN이 이 에이전트의 Runtime(이 계정과 리전의 `runtime/<Runtime 이름>-<ID 10자>`)인지 확인한다. 배포 역할은 어느 에이전트의 `runtime_arn`이든 쓸 수 있기 때문이다. 맞으면 에이전트 게이트웨이에 그 에이전트의 target을 만든다. target을 만들 때 읽을 수 있는 Runtime은 이름이 `<prefix>_`로 시작하는 것뿐이다(배포 단계가 만드는 이름). 같은 이름의 target이 이미 있으면 그 target이 같은 Runtime을 가리킬 때만 그대로 쓴다. 시험 호출만 들어오게 하는 `review_permit_<에이전트>`와 비밀값을 막는 `guard_secret_<에이전트>`를 건다. | 도구 게이트웨이에 정책 걸기, record 승인, 제출된 코드 읽기 |
 | 6 | TestCall | Lambda `<prefix>-review-testcall` (`<prefix>-review-testcall-role`) | 에이전트 게이트웨이로 에이전트를 두 번 부른다. 보통 질문에는 답이 와야 하고, 예시 access key가 든 질문은 거부(403)돼야 한다. 승인 전에 들어올 수 있는 것은 이 역할뿐이다. | 에이전트 게이트웨이를 부르는 것 말고는 모두 |
-| 7 | Approve | Lambda `<prefix>-review-approve` (`<prefix>-review-approve-role`) | record를 다시 읽어 Read와 같은 확인을 거치고, 신청서 전체가 심사를 시작할 때와 같은지, record가 아직 승인 요청 상태(`PENDING_APPROVAL`)인지 확인한다. 그러면 사용자가 들어오게 하는 `entry_permit_<에이전트>`를 걸고, 같은 확인을 한 번 더 한 뒤 record를 `APPROVED`로 바꾼다. 그사이에 신청서가 바뀌었거나 record가 반려되었으면 승인하지 않고 알림으로 빠진다. 두 번째 확인에서 빠지면 그사이에 건 `entry_permit_<에이전트>`가 남는다. record가 반려되었으면 반려를 한 번 더 돌려 지운다. 팀이 record를 고쳐 `DRAFT`가 되었으면 반려가 거부하므로 `make destroy`만 지운다. 이 경우를 따로 다루는 명령은 아직 없다. | 바뀐 record나 승인 요청 상태가 아닌 record 승인하기, 도구 게이트웨이에 정책 걸기, 역할 만들기, 제출된 코드 읽기 |
+| 7 | Approve | Lambda `<prefix>-review-approve` (`<prefix>-review-approve-role`) | record를 다시 읽어 Read와 같은 확인을 거치고, 신청서 전체가 심사를 시작할 때와 같은지, record가 아직 승인 요청 상태(`PENDING_APPROVAL`)인지 확인한다. 그러면 플랫폼팀이 켜 둔 전사 정책을 그 모드 그대로 건다. 켜진 전사 정책과 모드는 SSM `/<prefix>/policies/` 아래에서 읽는다(`ssm:GetParametersByPath`. 정책이 허락하는 SSM 읽기는 경로 `/<prefix>/policies`의 이 action뿐이다). 그다음 사용자가 들어오게 하는 `entry_permit_<에이전트>`를 걸고, 같은 확인을 한 번 더 한 뒤 record를 `APPROVED`로 바꾼다. 그사이에 신청서가 바뀌었거나 record가 반려되었으면 승인하지 않고 알림으로 빠진다. 두 번째 확인에서 빠지면 그사이에 건 전사 정책과 `entry_permit_<에이전트>`가 남는다. 전사 정책은 막는 정책이라 남아도 아무도 들이지 않는다. record가 반려되었으면 반려를 한 번 더 돌려 지운다. 팀이 record를 고쳐 `DRAFT`가 되었으면 반려가 거부하므로 `make destroy`만 지운다. 이 경우를 따로 다루는 명령은 아직 없다. 이 역할에는 정책의 적용 모드를 바꾸는 권한(`UpdatePolicy`)이 없고, Approve는 모드를 바꾸지 않는다. 그 에이전트에 같은 이름의 전사 정책이 다른 모드로 이미 있으면 그 정책을 그대로 두고, `entry_permit_<에이전트>`를 걸지 않고 실패해 알림으로 빠진다. 심사 중에 rollout이 그 에이전트에 정책을 건 뒤, 모드를 바꾸는 rollout이 그 에이전트에서 실패했거나 아직 그 에이전트에 이르지 않았을 때다. 모드는 rollout이 맞춘다(코드가 그렇게 한다. AWS에서는 해 보지 않았다). 전사 정책은 `company_policy/README.md`의 "전사 정책 켜고 끄기"에 있다. | 바뀐 record나 승인 요청 상태가 아닌 record 승인하기, 정책의 적용 모드 바꾸기, `/<prefix>/policies` 밖의 SSM 값 읽기, 도구 게이트웨이에 정책 걸기, 역할 만들기, 제출된 코드 읽기 |
 
 Lambda 단계는 모두 자기 로그만 쓸 수 있다. 정책을 만드는 단계(Grant, Entry, Approve)는 policy engine에서 정책을 만들고 읽고 지울 수 있고, 그 정책이 가리키는 게이트웨이 하나에만 그 게이트웨이를 확인하는 권한(`ManageResourceScopedPolicy`, `GetGateway`, `ListGatewayTargets`, `GetGatewayTarget`, `InvokeGateway`)을 갖는다. 정책이 게이트웨이를 가리키면 정책을 만드는 쪽에 이 권한이 있어야 한다는 것은 실행해서 찾았다.
 
@@ -32,14 +32,14 @@ Lambda 단계는 제한 시간(가장 길어도 900초)에 끊기기 전에 스�
 
 ## 정책 이름
 
-심사는 에이전트마다 네 가지 정책을 만든다. 이름은 `platform_team/company_policy/policy_names.py` 한 곳에서 만들고, 신청서 검사, 심사 단계, 반려가 모두 이 파일을 쓴다.
+심사는 에이전트마다 네 가지 정책을 만든다. 플랫폼팀이 켜 둔 전사 정책(지금은 `guard_prompt_<에이전트>`)이 있으면 Approve가 그것도 건다. 이름은 `platform_team/company_policy/policy_names.py` 한 곳에서 만들고, 신청서 검사, 심사 단계, 반려가 모두 이 파일을 쓴다.
 
 | 이름 | 만드는 단계 | 하는 일 |
 |---|---|---|
 | `tool_<에이전트>_<Target>_<도구>` | Grant | 에이전트가 이 도구를 부를 수 있다(도구 게이트웨이). |
 | `review_permit_<에이전트>` | Entry | 승인 전에는 심사의 시험 호출만 에이전트를 부를 수 있다. |
 | `guard_secret_<에이전트>` | Entry | 비밀값이 든 질문을 거부한다. |
-| `guard_prompt_<에이전트>` | 운영 | 프롬프트 공격(`PROMPT_INJECTION`, 신뢰도 0.4 초과)인 질문을 거부한다. 심사는 만들지 않는다. 반려와 삭제가 지운다. |
+| `guard_prompt_<에이전트>` | 운영, Approve | 프롬프트 공격(`PROMPT_INJECTION`, 신뢰도 0.4 초과)인 질문을 거부한다. 전사 정책이다. 플랫폼팀이 `company_policy/rollout.sh`로 모든 에이전트에 켜고 끈다. 켜져 있으면 Approve가 새 에이전트에 같은 모드로 건다. 반려와 삭제가 지운다. |
 | `stop_agent_<에이전트>` | 운영 | 심사의 시험 호출 말고는 그 에이전트의 모든 호출을 거부한다. 심사는 만들지 않는다. 반려와 삭제가 지운다. |
 | `entry_permit_<에이전트>` | Approve | 사용자가 에이전트를 부를 수 있다. |
 
@@ -146,7 +146,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 ### `make destroy`
 
-`make destroy`는 확인을 받은 뒤, `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 역할은 허브의 권한 경계를 단 것만 에이전트로 본다. 이름은 맞지만 경계가 다르거나 없는 역할은 허브의 것이 아니므로 `skipped <역할>: not made by this hub`를 찍고 건너뛴다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지운다. 그다음 `python -m platform_team.hosting_review.agent_cleanup --records`가 Registry에 남은 record를 종류와 이름에 상관없이 모두 지우고, 지운 record를 하나씩 찍는다(`removed record <이름> (<종류>, <상태>)`). AGENT가 아닌 record나 이름 규칙에 맞지 않는 record는 위의 정리가 에이전트로 찾지 못하는데, 남아 있으면 `terraform destroy`가 Registry에서 실패하기 때문이다. Registry는 허브의 것이고 바로 다음에 지워진다. 이 단계는 `make destroy`에만 있다. `reject`와 `remove_agent`는 record를 지우지 않는다. 그다음 `terraform destroy`를 돌린다.
+`make destroy`는 확인을 받은 뒤, 먼저 전사 정책의 모드(SSM `/<prefix>/policies/` 아래의 값)를 지운다(`company_policy/README.md`의 "`make destroy`"). 그다음 `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 역할은 허브의 권한 경계를 단 것만 에이전트로 본다. 이름은 맞지만 경계가 다르거나 없는 역할은 허브의 것이 아니므로 `skipped <역할>: not made by this hub`를 찍고 건너뛴다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지운다. 그다음 `python -m platform_team.hosting_review.agent_cleanup --records`가 Registry에 남은 record를 종류와 이름에 상관없이 모두 지우고, 지운 record를 하나씩 찍는다(`removed record <이름> (<종류>, <상태>)`). AGENT가 아닌 record나 이름 규칙에 맞지 않는 record는 위의 정리가 에이전트로 찾지 못하는데, 남아 있으면 `terraform destroy`가 Registry에서 실패하기 때문이다. Registry는 허브의 것이고 바로 다음에 지워진다. 이 단계는 `make destroy`에만 있다. `reject`와 `remove_agent`는 record를 지우지 않는다. 그다음 `terraform destroy`를 돌린다.
 
 ### 한계
 

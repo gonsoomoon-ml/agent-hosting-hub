@@ -1,4 +1,4 @@
-"""The hub's settings outside Python: one rule for .env (make, publish.sh, reject.sh, e2e_hosting.py), the prefix
+"""The hub's settings outside Python: one rule for .env (make, publish.sh, reject.sh, rollout.sh, e2e_hosting.py), the prefix
 rule, the model ID default, and the Makefile's destroy. Each test runs on a copy of the files in a temporary folder,
 so it never reads or writes a real .env."""
 import os
@@ -12,17 +12,18 @@ from platform_team.shared_code import config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PUBLISH, REJECT = "dev_team/agent_template/publish.sh", "platform_team/hosting_review/reject.sh"
-RULE = "platform_team/shared_code/hub_env.sh"                  # both commands source it
+ROLLOUT = "platform_team/company_policy/rollout.sh"
+RULE = "platform_team/shared_code/hub_env.sh"                  # every command sources it
 SHOWN = "prefix=$DEMO_PREFIX region=$AWS_REGION model=$MODEL_ID loaded=${HUB_ENV_LOADED:-no} key=${AWS_ACCESS_KEY_ID:-none} token=${SOME_TOKEN:-none}"
 DOTENV = ("DEMO_PREFIX=fromdotenv\nMODEL_ID=model-from-dotenv\nAWS_ACCESS_KEY_ID=key-of-the-dotenv\n"
           "SOME_TOKEN=do-not-export\n")
 
 
 def _copy(tmp_path) -> tuple[pathlib.Path, dict]:
-    """A copy of the Makefile and both commands, a stub uv that prints what it was given, and a clean environment:
+    """A copy of the Makefile and the three commands, a stub uv that prints what it was given, and a clean environment:
     the shell sets the prefix, the region and an access key, and nothing says .env was read already."""
     repo = tmp_path / "repo"
-    for name in ("Makefile", PUBLISH, REJECT, RULE):
+    for name in ("Makefile", PUBLISH, REJECT, ROLLOUT, RULE):
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_bytes((ROOT / name).read_bytes())
         (repo / name).chmod(0o755)
@@ -47,6 +48,7 @@ def _run(cmd, repo, env, cwd=None):
 
 COMMANDS = {"publish.sh": lambda repo: [str(repo / PUBLISH), str(repo / "dev_team" / "some_agent")],
             "reject.sh": lambda repo: [str(repo / REJECT), "quality_agent", "a reason"],
+            "rollout.sh": lambda repo: [str(repo / ROLLOUT), "guard_prompt", "report"],
             "make publish": lambda repo: ["make", "-s", "publish", "AGENT=some_agent"]}
 
 
@@ -73,7 +75,7 @@ def test_a_value_on_the_make_command_line_wins_and_the_command_does_not_read_env
     assert "prefix=fromcmdline" in out and "model=model-from-dotenv" in out and "loaded=1" in out
 
 
-@pytest.mark.parametrize("command", ["publish.sh", "reject.sh"])
+@pytest.mark.parametrize("command", ["publish.sh", "reject.sh", "rollout.sh"])
 def test_a_command_told_env_was_read_already_does_not_read_it(tmp_path, command):
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text(DOTENV)
@@ -92,7 +94,7 @@ def test_the_e2e_script_reads_env_by_the_same_rule(tmp_path):
 
 
 def test_an_empty_line_in_the_env_file_is_no_value_for_any_reader(tmp_path):
-    """shell DEMO_PREFIX=fromshell, .env line `DEMO_PREFIX=`: make, publish.sh, reject.sh and env_file_updates all use fromshell."""
+    """shell DEMO_PREFIX=fromshell, .env line `DEMO_PREFIX=`: make, publish.sh, reject.sh, rollout.sh and env_file_updates all use fromshell."""
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text("DEMO_PREFIX=\nMODEL_ID=model-from-dotenv\n")
     for command in COMMANDS:
@@ -109,7 +111,7 @@ def test_an_empty_line_in_the_env_file_is_no_value_for_any_reader(tmp_path):
 
 
 def test_nothing_else_from_the_env_file_reaches_stdout_or_stderr(tmp_path):
-    """.env holds SOME_TOKEN=do-not-export: the value is in neither stream of publish.sh, reject.sh or `make publish`."""
+    """.env holds SOME_TOKEN=do-not-export: the value is in neither stream of publish.sh, reject.sh, rollout.sh or `make publish`."""
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text(DOTENV)
     for command in COMMANDS:
@@ -170,3 +172,25 @@ def test_make_destroy_asks_about_the_catalog_records_too():
     r = subprocess.run(["make", "-n", "destroy", "AUTO_APPROVE=0"], cwd=ROOT, capture_output=True, text=True,
                        env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
     assert "and every other record left in the catalog" in r.stdout
+
+
+def _destroy_lines(approve):
+    r = subprocess.run(["make", "-n", "destroy", f"AUTO_APPROVE={approve}"], cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
+    return r.stdout.splitlines()
+
+
+@pytest.mark.parametrize("approve", ["1", "0"])
+def test_make_destroy_forgets_the_company_policy_modes_before_it_cleans_the_agents(approve):
+    """An approval after the cleanup started gives the agent no company policy: the modes go first. A failure stops
+    the destroy, and without AUTO_APPROVE=1 the question comes before it."""
+    lines = _destroy_lines(approve)
+    forget = next(i for i, line in enumerate(lines) if "platform_team.company_policy.policy_rollout --forget" in line)
+    clean = next(i for i, line in enumerate(lines) if "platform_team.hosting_review.agent_cleanup ||" in line)
+    assert forget < clean and "|| {" in lines[forget] and "exit 1" in lines[forget]
+    asked = [i for i, line in enumerate(lines) if "read answer" in line]
+    assert asked == ([] if approve == "1" else [asked[0]]) and all(i < forget for i in asked)
+
+
+def test_make_destroy_asks_about_the_company_policy_modes_too():
+    assert "the modes of the company policies" in "\n".join(_destroy_lines("0"))

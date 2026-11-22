@@ -319,3 +319,51 @@ def test_approve_checks_the_record_again_right_before_approving(change, message)
         steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
     assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]    # made between the checks
     assert c.status_reason is None                                                        # never approved
+
+# ------------------------------------------------------------------ the company policies the platform team deployed
+
+def test_approve_gives_a_new_agent_the_deployed_policies_in_their_mode():
+    c = FakeClients(parameters={"/hub/policies/guard_prompt": "LOG_ONLY"})
+    out = steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)       # the ctx the existing approve tests pass
+    made = [(p["name"], p["mode"], p["kind"]) for p in c.created_policies]
+    assert made == [("guard_prompt_quality_agent", "LOG_ONLY", "policy"), ("entry_permit_quality_agent", "ACTIVE", "cedar")]
+    assert out["companyPolicies"] == {"guard_prompt": "LOG_ONLY"} and out["recordStatus"] == "APPROVED"
+    assert 'AgentCore::Gateway::"%s"' % ENV["AGENT_GW_ARN"] in c.created_policies[0]["statement"]
+    assert '"QualityAgent___POST:/invocations"' in c.created_policies[0]["statement"]
+
+def test_approve_with_no_company_policy_deployed_makes_only_the_entry_permit():
+    c = FakeClients()
+    out = steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]
+    assert out["companyPolicies"] == {} and out["recordStatus"] == "APPROVED"
+
+def test_approve_checks_the_record_before_the_company_policies():
+    c = FakeClients(record_spec={**SPEC, "code_version": "v2"}, parameters={"/hub/policies/guard_prompt": "ACTIVE"})
+    with pytest.raises(RuntimeError, match="the record changed after the review started"):
+        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    assert c.created_policies == [] and ("ssm", "get_parameters_by_path") not in c.calls
+
+def test_approve_runs_record_check_company_policies_entry_permit_record_check_approval():
+    c = FakeClients(parameters={"/hub/policies/guard_prompt": "ACTIVE"})
+    steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    order = [call for call in c.calls if call in {("reg", "get_registry_record"), ("ssm", "get_parameters_by_path"),
+                                                  ("ctl", "create_policy"), ("reg", "update_registry_record_status")}]
+    assert order == [("reg", "get_registry_record"), ("ssm", "get_parameters_by_path"), ("ctl", "create_policy"),
+                     ("ctl", "create_policy"), ("reg", "get_registry_record"), ("reg", "update_registry_record_status")]
+    assert [p["name"] for p in c.created_policies] == ["guard_prompt_quality_agent", "entry_permit_quality_agent"]
+
+def test_approve_stops_at_a_company_policy_in_another_mode_and_opens_nothing():
+    c = FakeClients(parameters={"/hub/policies/guard_prompt": "ACTIVE"}, existing_policies={"guard_prompt_quality_agent"},
+                    policy_mode="LOG_ONLY")
+    with pytest.raises(RuntimeError, match="the approval does not switch modes"):
+        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    assert c.created_policies == [] and c.mode_changes == [] and c.record_status == "PENDING_APPROVAL"
+
+def test_company_policies_made_before_a_stopped_approval_stay():
+    # the record is rejected while the policies wait: approval stops at the second check; a forbid harms nothing
+    c = FakeClients(parameters={"/hub/policies/guard_prompt": "LOG_ONLY"})
+    _changes_while_the_entry_permit_waits(c, lambda c: setattr(c, "record_status", "REJECTED"))
+    with pytest.raises(RuntimeError, match="is REJECTED, not PENDING_APPROVAL"):
+        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    assert set(c.policies) == {"guard_prompt_quality_agent", "entry_permit_quality_agent"} and c.deleted_policies == []
+    assert c.status_reason is None

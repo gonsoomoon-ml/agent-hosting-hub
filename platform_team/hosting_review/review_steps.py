@@ -18,8 +18,10 @@ from platform_team.company_policy import cedar_statements as cedar
 from platform_team.company_policy.policy_engine import ensure_policy
 from platform_team.company_policy.policy_names import (entry_permit_name, guard_secret_name, review_permit_name,
                                                        tool_policy_name)
+from platform_team.company_policy.policy_rollout import apply_to_agent
 from platform_team.shared_code.aws_helpers import Deadline, signed_post
 from platform_team.shared_code.config import Settings
+from platform_team.shared_code.hub_state import Platform
 
 NORMAL_PROMPT = "What is the spec of part P-100?"
 NORMAL_ATTEMPTS = 38     # a new target needs a while before it answers
@@ -247,16 +249,27 @@ def _record_unchanged(ctx: dict, c, env: dict) -> None:
                            "it is not approved")
 
 
+def _platform(env: dict) -> Platform:
+    """The platform values a step's environment holds, as company_policy.policy_rollout takes them."""
+    return Platform(account=env["ACCOUNT"], engine_id=env["ENGINE_ID"],
+                    agent_gw={"id": env["AGENT_GW_ID"], "arn": env["AGENT_GW_ARN"]})
+
+
 def approve(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
-    """7 Let users in and mark the record approved, only if the record still holds the reviewed application."""
+    """7 Give the agent the company policies the platform team has deployed, each in its mode (policy_rollout), let
+    users in and mark the record approved, only if the record still holds the reviewed application. In this order:
+    record check, company policies, entry permit, record check, APPROVED. When the second check stops the approval,
+    the company policies made in this run stay (a forbid lets nobody in)."""
     deadline = deadline or Deadline()
     _record_unchanged(ctx, c, env)
-    policy = _policy(c, env, deadline, entry_permit_name(ctx["spec"]["name"]),
-                     cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
-    _record_unchanged(ctx, c, env)                # once more right before approving: the policy wait takes a while
+    agent = ctx["spec"]["name"]
+    company = apply_to_agent(c, _settings(env), _platform(env), agent,
+                             wait=deadline.wait(POLICY_WAIT, "the company policies"))
+    policy = _policy(c, env, deadline, entry_permit_name(agent), cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
+    _record_unchanged(ctx, c, env)                # once more right before approving: the policy waits take a while
     r = c.reg.update_registry_record_status(registryId=ctx["registryId"], recordId=ctx["recordId"],
                                             status="APPROVED", statusReason="passed the hosting review")
-    return {**ctx, "entryPolicy": policy, "recordStatus": r["status"]}
+    return {**ctx, "companyPolicies": company, "entryPolicy": policy, "recordStatus": r["status"]}
 
 
 STEPS = {"read": read, "grant": grant, "entry": entry, "testcall": testcall, "approve": approve}

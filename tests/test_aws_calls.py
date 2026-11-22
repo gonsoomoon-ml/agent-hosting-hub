@@ -12,6 +12,7 @@ import pytest
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
+from platform_team.company_policy import policy_rollout
 from platform_team.company_policy.policy_engine import ensure_policy, set_mode
 from platform_team.hosting_review import agent_cleanup, deploy_build, reject_agent, review_steps
 from platform_team.shared_code.aws_helpers import Clients
@@ -212,28 +213,103 @@ def test_read_calls_match_the_service_model(aws):
     assert out["spec"] == {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS} and out["record"] == AGENT
 
 
-def test_approve_calls_match_the_service_models(aws):
-    """final review I-2: Approve reads the record (its status too) before and after making the entry permit."""
-    c, stubs = aws
-    reg, ctl = stubs["reg"], stubs["ctl"]
-    ctx = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
-           "spec": {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS},
-           "applicationDigest": review_steps.application_digest(APPLICATION)}
-    env = {**ENV, "ENGINE_ID": ENGINE}
-    pol = _policy("entry_permit_quality_agent")
-    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+APPROVE_CTX = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
+               "spec": {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS},
+               "applicationDigest": review_steps.application_digest(APPLICATION)}
+
+
+def _made_policy(ctl, name, definition, mode="ACTIVE"):
+    """ensure_policy for a policy that is not there yet: list, create, and the first look finds it ACTIVE."""
+    pol = _policy(name)
     ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
     ctl.add_response("create_policy", {**pol, "status": "CREATING"}, {
-        "policyEngineId": ENGINE, "name": pol["name"], "validationMode": "IGNORE_ALL_FINDINGS", "enforcementMode": "ACTIVE",
-        "definition": {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}}})
+        "policyEngineId": ENGINE, "name": name, "validationMode": "IGNORE_ALL_FINDINGS", "enforcementMode": mode,
+        "definition": definition})
     ctl.add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    return pol
+
+
+def _approval(reg):
     reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
     reg.add_response("update_registry_record_status", {
         "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
         "status": "APPROVED", "statusReason": "passed the hosting review", "updatedAt": NOW},
         {"registryId": REG, "recordId": REC, "status": "APPROVED", "statusReason": "passed the hosting review"})
-    out = review_steps.approve(ctx, c, env)
-    assert out["recordStatus"] == "APPROVED" and out["entryPolicy"] == pol["policyId"]
+
+
+def test_approve_calls_match_the_service_models(aws):
+    """final review I-2: Approve reads the record (its status too) before and after making the entry permit.
+    Between the first read and the entry permit it reads the company policies' modes: none are deployed here."""
+    c, stubs = aws
+    reg, ctl = stubs["reg"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
+    pol = _made_policy(ctl, "entry_permit_quality_agent",
+                       {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
+    _approval(reg)
+    out = review_steps.approve(dict(APPROVE_CTX), c, env)
+    assert out["recordStatus"] == "APPROVED" and out["entryPolicy"] == pol["policyId"] and out["companyPolicies"] == {}
+
+
+def test_approve_with_a_company_policy_deployed_calls_match_the_service_models(aws):
+    """The path is passed as the approve role's policy names it: /<prefix>/policies, no trailing slash."""
+    c, stubs = aws
+    reg, ctl = stubs["reg"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": [
+        {"Name": "/hub/policies/guard_prompt", "Type": "String", "Value": "LOG_ONLY", "Version": 1}]},
+        {"Path": "/hub/policies"})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # not in another mode
+    _made_policy(ctl, "guard_prompt_quality_agent",
+                 {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", ENV["AGENT_GW_ARN"])}},
+                 mode="LOG_ONLY")
+    _made_policy(ctl, "entry_permit_quality_agent",
+                 {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
+    _approval(reg)
+    out = review_steps.approve(dict(APPROVE_CTX), c, env)
+    assert out["companyPolicies"] == {"guard_prompt": "LOG_ONLY"} and out["recordStatus"] == "APPROVED"
+
+
+AGENT_GW_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/{GW}"
+ROLLOUT_P = Platform(account=ACCOUNT, agent_gw={"id": GW, "arn": AGENT_GW_ARN, "url": "u"}, engine_id=ENGINE)
+
+
+def test_rollout_calls_match_the_service_models(aws):
+    """The mode first (PutParameter), then the hosted agents (SSM and the agent gateway's targets), then the policy."""
+    c, stubs = aws
+    ssm, ctl = stubs["ssm"], stubs["ctl"]
+    ssm.add_response("put_parameter", {"Version": 1, "Tier": "Standard"},
+                     {"Name": "/hub/policies/guard_prompt", "Value": "LOG_ONLY", "Type": "String", "Overwrite": True})
+    ssm.add_response("get_parameters_by_path", {"Parameters": [{"Name": PARAM, "Type": "String", "Value": RUNTIME_ARN}]},
+                     {"Path": "/hub/agents", "Recursive": True})
+    ctl.add_response("list_gateway_targets", {"items": [{"targetId": TID, "name": "QualityAgent", "status": "READY",
+                                                         "createdAt": NOW, "updatedAt": NOW}]},
+                     {"gatewayIdentifier": GW, "maxResults": 100})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
+    _made_policy(ctl, "guard_prompt_quality_agent",
+                 {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", AGENT_GW_ARN)}}, mode="LOG_ONLY")
+    out = policy_rollout.rollout(c, S, ROLLOUT_P, "guard_prompt", "log-only", say=lambda line: None)
+    assert out == {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {AGENT: "created"}}
+
+
+def test_remove_and_forget_calls_match_the_service_models(aws):
+    c, stubs = aws
+    ssm, ctl = stubs["ssm"], stubs["ctl"]
+    ssm.add_response("delete_parameter", {}, {"Name": "/hub/policies/guard_prompt"})
+    pol = _policy("guard_prompt_quality_agent")
+    ctl.add_response("list_policies", {"policies": [pol, _policy("entry_permit_quality_agent")]},
+                     {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    assert policy_rollout.remove(c, S, ROLLOUT_P, "guard_prompt", say=lambda line: None) == {
+        "policy": "guard_prompt", "agents": {AGENT: "removed"}}
+    ssm.add_response("get_parameters_by_path", {"Parameters": [
+        {"Name": "/hub/policies/guard_prompt", "Type": "String", "Value": "ACTIVE"}]}, {"Path": "/hub/policies"})
+    ssm.add_response("delete_parameter", {}, {"Name": "/hub/policies/guard_prompt"})
+    assert policy_rollout.forget(c, S) == ["/hub/policies/guard_prompt"]
 
 
 def _target(arn):

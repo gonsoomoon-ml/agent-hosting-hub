@@ -1,4 +1,4 @@
-# Sourced by publish.sh and reject.sh, with $repo set to the repo root. The rule for .env (README, ".env"), as make
+# Sourced by publish.sh, reject.sh and rollout.sh, with $repo set to the repo root. The rule for .env (README, ".env"), as make
 # and e2e_hosting.py follow it (platform_team/shared_code/config.py, env_file_updates):
 # - only the lines AWS_REGION=..., DEMO_PREFIX=... and MODEL_ID=... are read, and they win over the shell;
 #   a line with no value (DEMO_PREFIX=) is the same as no line;

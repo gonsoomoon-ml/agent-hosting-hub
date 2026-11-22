@@ -11,8 +11,8 @@ DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # a gateway no "_", a bucket no upper case. platform_team/terraform/variables.tf checks the same rule.
 PREFIX_PATTERN = r"[a-z][a-z0-9]{1,9}"
 
-# .env (README, ".env"): only these three names are read from it, as NAME=value lines. Make, publish.sh, reject.sh
-# and e2e_hosting.py follow the same rule; whoever reads .env sets ENV_LOADED, so the commands it runs do not again.
+# .env (README, ".env"): only these three names are read from it, as NAME=value lines. Make, publish.sh, reject.sh,
+# rollout.sh and e2e_hosting.py follow the same rule; whoever reads .env sets ENV_LOADED, so the commands it runs do not again.
 HUB_VARIABLES = ("AWS_REGION", "DEMO_PREFIX", "MODEL_ID")
 ENV_LOADED = "HUB_ENV_LOADED"
 

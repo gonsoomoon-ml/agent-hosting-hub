@@ -156,3 +156,17 @@ def test_the_inbox_refuses_requests_without_tls():
     policy = re.search(r'resource\s+"aws_s3_bucket_policy"\s+"inbox"\s*{(.*?)\n}\n', main, re.S)
     assert policy and re.search(r"bucket\s*=\s*aws_s3_bucket\.inbox\.id", policy.group(1))
     assert re.search(r"policy\s*=\s*data\.aws_iam_policy_document\.inbox\.json", policy.group(1))
+
+
+# ------------------------------------------------------------------ Approve reads the company policies' modes
+
+def test_approve_reads_the_company_policy_modes_and_no_other_parameter():
+    # GetParametersByPath is authorised on the path itself, as the call passes it: parameter/<prefix>/policies
+    # (a denial on AWS named "...:parameter/hub/platform" for Path=/hub/platform, the dev role's read)
+    from platform_team.shared_code.config import Settings
+    approve = document("approve")
+    read = _statement(approve, "CompanyPolicyModes")
+    assert actions(read) == ["ssm:GetParametersByPath"]
+    assert _resources(read) == ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
+    assert [s for s in statements(approve) if "ssm:" in s] == [read]
+    assert _resources(read)[0].replace("${var.prefix}", "hub").endswith(":parameter" + Settings().ssm("policies"))

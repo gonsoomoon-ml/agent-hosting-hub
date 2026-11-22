@@ -61,3 +61,12 @@ def test_a_skipped_record_ends_without_an_alert():
 def test_notify_retries_before_it_gives_up():
     retries = [r for r in D["States"]["Notify"].get("Retry", []) if "States.TaskFailed" in r["ErrorEquals"]]
     assert len(retries) == 1 and retries[0]["MaxAttempts"] >= 3 and retries[0]["IntervalSeconds"] >= 1
+
+def test_each_lambda_state_waits_longer_than_its_function_may_run():
+    # a state's TimeoutSeconds below its Lambda's timeout would end the review while the step still runs
+    main = pathlib.Path("platform_team/hosting_review/terraform/main.tf").read_text()
+    body = re.search(r"\n  steps = {(.*?)\n  }", main, re.S).group(1)
+    timeout = {k: int(v) for k, v in re.findall(r"(\w+)\s*=\s*(\d+)", body)}
+    states = {"Read": "read", "Grant": "grant", "Entry": "entry", "TestCall": "testcall", "Approve": "approve"}
+    assert [s for s, step in states.items() if D["States"][s]["TimeoutSeconds"] <= timeout[step]] == []
+    assert timeout["approve"] == 900                    # the company policies and the entry permit

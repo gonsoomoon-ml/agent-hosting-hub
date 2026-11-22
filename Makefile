@@ -19,6 +19,7 @@ export TF_VAR_model_id = $(MODEL_ID)
 TF = terraform -chdir=platform_team/terraform
 SEED = uv run python -m platform_team.agent_catalog.seed_catalog
 CLEAN = uv run python -m platform_team.hosting_review.agent_cleanup
+FORGET = uv run python -m platform_team.company_policy.policy_rollout --forget
 # deploy and destroy show the plan and ask before they change the account. AUTO_APPROVE=1 skips the question
 # (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
 APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
@@ -39,8 +40,10 @@ deploy: package
 seed:
 	$(SEED)
 
-# Outside Terraform's state: what the hosting review made for each agent (policies, gateway target, Runtime and its
-# logs, code packages, execution role, SSM values), the agents' catalog records and the seeded record. An agent role keeps the
+# Outside Terraform's state: the modes of the company policies (SSM /<prefix>/policies/, rollout.sh writes them), what
+# the hosting review made for each agent (policies, gateway target, Runtime and its logs, code packages, execution
+# role, SSM values), the agents' catalog records and the seeded record. The modes go first, so a review that still
+# approves an agent while the cleanup runs gives it no company policy. An agent role keeps the
 # boundary policy from being deleted, and a registry with records cannot be deleted: they all go first, the agents
 # before the seed. Then `agent_cleanup --records` deletes any record still in the hub's registry (another type, a name
 # the rules refuse) and prints each one. If a step fails, terraform destroy does not run.
@@ -50,9 +53,10 @@ destroy: package
 	$(TF) init -input=false
 ifneq ($(AUTO_APPROVE),1)
 	$(TF) plan -destroy
-	@printf "Destroy everything above, every hosted agent with its catalog record, the seeded catalog record, and every other record left in the catalog? Only 'yes' is accepted: "; read answer; \
+	@printf "Destroy everything above, the modes of the company policies, every hosted agent with its catalog record, the seeded catalog record, and every other record left in the catalog? Only 'yes' is accepted: "; read answer; \
 	  [ "$$answer" = yes ] || { echo "Destroy cancelled."; exit 1; }
 endif
+	@$(FORGET) || { echo "Destroy stopped before terraform destroy: the modes of the company policies were not removed (see the line above). Fix that and run make destroy again."; exit 1; }
 	@$(CLEAN) || { echo "Destroy stopped before terraform destroy: the agents were not all removed (see the line above). Fix that and run make destroy again."; exit 1; }
 	$(SEED) --remove
 	$(CLEAN) --records
