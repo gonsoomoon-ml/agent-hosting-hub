@@ -4,6 +4,7 @@ Terraform deploys them as five Lambda functions, each with its own role and ACTI
 None of these steps opens or runs the submitted code: that happens in CodeBuild (scan, deploy)."""
 import json
 import time
+import urllib.error
 
 from platform_team.agent_catalog import application_form
 from platform_team.agent_gateway.gateway_targets import ensure_runtime_target
@@ -97,11 +98,12 @@ def testcall(ctx: dict, c, env: dict) -> dict:
     must be refused. A new target or policy takes a moment, so each call is tried again for a while."""
     region, wait = env["HUB_REGION"], float(env.get("TESTCALL_WAIT", "8"))
     url = f"https://{env['AGENT_GW_ID']}.gateway.bedrock-agentcore.{region}.amazonaws.com/{ctx['target']}/invocations"
-    post = getattr(c, "signed_post", signed_post)       # tests hand in a fake through the clients
-
     def until(prompt: str, want: int, attempts: int) -> tuple[int, str]:
         for i in range(attempts):
-            code, body = post(url, {"prompt": prompt}, region)
+            try:
+                code, body = signed_post(url, {"prompt": prompt}, region)
+            except (OSError, urllib.error.URLError) as e:     # a timeout or reset: try again like any other not-yet answer
+                code, body = 0, str(e)
             if code == want or i == attempts - 1:
                 return code, body
             time.sleep(wait)

@@ -1,6 +1,12 @@
+import urllib.error
 import pytest
 from platform_team.hosting_review import review_steps as steps
 from tests.fakes import FakeClients, ENV, CTX
+
+@pytest.fixture(autouse=True)
+def patched_post(monkeypatch):
+    """The steps' signed_post answers from the FakeClients built in the test."""
+    monkeypatch.setattr(steps, "signed_post", lambda *a, **kw: FakeClients.latest.post(*a, **kw))
 
 def test_read_refuses_an_application_with_an_unknown_tool():       # Review Focus 3
     c = FakeClients(record_spec={"name": "quality_agent", "team": "appliance", "framework": "strands",
@@ -38,3 +44,10 @@ def test_testcall_fails_the_review_when_a_secret_is_not_refused():
     c = FakeClients(http=[(200, '{"answer": "ok"}'), (200, '{"answer": "leaked"}')])
     with pytest.raises(RuntimeError, match="was not refused"):
         steps.testcall({**CTX, "target": "QualityAgent"}, c, {**ENV, "TESTCALL_WAIT": "0"})
+
+def test_testcall_retries_a_call_that_raises_a_network_error():
+    c = FakeClients(http=[urllib.error.URLError("connection reset"), TimeoutError("timed out"),
+                          (200, '{"answer": "ok"}'), (403, "refused")])
+    out = steps.testcall({**CTX, "target": "QualityAgent"}, c, {**ENV, "TESTCALL_WAIT": "0"})
+    assert out["testCall"]["normal"] == 200 and out["testCall"]["with_secret"] == 403
+    assert len(c.posts) == 4

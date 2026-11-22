@@ -128,9 +128,12 @@ class _Reg:
 
 class FakeClients:
     """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg).
-    http: the (status, text) answers of the signed POSTs, in turn; the last one repeats.
+    http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
+    instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     Recorded: created_policies (id, name, statement), deleted_policies, policies, roles, targets,
     posts (url, body), status_reason."""
+
+    latest = None       # the most recently built fake, for the patched signed_post
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None):
@@ -144,7 +147,12 @@ class FakeClients:
         self.created_policies, self.deleted_policies = [], []
         self.roles, self.targets, self.target_arns, self.posts = {}, {}, {}, []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
+        FakeClients.latest = self
 
-    def signed_post(self, url, body, region, **kw):
+    def post(self, url, body, region, **kw):
+        """What a patched `signed_post` answers: the next `http` entry (an exception instance is raised)."""
         self.posts.append((url, body))
-        return self.http.pop(0) if len(self.http) > 1 else self.http[0]
+        answer = self.http.pop(0) if len(self.http) > 1 else self.http[0]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
