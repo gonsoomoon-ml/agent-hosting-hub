@@ -133,3 +133,64 @@ def test_approve_refuses_a_record_that_changed_after_the_review_started():
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
         steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
+
+# ------------------------------------------------------------------ final review I-1: Read binds the application to its record
+
+EVENT = {"detail": {"registryId": "reg-1", "registryRecordId": "rec-1"}}
+
+def test_read_refuses_an_application_whose_name_is_not_the_records():
+    c = FakeClients(record_name="foo")                       # record foo, application quality_agent
+    with pytest.raises(ValueError, match="the application's name quality_agent is not the record's name foo"):
+        steps.read(EVENT, c, ENV)
+
+def test_read_refuses_a_record_that_is_not_an_agent():
+    c = FakeClients(record_type="MCP")
+    with pytest.raises(ValueError, match="record type is MCP, not AGENT"):
+        steps.read(EVENT, c, ENV)
+
+@pytest.mark.parametrize("change, message", [
+    ({"code_key": "agents/quality_agent/code.zip"}, "code_key must be a key under submissions/"),
+    ({"code_key": 7}, "code_key must be a key under submissions/"),
+    ({"code_key": "submissions/"}, "code_key must be a key under submissions/"),
+    ({"code_version": 3}, "code_version must be a string"),
+    ({"code_version": ""}, "missing: code_version"),
+    ({"team": 5}, "team must be a string of 1 to 64 characters"),
+    ({"framework": ["strands"]}, "framework must be a string of 1 to 64 characters"),
+    ({"team": "t" * 65}, "team must be a string of 1 to 64 characters"),
+    ({"tools": {"Parts___get_part_spec": 1}}, "tools must be a list of tool names"),
+    ({"tools": "Parts___get_part_spec"}, "tools must be a list of tool names"),
+])
+def test_read_refuses_a_field_of_the_wrong_shape(change, message):
+    c = FakeClients(record_spec={**SPEC, **change})
+    with pytest.raises(ValueError, match=message):
+        steps.read(EVENT, c, ENV)
+
+def test_read_keeps_its_error_short_whatever_the_record_holds():       # it travels in the review's state to the alert
+    c = FakeClients(record_spec={**SPEC, "name": "a" * 100_000, "tools": ["x" * 1000] * 100}, record_name="b" * 100_000)
+    with pytest.raises(ValueError) as e:
+        steps.read(EVENT, c, ENV)
+    assert len(str(e.value)) <= steps.MAX_ERROR and "is not the record's name" in str(e.value)
+
+def test_read_passes_on_the_reviewed_fields_only():
+    c = FakeClients(record_spec={**SPEC, "description": "an agent", "notes": "x" * 5000})
+    out = steps.read(EVENT, c, ENV)
+    assert out["spec"] == SPEC and sorted(out["spec"]) == sorted(steps.REVIEWED_FIELDS)
+    assert out["record"] == "quality_agent" and (out["registryId"], out["recordId"]) == ("reg-1", "rec-1")
+
+def test_approve_reads_the_record_through_the_same_check_as_read():
+    c = FakeClients(record_spec={**SPEC, "description": "an agent"})
+    ctx = steps.read(EVENT, c, ENV)
+    assert steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)["recordStatus"] == "APPROVED"
+
+@pytest.mark.parametrize("change", [
+    lambda c: setattr(c, "record_spec", {**c.record_spec, "description": "changed"}),   # a field Read does not pass on
+    lambda c: setattr(c, "record_name", "foo"),                                         # the record no longer binds it
+    lambda c: setattr(c, "record_spec", {**c.record_spec, "tools": "Parts___get_part_spec"}),
+])
+def test_approve_refuses_a_record_that_changed_in_any_way_after_read(change):
+    c = FakeClients(record_spec={**SPEC, "description": "an agent"})
+    ctx = steps.read(EVENT, c, ENV)
+    change(c)
+    with pytest.raises(RuntimeError, match="the record changed after the review started"):
+        steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)
+    assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []

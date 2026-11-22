@@ -6,6 +6,7 @@ None of these steps opens or runs the submitted code: that happens in CodeBuild 
 Every wait of a step takes its normal ceiling or the time its Lambda has left (`deadline`, set by
 lambda_handler), whichever is shorter. A step that runs out of time stops with its own error and leaves no
 half-made policy behind; without a deadline (unit tests, local runs) every wait gets its ceiling."""
+import hashlib
 import json
 import time
 import urllib.error
@@ -25,6 +26,11 @@ SECRET_ATTEMPTS = 15     # a new policy needs a moment before it refuses
 POLICY_WAIT = 300        # s, until a new policy is ACTIVE
 TARGET_WAIT = 300        # s, until a new gateway target is READY
 CALL_TIMEOUT = 180       # s, one test call
+# The fields of an application the later steps use: Read passes on these and nothing else (application()).
+REVIEWED_FIELDS = ("name", "team", "framework", "tools", "code_key", "code_version")
+SUBMISSIONS = "submissions/"     # where the dev team role uploads; the builds may read nothing else of the inbox
+SHOWN = 64                       # characters of a record's value an error message shows
+MAX_ERROR = 2000                 # characters of Read's error: it travels in the review's state to the alert
 
 
 def _settings(env: dict) -> Settings:
@@ -37,16 +43,57 @@ def _policy(c, env: dict, deadline: Deadline, name: str, statement: str, guardra
                          wait=deadline.wait(POLICY_WAIT, f"policy {name}"))
 
 
+def application_digest(app: dict) -> str:
+    """A fingerprint of a whole application, so Approve can tell any change, also in a field Read does not pass on."""
+    return hashlib.sha256(json.dumps(app, sort_keys=True).encode()).hexdigest()
+
+
+def _shown(value) -> str:
+    """A value from the record as an error shows it: short, whatever its type."""
+    return str(value)[:SHOWN]
+
+
+def application(rec: dict, env: dict) -> tuple[dict, str]:
+    """The application a catalog record holds, checked and cut down to the fields the later steps use
+    (REVIEWED_FIELDS), with the digest of the whole application. Read and Approve both read the record through
+    this one function, so what Approve compares is exactly what Read passed on.
+
+    The record must be an AGENT record whose name is the application's name: every later step names things after the
+    application, while reject and the cleanup find them by the record's name. The code must sit under submissions/.
+    Raises ValueError with every problem found."""
+    data = ((rec.get("descriptors") or {}).get("custom") or {}).get("data")
+    try:
+        app = json.loads(data) if isinstance(data, str) else None
+    except ValueError:
+        app = None
+    if not isinstance(app, dict):
+        raise ValueError("the record holds no application: descriptors.custom.data is not a JSON object")
+    problems = []
+    if rec.get("recordType") != "AGENT":
+        problems.append(f"record type is {_shown(rec.get('recordType'))}, not AGENT")
+    if app.get("name") != rec.get("name"):
+        problems.append(f"the application's name {_shown(app.get('name'))} is not the record's name "
+                        f"{_shown(rec.get('name'))}")
+    problems += application_form.validate(app, set(filter(None, env["CATALOG_TOOLS"].split(","))), _settings(env))
+    problems += [f"missing: {k}" for k in ("code_key", "code_version") if not app.get(k)]
+    key, version = app.get("code_key"), app.get("code_version")
+    if key and not (isinstance(key, str) and key.startswith(SUBMISSIONS) and len(key) > len(SUBMISSIONS)):
+        problems.append(f"code_key must be a key under {SUBMISSIONS}: {_shown(key)}")
+    if version and not isinstance(version, str):
+        problems.append(f"code_version must be a string: {_shown(version)}")
+    if problems:
+        raise ValueError("; ".join(problems)[:MAX_ERROR])
+    return {k: app[k] for k in REVIEWED_FIELDS}, application_digest(app)
+
+
 def read(event: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
-    """1 Read the application from the catalog record and check it. Passes on where the code is; does not open it."""
+    """1 Read the application from the catalog record and check it (application). Passes on the checked fields only,
+    among them where the code is; does not open the code."""
     d = event["detail"]
     rec = c.reg.get_registry_record(registryId=d["registryId"], recordId=d["registryRecordId"])
-    spec = json.loads(rec["descriptors"]["custom"]["data"])
-    problems = application_form.validate(spec, set(filter(None, env["CATALOG_TOOLS"].split(","))), _settings(env))
-    problems += [f"missing: {k}" for k in ("code_key", "code_version") if not spec.get(k)]
-    if problems:
-        raise ValueError("; ".join(problems))
-    return {"registryId": d["registryId"], "recordId": d["registryRecordId"], "record": rec["name"], "spec": spec}
+    spec, digest = application(rec, env)
+    return {"registryId": d["registryId"], "recordId": d["registryRecordId"], "record": rec["name"], "spec": spec,
+            "applicationDigest": digest}
 
 
 def _execution_role(env: dict) -> tuple[dict, dict]:
@@ -136,16 +183,16 @@ def testcall(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     return {**ctx, "testCall": {"normal": code, "with_secret": code2, "answer": body[:400]}}
 
 
-def _record_unchanged(ctx: dict, c) -> None:
+def _record_unchanged(ctx: dict, c, env: dict) -> None:
     """The record still holds the application the review started with. A team can change its record while the
-    review runs; approving then would approve content nobody reviewed."""
+    review runs; approving then would approve content nobody reviewed. The record is read through the same check
+    as in Read (application), and the whole application must be as it was (its digest)."""
     rec = c.reg.get_registry_record(registryId=ctx["registryId"], recordId=ctx["recordId"])
-    data = ((rec.get("descriptors") or {}).get("custom") or {}).get("data")
     try:
-        spec = json.loads(data) if data else None
+        spec, digest = application(rec, env)
     except ValueError:
-        spec = None
-    if spec != ctx["spec"]:
+        spec = digest = None
+    if spec != ctx["spec"] or digest != ctx.get("applicationDigest"):
         raise RuntimeError("the record changed after the review started: it is not approved "
                            "(the changed record goes through a review of its own)")
 
@@ -153,10 +200,10 @@ def _record_unchanged(ctx: dict, c) -> None:
 def approve(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     """7 Let users in and mark the record approved, only if the record still holds the reviewed application."""
     deadline = deadline or Deadline()
-    _record_unchanged(ctx, c)
+    _record_unchanged(ctx, c, env)
     policy = _policy(c, env, deadline, entry_permit_name(ctx["spec"]["name"]),
                      cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
-    _record_unchanged(ctx, c)                     # once more right before approving: the policy wait takes a while
+    _record_unchanged(ctx, c, env)                # once more right before approving: the policy wait takes a while
     r = c.reg.update_registry_record_status(registryId=ctx["registryId"], recordId=ctx["recordId"],
                                             status="APPROVED", statusReason="passed the hosting review")
     return {**ctx, "entryPolicy": policy, "recordStatus": r["status"]}

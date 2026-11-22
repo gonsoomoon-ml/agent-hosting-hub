@@ -9,10 +9,11 @@ import boto3
 import pytest
 from botocore.stub import Stubber
 
-from platform_team.hosting_review import agent_cleanup, reject_agent
+from platform_team.hosting_review import agent_cleanup, reject_agent, review_steps
 from platform_team.shared_code.aws_helpers import Clients
 from platform_team.shared_code.config import Settings
 from platform_team.shared_code.hub_state import Platform
+from tests.fakes import ENV
 
 ACCOUNT, REGION, NOW = "111122223333", "us-west-2", datetime.datetime(2026, 11, 22)
 ENGINE, GW, REG, REC, TID = "hub_pe-abcdefghij", "hub-agents-abcdefghij", "abcdef123456", "rec123456789", "Tgt1234567"
@@ -152,6 +153,25 @@ def test_clean_agents_calls_match_the_service_models(aws, monkeypatch):
     stubs["reg"].add_response("delete_registry_record", {}, {"registryId": REG, "recordId": REC})
     stubs["reg"].add_response("list_registry_records", {"registryRecords": []}, {"registryId": REG, "maxResults": 100})
     assert agent_cleanup.clean_agents(S, c, say=pytest.fail) == [*REMOVED, f"record {AGENT}"]
+
+
+APPLICATION = {"name": AGENT, "team": "appliance", "framework": "strands", "tools": ["Parts___get_part_spec"],
+               "code_key": f"submissions/appliance/{AGENT}/agent.zip", "code_version": "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrH",
+               "description": "Answers questions about inspection results."}
+
+
+def _full_record(status, app=APPLICATION):
+    """GetRegistryRecord's answer: the record with the application in its custom descriptor, as publish writes it."""
+    return {**_record(status), "description": "quality_agent: agent of team appliance",
+            "descriptors": {"custom": {"data": json.dumps(app)}}}
+
+
+def test_read_calls_match_the_service_model(aws):
+    """final review I-1: Read reads the record's name and type from GetRegistryRecord's answer."""
+    c, stubs = aws
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    out = review_steps.read({"detail": {"registryId": REG, "registryRecordId": REC}}, c, ENV)
+    assert out["spec"] == {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS} and out["record"] == AGENT
 
 
 def test_a_stack_without_a_made_runtime_is_checked_by_its_template(aws):

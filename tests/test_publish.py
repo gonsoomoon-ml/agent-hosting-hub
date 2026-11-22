@@ -183,6 +183,25 @@ def test_main_names_the_step_that_failed_and_what_succeeded(tmp_path, monkeypatc
     assert "record not written" in out and "run again" in out
 
 
+@pytest.mark.parametrize("folder", sorted(p.parent.name for p in pathlib.Path("dev_team").glob("*/agent.json")))
+def test_the_record_publish_writes_passes_the_reviews_read(monkeypatch, folder):
+    """final review I-1: Read checks more than the form does (the record's name and type, code_key, code_version).
+    The record publish writes for each example application must still pass it."""
+    from platform_team.hosting_review import review_steps
+    from tests.fakes import ENV
+    app = json.loads((pathlib.Path("dev_team") / folder / "agent.json").read_text())
+    fake, _ = _wire(monkeypatch)
+    monkeypatch.setattr(publish_agent, "records", lambda c, reg: {app["name"]: {"recordId": "rec-9", "status": "DRAFT"}})
+    written = {}
+    monkeypatch.setattr(publish_agent, "put_record", lambda c, reg, name, kind, desc, payload:
+                        written.update(name=name, kind=kind, payload=payload) or "rec-9")
+    out = publish_agent.publish(pathlib.Path("dev_team") / folder, Settings(), c=fake)
+    record = FakeClients(record_spec=written["payload"], record_name=written["name"], record_type=written["kind"])
+    read = review_steps.read({"detail": {"registryId": "reg-1", "registryRecordId": "rec-9"}}, record, ENV)
+    assert read["spec"] == {**{k: app[k] for k in ("name", "team", "framework", "tools")},
+                            "code_key": out["code_key"], "code_version": out["code_version"]}
+
+
 def test_main_says_which_hub_it_published_to(tmp_path, monkeypatch, capsys):
     fake, _ = _wire(monkeypatch)
     monkeypatch.setattr(publish_agent, "Clients", type("C", (), {"for_settings": staticmethod(lambda s: fake)}))

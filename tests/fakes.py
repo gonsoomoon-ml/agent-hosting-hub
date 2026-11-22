@@ -4,6 +4,7 @@ import types
 
 from botocore.exceptions import ClientError
 
+from platform_team.hosting_review.review_steps import application_digest
 from platform_team.shared_code.hub_state import Platform
 
 ACCOUNT = "111122223333"
@@ -20,9 +21,10 @@ ENV = {
 
 SPEC = {"name": "quality_agent", "team": "appliance", "framework": "strands",
         "tools": ["Parts___get_part_spec", "Quality___get_inspection_data"],
-        "code_key": "agents/quality_agent/code.zip", "code_version": "v1"}
+        "code_key": "submissions/appliance/quality_agent/agent.zip", "code_version": "v1"}     # the key publish writes
 
-CTX = {"registryId": "reg-1", "recordId": "rec-1", "record": "quality_agent", "spec": SPEC}
+CTX = {"registryId": "reg-1", "recordId": "rec-1", "record": "quality_agent", "spec": SPEC,
+       "applicationDigest": application_digest(SPEC)}                   # what Read passes on for the record SPEC
 
 PLATFORM = Platform(
     account=ACCOUNT,
@@ -250,8 +252,11 @@ class _Reg(_Client):
         return {}
 
     def get_registry_record(self, registryId, recordId):
-        return {"name": "quality_agent", "status": self.o.record_status,
-                "descriptors": {"custom": {"data": json.dumps(self.o.record_spec)}}}
+        """The record's name is record_name, or else the name its application gives (quality_agent by default)."""
+        spec = self.o.record_spec
+        name = self.o.record_name or (spec.get("name") if isinstance(spec, dict) else None) or "quality_agent"
+        return {"name": name, "recordType": self.o.record_type, "status": self.o.record_status,
+                "descriptors": {"custom": {"data": json.dumps(spec)}}}
 
     def update_registry_record_status(self, registryId, recordId, status, statusReason):
         self.o.record_status, self.o.status_reason = status, statusReason
@@ -270,8 +275,9 @@ class FakeClients:
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, stack_delete_reason=None,
-                 stack_delete_polls=0):
+                 stack_delete_polls=0, record_name=None, record_type="AGENT"):
         self.record_spec = SPEC if record_spec is None else record_spec
+        self.record_name, self.record_type = record_name, record_type
         self.record_status, self.status_reason = record_status, None
         self.existing_policies, self.existing_roles = set(existing_policies), set(existing_roles)
         self.policy_status, self.policy_reasons = policy_status, policy_reasons

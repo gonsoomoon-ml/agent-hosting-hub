@@ -6,6 +6,7 @@ from platform_team.company_policy.policy_names import MAX_POLICY_NAME, policy_na
 from platform_team.shared_code.config import MAX_PROJECT_NAME, Settings
 
 REQUIRED = ("name", "team", "framework", "tools")
+TEXT_FIELDS, TEXT_LENGTH = ("team", "framework"), (1, 64)          # short strings: they name a folder and show on screen
 # Lower-case segments joined by single underscores, each starting with a letter: the CamelCase names made from it
 # (CLI project, Runtime, stack, gateway target) are then one-to-one, and no agent name holds an upper-case letter.
 NAME_PATTERN = r"^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$"
@@ -52,9 +53,15 @@ def validate(app: dict, catalog_tools: set[str], s: Settings = Settings()) -> li
     problems = [f"missing: {k}" for k in REQUIRED if k not in app]
     if "name" in app:
         problems += name_problems(app["name"])
+    low, high = TEXT_LENGTH
+    problems += [f"{k} must be a string of {low} to {high} characters" for k in TEXT_FIELDS
+                 if k in app and not (isinstance(app[k], str) and low <= len(app[k]) <= high)]
     tools = app.get("tools")
     if "tools" in app:
-        if not tools:
+        if not isinstance(tools, list):
+            problems.append("tools must be a list of tool names")
+            tools = []
+        elif not tools:
             problems.append("tools must not be empty")
         for t in tools or []:
             if not isinstance(t, str) or not re.fullmatch(TOOL_PATTERN, t):

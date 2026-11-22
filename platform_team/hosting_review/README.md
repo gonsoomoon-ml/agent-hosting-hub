@@ -12,7 +12,7 @@
 
 | # | 단계 | 누가 돌리나(역할) | 할 수 있는 일 | 할 수 없는 일 |
 |---|---|---|---|---|
-| 1 | Read | Lambda `<prefix>-review-read` (`<prefix>-review-read-role`) | 카탈로그의 record를 읽고(`GetRegistryRecord`) 신청서를 확인한다. 이름에서 만드는 정책 이름과 CLI 프로젝트 이름이 한도에 맞는지도 본다(아래 "정책 이름"). 코드가 있는 곳(S3 key와 object version)을 다음 단계에 넘긴다. | 제출된 코드 읽기, record 바꾸기, 정책 만들기 |
+| 1 | Read | Lambda `<prefix>-review-read` (`<prefix>-review-read-role`) | 카탈로그의 record를 읽고(`GetRegistryRecord`) 신청서를 확인한다. record는 AGENT record여야 하고, 신청서의 이름이 record의 이름과 같아야 한다. 뒤의 단계는 신청서의 이름으로 만들고, 반려와 정리는 record의 이름으로 찾기 때문이다. 팀과 프레임워크는 64자까지의 문자열, 도구는 목록, 코드는 `submissions/` 아래의 key와 문자열 version이어야 한다. 이름에서 만드는 정책 이름과 CLI 프로젝트 이름이 한도에 맞는지도 본다(아래 "정책 이름"). 다음 단계에는 확인한 칸(이름, 팀, 프레임워크, 도구, 코드의 key와 version)만 넘긴다. | 제출된 코드 읽기, record 바꾸기, 정책 만들기 |
 | 2 | Scan | CodeBuild `<prefix>-review-scan` (`<prefix>-review-scan-role`) | 신청서에 적힌 version의 제출물과 허브의 코드 묶음을 읽는다. 압축을 풀어 모양을 확인하고 `requirements.txt`를 `pip-audit`로 검사한다. 자기 build 로그를 쓴다. | 이것 말고는 모두. 역할, 정책, target, record, SSM에 손댈 수 없다. |
 | 3 | Grant | Lambda `<prefix>-review-grant` (`<prefix>-review-grant-role`) | 에이전트의 실행 역할(`<prefix>-agent-<에이전트>-role`)을 권한 경계 `<prefix>-agent-boundary`를 달아서 만들고, 신청서에 적힌 도구마다 도구 게이트웨이에 `tool_<에이전트>_<Target>_<도구>`를 건다. | 경계 없이 역할 만들기, 경계를 바꾸거나 떼기, 에이전트 게이트웨이에 정책 걸기, 다른 이름의 역할 만들기, 제출된 코드 읽기 |
 | 4 | Deploy | CodeBuild `<prefix>-review-deploy` (`<prefix>-review-deploy-role`) | 제출물과 허브의 코드 묶음을 읽고, `agentcore deploy`로 Runtime을 올린다(CDK bootstrap 역할을 맡아서). Runtime ARN을 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에 쓴다. | 정책, target, record, IAM 역할을 직접 만들거나 바꾸기(`bedrock-agentcore`의 action도 `iam:PassRole`도 없다). 아래의 한계를 보라. |

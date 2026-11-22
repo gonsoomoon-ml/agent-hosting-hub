@@ -47,11 +47,12 @@ def _stack_of(agent, runtime_name=None, **changes):
 
 
 def _review(c, spec):
-    """What the review's steps leave on the fake for this agent: Grant, Deploy (as the build leaves it: a stack, the
-    Runtime ARN in SSM, the Runtime's log group), Entry and Approve."""
+    """What the review's steps leave on the fake for this agent: Read, Grant, Deploy (as the build leaves it: a stack,
+    the Runtime ARN in SSM, the Runtime's log group), Entry and Approve."""
     s, agent = Settings(), spec["name"]
-    c.record_spec = spec                                       # Approve reads the record again
-    ctx = steps.grant({**CTX, "record": agent, "spec": spec}, c, ENV)
+    c.record_spec = spec                                       # Read reads the record, Approve reads it again
+    ctx = steps.grant(steps.read({"detail": {"registryId": CTX["registryId"], "registryRecordId": CTX["recordId"]}},
+                                 c, ENV), c, ENV)
     runtime = f"{s.runtime_name(agent)}-{RUNTIME_ID}"
     c.stacks[s.stack_name(agent)] = _stack_of(agent)
     c.parameters[s.ssm("agents", agent, "runtime_arn")] = f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:runtime/{runtime}"
