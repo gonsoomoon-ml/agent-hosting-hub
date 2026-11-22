@@ -1,6 +1,6 @@
 # 호스팅 심사
 
-개발팀이 올린 에이전트를 허브에 올려도 되는지 자동으로 심사하고, 통과하면 올리고 승인한다. 카탈로그의 record가 승인 요청 상태(`PENDING_APPROVAL`)가 되면 EventBridge rule `<prefix>-on-submit`이 Step Functions의 state machine `<prefix>-review`를 시작한다. state machine은 순서와 기다림과 실패했을 때의 갈림만 맡고, 일은 단계마다 Lambda 함수나 CodeBuild 프로젝트가 한다. 어느 단계든 실패하면 알림 주제(`<prefix>-alerts`)에 알리고 심사를 멈춘다. record는 `PENDING_APPROVAL`에 남는다. 플랫폼팀이 사유를 적어 반려하면 record가 `REJECTED`가 되고 심사가 만든 것이 지워진다(아래 "반려").
+개발팀이 올린 에이전트를 허브에 올려도 되는지 자동으로 심사하고, 통과하면 올리고 승인한다. 카탈로그의 record가 승인 요청 상태(`PENDING_APPROVAL`)가 되면 EventBridge rule `<prefix>-on-submit`이 Step Functions의 state machine `<prefix>-review`를 시작한다. state machine은 순서와 기다림과 실패했을 때의 갈림만 맡고, 일은 단계마다 Lambda 함수나 CodeBuild 프로젝트가 한다. 어느 단계든 실패하면 알림 주제(`<prefix>-alerts`)에 알리고 심사를 멈춘다. 알림의 제목은 `Hosting review failed at <단계>`이고, 내용은 심사의 상태(에이전트의 신청서 `spec`, 실패한 단계 `failedStep`, 오류 `error`)를 담은 JSON이다. Scan이나 Deploy가 실패하면 `error`에 build의 기록이 들어 있고, 거기 적힌 로그 그룹과 stream에서 build 로그를 찾는다. Read가 실패하면 신청서를 읽기 전이므로 `spec` 대신 심사를 시작한 Registry의 이벤트(record의 ID)가 들어 있다. record는 `PENDING_APPROVAL`에 남는다. 플랫폼팀이 사유를 적어 반려하면 record가 `REJECTED`가 되고 심사가 만든 것이 지워진다(아래 "반려").
 
 일을 나누는 기준은 하나다. 제출된 코드를 다루는 단계(Scan, Deploy)는 CodeBuild가 하고, 권한을 줄 수 없다. 권한을 주는 단계(Read, Grant, Entry, TestCall, Approve)는 Lambda가 하고, 제출된 코드를 열지 않는다. 단계마다 역할이 따로 있다.
 
@@ -111,7 +111,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 |---|---|
 | `terraform/main.tf` | 제출함과 코드 묶음, Lambda 다섯, CodeBuild 둘, state machine, 시작하는 rule, 로그 그룹(모두 Terraform이 만들고 `terraform destroy`가 지운다). 새 rule은 첫 이벤트를 놓치므로 90초를 기다린다(`time_sleep.rule_settles`). |
 | `terraform/iam.tf` | 단계마다의 역할과 정책 문서(`read`, `scan`, `grant`, `deploy`, `entry`, `testcall`, `approve`), 에이전트 실행 역할의 권한 경계(`agent_boundary`), state machine과 rule의 역할, 개발팀 역할에 붙이는 업로드 권한. |
-| `terraform/review_machine.asl.json.tftpl` | state machine의 정의. 모든 단계의 실패는 `Notify`(SNS)로 가서 `Failed`로 끝난다. |
+| `terraform/review_machine.asl.json.tftpl` | state machine의 정의. 모든 단계의 실패는 그 단계의 이름을 변수 `failedStep`에 적고 `Notify`(SNS)로 가서 `Failed`로 끝난다. |
 | `terraform/variables.tf`, `terraform/outputs.tf` | 다른 모듈에서 받는 값(게이트웨이, policy engine, 카탈로그, 알림 주제, 개발팀 역할)과 내보내는 값(`bucket`, `machine_arn`. 시작점이 SSM `/<prefix>/platform/`에 적는다). |
 | `review_steps.py` | Lambda 단계 다섯(Read, Grant, Entry, TestCall, Approve)의 코드. |
 | `lambda_handler.py` | Lambda의 진입점. 환경 변수 `ACTION`이 단계를 고르고, 제한 시간 60초 전을 단계의 마감으로 넘긴다. |

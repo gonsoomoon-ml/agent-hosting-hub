@@ -9,7 +9,7 @@
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Read" }, "Next": "Notify" }],
       "Next": "Scan"
     },
     "Scan": {
@@ -26,7 +26,7 @@
       "ResultSelector": { "buildId.$": "$.Build.Id", "status.$": "$.Build.BuildStatus" },
       "ResultPath": "$.scan",
       "TimeoutSeconds": 1200,
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Scan" }, "Next": "Notify" }],
       "Next": "Grant"
     },
     "Grant": {
@@ -36,7 +36,7 @@
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Grant" }, "Next": "Notify" }],
       "Next": "Deploy"
     },
     "Deploy": {
@@ -54,7 +54,7 @@
       "ResultSelector": { "buildId.$": "$.Build.Id", "status.$": "$.Build.BuildStatus" },
       "ResultPath": "$.deploy",
       "TimeoutSeconds": 2100,
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Deploy" }, "Next": "Notify" }],
       "Next": "Entry"
     },
     "Entry": {
@@ -64,7 +64,7 @@
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Entry" }, "Next": "Notify" }],
       "Next": "TestCall"
     },
     "TestCall": {
@@ -74,7 +74,7 @@
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "TestCall" }, "Next": "Notify" }],
       "Next": "Approve"
     },
     "Approve": {
@@ -84,13 +84,18 @@
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Approve" }, "Next": "Notify" }],
       "End": true
     },
     "Notify": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sns:publish",
-      "Parameters": { "TopicArn": "${topic_arn}", "Subject": "Hosting review failed", "Message.$": "States.JsonToString($)" },
+      "Comment": "The alert: the subject and the message name the step that failed (failedStep, set by its Catch). The message is the review's state with failedStep added; it reads no field of the state by name, so a failed Read (no spec yet) is told too.",
+      "Parameters": {
+        "TopicArn": "${topic_arn}",
+        "Subject.$": "States.Format('Hosting review failed at {}', $failedStep)",
+        "Message.$": "States.JsonToString(States.JsonMerge(States.StringToJson(States.Format('\\{\"failedStep\": \"{}\"\\}', $failedStep)), $, false))"
+      },
       "Next": "Failed"
     },
     "Failed": { "Type": "Fail", "Error": "ReviewFailed", "Cause": "A step of the hosting review failed; the notification holds the error" }
