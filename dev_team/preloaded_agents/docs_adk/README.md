@@ -28,7 +28,7 @@ ADK는 Gemini 밖의 모델을 LiteLLM으로 부른다(ADK 2.14.1의 `google.adk
 2026-11-22에 이 리포의 `requirements.txt` 그대로 심사의 규칙대로 확인한 값이다.
 
 - 검사: `pip-audit` 2.10.1(`PIP_ONLY_BINARY=:all:`)이 `No known vulnerabilities found`.
-- 묶음: `uv` 0.10.8로 Runtime의 플랫폼용 wheel을 받아 배포 build와 같은 방식(`deploy_build.package`)으로 묶으면 압축 46,291,484바이트, 풀면 113,794,908바이트(파일 7,260개)다. AgentCore의 한도는 직접 코드 배포의 묶음이 압축 250 MB, 풀어서 750 MB다(AgentCore 개발자 안내서 "Quotas for Amazon Bedrock AgentCore"의 Runtime 표, 2026-11-22에 읽었다).
+- 묶음: `uv` 0.10.8로 Runtime의 플랫폼용 wheel을 받아 배포 build와 같은 방식(`deploy_build.package`)으로 묶으면 압축 46,291,484바이트, 풀면 113,794,908바이트(파일 7,260개)다. AgentCore 개발자 안내서("Quotas for Amazon Bedrock AgentCore"의 Runtime 표, 2026-11-22에 읽었다)는 직접 코드 배포의 묶음 한도를 압축 250 MB, 풀어서 750 MB로 적는다. 이 한도는 여기서는 확인하지 않았다.
 
 ## 허브에서 받는 통제
 
@@ -40,7 +40,7 @@ ADK는 Gemini 밖의 모델을 LiteLLM으로 부른다(ADK 2.14.1의 `google.adk
 
 - 심사는 `SUCCEEDED`였고 364초 걸렸다. Read 1초, Scan 44초(CodeBuild의 `pip-audit`도 통과했다), Grant 3초, Deploy 258초, Entry 35초, TestCall 8초, Approve 15초다. Grant는 도구 정책을 하나도 만들지도 지우지도 않았다(`toolPolicies`와 `removedToolPolicies`가 빈 목록).
 - 배포 build가 올린 코드 묶음은 46,294,955바이트였고, 새 Runtime이 `READY`가 되기까지 231초였다. Runtime은 다른 에이전트와 같은 `opentelemetry-instrument main.py`로 떴고 ADK 에이전트가 그 아래에서 답했다.
-- 시험 호출은 보통 질문(`What is the spec of part P-100?`)에 200, 예시 access key가 든 질문에 403이었다. 보통 질문의 답은 부품 사양을 찾는 도구가 없고 설계 표준을 돕는다는 것이었다(심사는 상태만 본다).
+- 시험 호출은 보통 질문(`What is the spec of part P-100?`)에 200, 예시 access key가 든 질문에 403이었다. 심사의 상태에 남은 보통 질문의 답(앞의 400자)은 `I don't have a tool available to look up part specifications. My role is to help answer questions about the company's design standards`로 시작했다(심사는 상태만 본다).
 - 승인된 뒤 에이전트 게이트웨이로 `What is our standard for versioning an API?`를 묻자 4.2초 만에 200이 왔다. 답은 API 버전 표준의 ID와 세 규칙(경로의 주 버전 `/v1/...`, 깨지는 변경에는 새 주 버전, 앞 버전을 6개월 더 제공)이었고 `tools_used`는 `["find_standard"]`였다. 표준의 ID는 그 실행 뒤에 이름만 바꿨다(지금은 `STD-01`부터).
 - Runtime의 로그 그룹에 오류 줄이나 traceback은 없었다. 경고 줄은 넷이었다. 둘은 OpenTelemetry의 로그 계측이 LoggingHandler를 붙이지 않았다는 줄(`Skipping installation of LoggingHandler ...`)이고, 둘은 `Invalid HTTP request received.`다. 이 줄들이 무엇 때문인지는 알아보지 않았다.
 

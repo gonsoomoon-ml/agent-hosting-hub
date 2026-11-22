@@ -10,7 +10,7 @@ from platform_team.hosting_review import preload_agents, review_steps
 from platform_team.hosting_review.agent_cleanup import NotOwned
 from platform_team.hosting_review.preload_agents import ask_harness, host_harness, preload
 from platform_team.shared_code.config import Settings
-from tests.fakes import ACCOUNT, PLATFORM, FakeClients
+from tests.fakes import ACCOUNT, ENV, PLATFORM, FakeClients, read_input
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC_ASSISTANT = json.loads((ROOT / "dev_team/preloaded_agents/spec_assistant/agent.json").read_text())
@@ -64,6 +64,38 @@ def test_a_harness_gets_a_bounded_role_its_permits_and_an_approved_record():
                                                           "update_registry_record_status")] == [
         "submit_registry_record_for_approval", "update_registry_record_status"]
     assert review_steps.skip_reason(record).startswith("the application's framework is harness")
+
+
+def test_grant_and_the_preload_make_an_agent_role_through_one_function(monkeypatch):
+    """The harness's role is made the way Grant makes an agent role: both go through review_steps.ensure_agent_role,
+    and for a new role it makes the same IAM calls for both (only the role's name and description differ)."""
+    real, made = review_steps.ensure_agent_role, []
+
+    def spy(c, env, agent, description):
+        before = len(c.calls)
+        arn = real(c, env, agent, description)
+        made.append((agent, description, c.calls[before:]))
+        return arn
+    monkeypatch.setattr(review_steps, "ensure_agent_role", spy)
+    harness, team = FakeClients(record_status=None), FakeClients()
+    host_harness(harness, Settings(), PLATFORM, SPEC_ASSISTANT)
+    review_steps.grant(review_steps.read(read_input(), team, ENV), team, ENV)
+    calls = [("iam", "get_role"), ("iam", "create_role"), ("iam", "put_role_policy")]
+    assert made == [("spec_assistant", "platform team: harness execution role", calls),
+                    ("quality_agent", "hosting review: agent execution role", calls)]
+    mine, grants = harness.roles[ROLE], team.roles["hub-agent-quality_agent-role"]
+    assert (mine["trust"], mine["boundary"]) == (grants["trust"], grants["boundary"])
+    assert harness.inline[ROLE] == team.inline["hub-agent-quality_agent-role"] == {"agent"}
+
+
+def test_a_harness_application_without_a_description_gets_the_one_publish_gives():
+    """The form does not require a description; the record then gets publish's (publish_agent.record_description)."""
+    from platform_team.agent_catalog.publish_agent import record_description
+    c = FakeClients(record_status=None)
+    app = {k: v for k, v in SPEC_ASSISTANT.items() if k != "description"}
+    assert host_harness(c, Settings(), PLATFORM, app)["record_status"] == "APPROVED"
+    assert _record(c, "spec_assistant")["description"] == "spec_assistant: agent of team parts" == record_description(app)
+    assert record_description(SPEC_ASSISTANT) == SPEC_ASSISTANT["description"]
 
 
 @pytest.mark.parametrize("change, message", [

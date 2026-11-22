@@ -192,6 +192,22 @@ def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
     return trust, perms
 
 
+def ensure_agent_role(c, env: dict, agent: str, description: str) -> str:
+    """The agent's execution role (Settings.agent_role), made under the permissions boundary AGENT_BOUNDARY with the
+    trust of _execution_role when there is none of its name, then given the inline policy "agent" of _execution_role
+    (written again every time). Returns its ARN. Grant makes every agent role through this function, and so does
+    preload_agents.host_harness for an agent hosted as a harness; only the description differs."""
+    role = _settings(env).agent_role(agent)
+    trust, perms = _execution_role(env, agent)
+    try:
+        arn = c.iam.get_role(RoleName=role)["Role"]["Arn"]
+    except c.iam.exceptions.NoSuchEntityException:
+        arn = c.iam.create_role(RoleName=role, AssumeRolePolicyDocument=json.dumps(trust), Description=description,
+                                PermissionsBoundary=env["AGENT_BOUNDARY"])["Role"]["Arn"]
+    c.iam.put_role_policy(RoleName=role, PolicyName="agent", PolicyDocument=json.dumps(perms))
+    return arn
+
+
 def _drop_unnamed_tool_permits(c, env: dict, agent: str, tools, found: dict) -> list[str]:
     """Delete this agent's tool permits for tools the application does not name (a version approved before named
     them) and return their names. `found` is the engine's policies by name. The permits are found by the shape of
@@ -212,14 +228,7 @@ def grant(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     deadline = deadline or Deadline()
     s, agent = _settings(env), ctx["spec"]["name"]
     role = s.agent_role(agent)
-    trust, perms = _execution_role(env, agent)
-    try:
-        arn = c.iam.get_role(RoleName=role)["Role"]["Arn"]
-    except c.iam.exceptions.NoSuchEntityException:
-        arn = c.iam.create_role(RoleName=role, AssumeRolePolicyDocument=json.dumps(trust),
-                                Description="hosting review: agent execution role",
-                                PermissionsBoundary=env["AGENT_BOUNDARY"])["Role"]["Arn"]
-    c.iam.put_role_policy(RoleName=role, PolicyName="agent", PolicyDocument=json.dumps(perms))
+    arn = ensure_agent_role(c, env, agent, "hosting review: agent execution role")
     found = list_policies(c, env["ENGINE_ID"])
     removed = _drop_unnamed_tool_permits(c, env, agent, ctx["spec"]["tools"], found)
     made = [_policy(c, env, deadline, tool_policy_name(agent, tool),

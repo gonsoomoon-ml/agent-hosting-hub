@@ -5,8 +5,9 @@
 spec_assistant (dev_team/preloaded_agents/spec_assistant) is a managed harness (AgentCore harness): a model, a system
 prompt and the hub's tool gateway, and no code. The review hosts code, so it does not host a harness (Read skips an
 application whose framework is harness). host_harness does for it what the review's Grant does for an agent, and makes
-the harness and its approved catalog record. Its role is made by the same function as Grant's (_execution_role), under
-the same boundary; host_harness itself runs with the platform team's credentials, not with a role of the review.
+the harness and its approved catalog record. Its role is made by the function Grant makes every agent role with
+(review_steps.ensure_agent_role), under the same boundary; host_harness itself runs with the platform team's
+credentials, not with a role of the review.
 
 docs_adk (dev_team/preloaded_agents/docs_adk) is a Google ADK agent with code. It is published like any team's agent
 (publish_agent.publish) and goes through the same review; preload waits until that review ends.
@@ -24,12 +25,13 @@ from botocore.exceptions import ClientError
 
 from platform_team.agent_catalog.application_form import name_problems, validate
 from platform_team.agent_catalog.catalog_records import put_record, records, set_status, submit
-from platform_team.agent_catalog.publish_agent import _catalog_tools, publish
+from platform_team.agent_catalog.publish_agent import _catalog_tools, publish, record_description
 from platform_team.company_policy import cedar_statements as cedar
 from platform_team.company_policy.policy_engine import ensure_policy
 from platform_team.company_policy.policy_names import tool_policy_name
 from platform_team.hosting_review.agent_cleanup import cause, check_agent, check_harness
-from platform_team.hosting_review.review_steps import NOT_HOSTED_FRAMEWORK, POLICY_WAIT, _execution_role
+from platform_team.hosting_review import review_steps
+from platform_team.hosting_review.review_steps import NOT_HOSTED_FRAMEWORK, POLICY_WAIT
 from platform_team.shared_code.aws_helpers import Clients, wait_status
 from platform_team.shared_code.config import Settings
 from platform_team.shared_code.hub_state import Platform, load
@@ -52,9 +54,9 @@ def application(folder: Path) -> dict:
 
 
 def _env(s: Settings, p: Platform) -> dict:
-    """The values review_steps._execution_role reads, as a review step's environment holds them."""
+    """The values review_steps.ensure_agent_role reads, as a review step's environment holds them."""
     return {"HUB_REGION": s.region, "PREFIX": s.prefix, "ACCOUNT": p.account, "MODEL_ID": s.model_id,
-            "TOOL_GW_ARN": p.tool_gw["arn"]}
+            "TOOL_GW_ARN": p.tool_gw["arn"], "AGENT_BOUNDARY": f"arn:aws:iam::{p.account}:policy/{s.agent_boundary}"}
 
 
 def harness_problems(s: Settings, app: dict) -> list[str]:
@@ -70,22 +72,6 @@ def harness_problems(s: Settings, app: dict) -> list[str]:
         problems.append(f"harness name {name} has {len(name)} characters; CreateHarness takes at most "
                         f"{HARNESS_NAME_MAX}")
     return problems
-
-
-def _role(c, s: Settings, p: Platform, agent: str) -> str:
-    """The agent's execution role as Grant makes it (review_steps.grant): the hub's agent boundary, the trust and the
-    inline policy of _execution_role. Returns its ARN."""
-    role = s.agent_role(agent)
-    trust, perms = _execution_role(_env(s, p), agent)
-    try:
-        arn = c.iam.get_role(RoleName=role)["Role"]["Arn"]
-    except c.iam.exceptions.NoSuchEntityException:
-        boundary = f"arn:aws:iam::{p.account}:policy/{s.agent_boundary}"
-        arn = c.iam.create_role(RoleName=role, AssumeRolePolicyDocument=json.dumps(trust),
-                                Description="platform team: harness execution role",
-                                PermissionsBoundary=boundary)["Role"]["Arn"]
-    c.iam.put_role_policy(RoleName=role, PolicyName="agent", PolicyDocument=json.dumps(perms))
-    return arn
 
 
 def _create_harness(c, **request) -> dict:
@@ -128,7 +114,7 @@ def _approved_record(c, p: Platform, app: dict) -> tuple[str, bool]:
     rec = records(c, p.registry_id).get(app["name"])
     if rec and rec["status"] == "APPROVED":
         return "APPROVED", False
-    rid = put_record(c, p.registry_id, app["name"], "AGENT", app["description"], app)
+    rid = put_record(c, p.registry_id, app["name"], "AGENT", record_description(app), app)
     if records(c, p.registry_id)[app["name"]]["status"] == "DRAFT":    # a run that stopped after submit left it pending
         submit(c, p.registry_id, rid)
     return set_status(c, p.registry_id, rid, "APPROVED", APPROVED_REASON), True
@@ -137,7 +123,8 @@ def _approved_record(c, p: Platform, app: dict) -> tuple[str, bool]:
 def host_harness(c, s: Settings, p: Platform, app: dict) -> dict:
     """Host the application as a managed harness, in this order: check the application (harness_problems) and that the
     agent's role, Runtime and harness are not someone else's (agent_cleanup.check_agent), before anything is made;
-    the execution role under the hub's agent boundary; a tool permit on the tool gateway for each tool it names; the
+    the execution role under the hub's agent boundary, made as Grant makes it (review_steps.ensure_agent_role); a tool
+    permit on the tool gateway for each tool it names; the
     harness (ensure_harness); its ARN in SSM /<prefix>/agents/<agent>/harness_arn; an APPROVED catalog record.
     Returns {"agent", "harness_arn", "record_status"}. Raises ValueError for an application it cannot host."""
     problems = harness_problems(s, app)
@@ -145,7 +132,7 @@ def host_harness(c, s: Settings, p: Platform, app: dict) -> dict:
         raise ValueError("; ".join(problems))
     agent = app["name"]
     check_agent(c, s, agent)
-    role_arn = _role(c, s, p, agent)
+    role_arn = review_steps.ensure_agent_role(c, _env(s, p), agent, "platform team: harness execution role")
     for tool in app["tools"]:
         ensure_policy(c, p.engine_id, tool_policy_name(agent, tool),
                       cedar.tool_permit(p.account, s.agent_role(agent), tool, p.tool_gw["arn"]), wait=POLICY_WAIT)
