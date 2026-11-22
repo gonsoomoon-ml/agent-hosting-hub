@@ -23,7 +23,7 @@ _FIXED_TIME = (1980, 1, 1, 0, 0, 0)       # the same files give the same zip
 
 
 def _is_submitted(f: Path) -> bool:
-    return f.is_file() and not f.name.startswith(".") and (f.suffix == ".py" or f.name == "requirements.txt")
+    return f.is_file() and not f.is_symlink() and not f.name.startswith(".") and (f.suffix == ".py" or f.name == "requirements.txt")
 
 
 def _files(folder: Path) -> dict[str, Path]:
@@ -36,6 +36,8 @@ def bundle(agent_dir: Path, variant: str | None = None) -> bytes:
     agent_dir = Path(agent_dir)
     files = _files(agent_dir)
     if variant:
+        if variant in (".", "..") or "/" in variant or "\\" in variant:
+            raise ValueError(f"variant {variant!r} must be a folder name under variants/")
         folder = agent_dir / "variants" / variant
         if not folder.is_dir():
             raise ValueError(f"variant {variant!r} not found: {folder} is not a folder")
@@ -54,9 +56,19 @@ def _catalog_tools() -> set[str]:
     return {f"{target}___{t['name']}" for target, tools in TARGETS.items() for t in tools}
 
 
+class PublishFailed(Exception):
+    """A step failed. The message says which one, why, what already succeeded and what to do."""
+
+
+def _cause(e: Exception) -> str:
+    err = getattr(e, "response", {}).get("Error")
+    return f"{err['Code']}: {err.get('Message', '')}" if err else f"{type(e).__name__}: {e}"
+
+
 def publish(agent_dir: Path, s: Settings, variant: str | None = None, c: Clients | None = None) -> dict:
     """Upload the code, write the application to the catalog and ask for approval.
-    Returns record_id, status (the record's status after the request), code_key and code_version."""
+    Returns record_id, status (the record's status after the request), code_key, code_version and, when the
+    request was not made, a note. Running it again is safe: the key is fixed, each run adds an object version."""
     agent_dir = Path(agent_dir)
     form = agent_dir / "agent.json"
     if not form.is_file():
@@ -71,13 +83,34 @@ def publish(agent_dir: Path, s: Settings, variant: str | None = None, c: Clients
     if not (p.bucket and p.registry_id):
         raise RuntimeError("the hub has no submission bucket or catalog yet: run `make deploy` first")
     key = f"submissions/{app['team']}/{app['name']}/agent.zip"
-    version = c.s3.put_object(Bucket=p.bucket, Key=key, Body=code)["VersionId"]
+    done = "nothing yet"
+
+    def failed(step: str, e: Exception, next_step: str) -> PublishFailed:
+        return PublishFailed(f"{step} failed ({_cause(e)}). Done so far: {done}. {next_step} "
+                             "Running publish again is safe.")
+    try:
+        version = c.s3.put_object(Bucket=p.bucket, Key=key, Body=code)["VersionId"]
+    except Exception as e:
+        raise failed("upload", e, "Nothing was changed; run again.") from e
+    done = f"code uploaded as version {version}"
     description = app.get("description") or f"{app['name']}: agent of team {app['team']}"
-    record_id = put_record(c, p.registry_id, app["name"], "AGENT", description,
-                           {**app, "code_key": key, "code_version": version})
-    submit(c, p.registry_id, record_id)
-    status = records(c, p.registry_id)[app["name"]]["status"]
-    return {"record_id": record_id, "status": status, "code_key": key, "code_version": version}
+    try:
+        record_id = put_record(c, p.registry_id, app["name"], "AGENT", description,
+                               {**app, "code_key": key, "code_version": version})
+        status = records(c, p.registry_id)[app["name"]]["status"]
+    except Exception as e:
+        raise failed("writing the record", e, "The record not written; run again.") from e
+    out = {"record_id": record_id, "status": status, "code_key": key, "code_version": version}
+    if status != "DRAFT":     # an update that changes nothing keeps the status; the registry refuses a second request
+        out["note"] = f"record is {status}: not submitted again"
+        return out
+    done += f", record {record_id} written"
+    try:
+        submit(c, p.registry_id, record_id)
+        out["status"] = records(c, p.registry_id)[app["name"]]["status"]
+    except Exception as e:
+        raise failed("asking for approval", e, "The record stays DRAFT; run again to ask.") from e
+    return out
 
 
 def main(argv: list[str]) -> int:
@@ -86,10 +119,15 @@ def main(argv: list[str]) -> int:
         return 2
     try:
         out = publish(Path(argv[0]), Settings.from_env(), argv[1] if len(argv) == 2 else None)
-    except (ValueError, RuntimeError) as e:
+    except (ValueError, RuntimeError, PublishFailed) as e:
         print(f"not published: {e}")
         return 1
+    except Exception as e:      # reading the hub's values, credentials: say what failed, no traceback
+        print(f"not published: {_cause(e)}")
+        return 1
     print(f"published {out['code_key']} (version {out['code_version']}); record {out['record_id']} is {out['status']}")
+    if out.get("note"):
+        print(out["note"])
     return 0
 
 

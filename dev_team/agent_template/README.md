@@ -16,7 +16,7 @@
 ## 팀이 하는 일
 
 1. 이 폴더를 복사한다.
-2. `agent.py`에 `run(prompt) -> (answer, tools_used)`를 쓴다. 도구는 `hub_tools.call_tool("Parts___get_part_spec", {"part_id": "P-100"})`처럼 부른다. `agent.py`가 `import`하는 패키지 중 표준 라이브러리가 아닌 것은 `requirements.txt`에 모두 적는다. 코드는 폴더 맨 위의 `.py` 파일로 둔다. 하위 폴더의 파일은 올라가지 않는다.
+2. `agent.py`에 `run(prompt) -> (answer, tools_used)`를 쓴다. 도구는 `hub_tools.call_tool("Parts___get_part_spec", {"part_id": "P-100"})`처럼 부른다. `agent.py`가 `import`하는 패키지 중 표준 라이브러리가 아닌 것은 `requirements.txt`에 모두 적는다. 코드는 폴더 맨 위의 `.py` 파일로 둔다. 하위 폴더의 파일은 올라가지 않는다. 폴더 맨 위의 `.py` 파일은 이름만 맞으면 모두 올라가므로, 비밀 값을 코드에 적지 않는다.
 3. `agent.json`을 채운다. 이름은 소문자로 시작하는 소문자, 숫자, 밑줄 3~31자이고, 도구는 카탈로그에 있는 `<Target>___<tool>` 이름이다.
 4. `publish.sh <복사한 폴더>`를 실행한다. 어느 폴더에서 실행해도 된다.
 

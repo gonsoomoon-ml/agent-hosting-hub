@@ -43,7 +43,7 @@ def test_call_tool_sends_a_signed_tools_call_to_the_gateway(monkeypatch):
 
     def fake_post(url, headers, body):
         sent.update(url=url, headers=headers, body=json.loads(body))
-        return '{"result":{"content":[{"type":"text","text":"M4"}]}}'
+        return 200, '{"result":{"content":[{"type":"text","text":"M4"}]}}'
 
     monkeypatch.setattr(hub_tools.boto3, "Session", Session)
     monkeypatch.setattr(hub_tools, "SigV4Auth", fake_sign)
@@ -56,7 +56,56 @@ def test_call_tool_sends_a_signed_tools_call_to_the_gateway(monkeypatch):
     assert sent["body"]["params"] == {"name": "Parts___get_part_spec", "arguments": {"part_id": "P-100"}}
 
 
-def test_call_tool_needs_the_gateway_address(monkeypatch):
+def _env(monkeypatch):
+    monkeypatch.setenv("TOOL_GATEWAY_URL", "https://gw.example.com/mcp")
+    monkeypatch.setenv("HUB_REGION", "us-west-2")
+    monkeypatch.setattr(hub_tools.boto3, "Session", lambda region_name=None: type(
+        "S", (), {"get_credentials": lambda self: type("C", (), {"get_frozen_credentials": lambda self: object()})()})())
+    monkeypatch.setattr(hub_tools, "SigV4Auth", lambda *a: type("A", (), {"add_auth": lambda self, r: None})())
+
+
+def test_missing_gateway_address_is_an_error_text(monkeypatch):
     monkeypatch.delenv("TOOL_GATEWAY_URL", raising=False)
-    with pytest.raises(KeyError):
-        hub_tools.call_tool("Parts___get_part_spec", {})
+    assert hub_tools.call_tool("Parts___get_part_spec", {}) == "ERROR: TOOL_GATEWAY_URL is not set"
+
+
+def test_missing_region_is_an_error_text(monkeypatch):
+    monkeypatch.setenv("TOOL_GATEWAY_URL", "https://gw.example.com/mcp")
+    monkeypatch.delenv("HUB_REGION", raising=False)
+    assert hub_tools.call_tool("x", {}) == "ERROR: HUB_REGION is not set"
+
+
+def test_an_http_refusal_without_json_rpc_is_an_error(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setattr(hub_tools, "_post", lambda u, h, b: (403, '{"message":"not authorized"}'))
+    out = hub_tools.call_tool("x", {})
+    assert out.startswith("ERROR: HTTP 403") and "not authorized" in out
+
+
+def test_an_http_refusal_with_json_rpc_error_keeps_its_message(monkeypatch):
+    _env(monkeypatch)
+    monkeypatch.setattr(hub_tools, "_post", lambda u, h, b: (403, '{"error":{"message":"Denied"}}'))
+    assert hub_tools.call_tool("x", {}) == "ERROR: Denied"
+
+
+def test_network_failure_and_missing_credentials_are_error_texts(monkeypatch):
+    _env(monkeypatch)
+
+    def down(u, h, b):
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(hub_tools, "_post", down)
+    assert hub_tools.call_tool("x", {}) == "ERROR: could not reach the tool gateway: TimeoutError: timed out"
+    monkeypatch.setattr(hub_tools.boto3, "Session", lambda region_name=None: type("S", (), {"get_credentials": lambda self: None})())
+    assert hub_tools.call_tool("x", {}) == "ERROR: no AWS credentials to sign the call"
+
+
+def test_non_json_and_non_object_bodies_are_not_empty_successes():
+    assert hub_tools.parse_tool_response("oops") == "ERROR: unexpected answer: oops"
+    assert hub_tools.parse_tool_response("[1]").startswith("ERROR: unexpected answer")
+    assert hub_tools.parse_tool_response('"x"').startswith("ERROR: unexpected answer")
+
+
+def test_the_result_wins_over_other_stream_events():
+    ok = '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"M4"}]}}'
+    stream = 'data: ' + ok + '\n\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{}}\n'
+    assert hub_tools.parse_tool_response(stream) == "M4"

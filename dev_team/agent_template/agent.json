@@ -1,0 +1,7 @@
+{
+  "name": "inspection_helper",
+  "team": "example_team",
+  "framework": "plain",
+  "description": "Answers questions about part specifications and inspection results.",
+  "tools": ["Parts___get_part_spec", "Quality___get_inspection_data"]
+}

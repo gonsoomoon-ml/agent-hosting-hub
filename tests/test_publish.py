@@ -91,7 +91,8 @@ def test_publish_uploads_records_and_submits(tmp_path, monkeypatch):
     monkeypatch.setattr(publish_agent, "put_record",
                         lambda c, reg, name, kind, desc, payload: calls.update(put=(reg, name, kind, desc, payload)) or "rec-9")
     monkeypatch.setattr(publish_agent, "submit", lambda c, reg, rid: calls.update(submit=(reg, rid)) or "PENDING_APPROVAL")
-    monkeypatch.setattr(publish_agent, "records", lambda c, reg: {"quality_agent": {"recordId": "rec-9", "status": "PENDING_APPROVAL"}})
+    seen = iter(["DRAFT", "PENDING_APPROVAL"])
+    monkeypatch.setattr(publish_agent, "records", lambda c, reg: {"quality_agent": {"recordId": "rec-9", "status": next(seen)}})
     out = publish_agent.publish(_agent_folder(tmp_path), Settings(), c=fake)
     put, = fake.s3.puts
     assert put["Bucket"] == PLATFORM.bucket and put["Key"] == "submissions/appliance/quality_agent/agent.zip"
@@ -120,3 +121,63 @@ def test_template_application_passes_the_form_check():
 def test_template_has_no_import_from_the_platform_package():
     for name in ("main.py", "hub_tools.py"):
         assert "platform_team" not in (TEMPLATE / name).read_text()
+
+
+def test_variant_cannot_leave_the_variants_folder(tmp_path):
+    (tmp_path / "main.py").write_text("m")
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "main.py").write_text("x")
+    for bad in ("../other", "a/b", "..", str(tmp_path / "other")):
+        with pytest.raises(ValueError, match="variant"):
+            bundle(tmp_path, bad)
+
+
+def test_a_symbolic_link_is_not_bundled(tmp_path):
+    (tmp_path / "main.py").write_text("m")
+    secret = tmp_path.parent / "secret.txt"
+    secret.write_text("S")
+    (tmp_path / "notes.py").symlink_to(secret)
+    assert zipfile.ZipFile(io.BytesIO(bundle(tmp_path))).namelist() == ["main.py"]
+
+
+def _wire(monkeypatch, status="DRAFT"):
+    fake = FakeClients()
+    fake.s3 = _S3()
+    calls = {"submit": 0}
+    monkeypatch.setattr(publish_agent, "load", lambda s, c=None: PLATFORM)
+    monkeypatch.setattr(publish_agent, "put_record", lambda *a: "rec-9")
+    monkeypatch.setattr(publish_agent, "records", lambda c, reg: {"quality_agent": {"recordId": "rec-9", "status": status}})
+
+    def fake_submit(c, reg, rid):
+        calls["submit"] += 1
+        return "PENDING_APPROVAL"
+    monkeypatch.setattr(publish_agent, "submit", fake_submit)
+    return fake, calls
+
+
+@pytest.mark.parametrize("status", ["APPROVED", "PENDING_APPROVAL"])
+def test_unchanged_record_is_not_submitted_again(tmp_path, monkeypatch, status):
+    fake, calls = _wire(monkeypatch, status)
+    out = publish_agent.publish(_agent_folder(tmp_path), Settings(), c=fake)
+    assert calls["submit"] == 0
+    assert out["status"] == status and "not submitted" in out["note"]
+
+
+def test_a_draft_is_submitted(tmp_path, monkeypatch):
+    fake, calls = _wire(monkeypatch, "DRAFT")
+    publish_agent.publish(_agent_folder(tmp_path), Settings(), c=fake)
+    assert calls["submit"] == 1
+
+
+def test_main_names_the_step_that_failed_and_what_succeeded(tmp_path, monkeypatch, capsys):
+    from botocore.exceptions import ClientError
+    fake, _ = _wire(monkeypatch)
+
+    def refuse(*a):
+        raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "no"}}, "CreateRegistryRecord")
+    monkeypatch.setattr(publish_agent, "put_record", refuse)
+    monkeypatch.setattr(publish_agent, "Clients", type("C", (), {"for_settings": staticmethod(lambda s: fake)}))
+    assert publish_agent.main([str(_agent_folder(tmp_path))]) == 1
+    out = capsys.readouterr().out
+    assert "AccessDeniedException" in out and "code uploaded" in out and "ver-1" in out
+    assert "record not written" in out and "run again" in out
