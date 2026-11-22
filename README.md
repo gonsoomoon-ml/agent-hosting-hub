@@ -10,7 +10,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 | 폴더 | 누가 쓰나 | 내용 |
 |---|---|---|
-| `platform_team/` | 플랫폼팀 | 허브의 틀. 기능마다 폴더 하나와 그 안의 Terraform 모듈이다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md), [커스텀 가드레일](platform_team/custom_guardrail/README.md) |
+| `platform_team/` | 플랫폼팀 | 허브의 틀과 운영 명령. 기능마다 폴더 하나이고, AWS에 틀을 두는 기능은 그 안에 Terraform 모듈이 있다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md), [커스텀 가드레일](platform_team/custom_guardrail/README.md), [에이전트 멈추기와 재개](platform_team/agent_stop/README.md)(Terraform 없음) |
 | `dev_team/` | 개발팀 | [에이전트 템플릿](dev_team/agent_template/README.md)과 올리는 명령(`publish.sh`), 예시 에이전트 둘: [release_review](dev_team/release_review/README.md)(LangGraph), [quality_agent](dev_team/quality_agent/README.md)(Strands) |
 | `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트. `e2e_hosting.py`(흐름 1의 끝에서 끝까지), `check_platform.py`(허브의 틀), `check_cleanup.py`(지운 뒤 남은 것). `spikes/`는 제품의 일부가 아니라 만들면서 가정을 확인한 스크립트다([확인 시험](e2e_checks/spikes/README.md)) |
 | `tests/` | 누구나 | 단위 시험(`make test`). AWS를 부르지 않는다. |
@@ -24,11 +24,11 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ### `.env`
 
-`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `e2e_checks/`의 스크립트 셋(`e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`)이 모두 같은 규칙을 따른다.
+`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `e2e_checks/`의 스크립트 셋(`e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`)이 모두 같은 규칙을 따른다.
 
 - `.env`에서 읽는 것은 이 세 줄뿐이다. 다른 줄은 읽지도 내보내지도 않는다. 그래서 `.env`에 자격 증명을 적어 두어도 명령이 쓰는 자격 증명은 바뀌지 않는다.
-- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다. 값이 빈 줄(`DEMO_PREFIX=`)은 없는 줄과 같아서, 그 이름은 셸의 값이나 기본값을 쓴다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`가 같은 규칙을 따른다.
-- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
+- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다. 값이 빈 줄(`DEMO_PREFIX=`)은 없는 줄과 같아서, 그 이름은 셸의 값이나 기본값을 쓴다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`가 같은 규칙을 따른다.
+- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
 - 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자다(`hub`, `demo2`). 정책 엔진, Runtime, 게이트웨이, bucket의 이름이 접두어로 시작하는데, 그 이름들의 규칙을 모두 지키는 모양이 이것이다. 다른 모양이면 Terraform(`make deploy`)과 Python 명령이 아무것도 만들기 전에 거부한다.
 
 `.env`를 읽는 규칙과 `Settings`의 접두어 거절은 단위 시험(`tests/test_hub_env.py`)이 확인한다. Terraform의 거절은 Terraform의 `validation`이 하는 것이고, 2026-11-22에 `terraform plan -var prefix=…`로 `my-hub`, `Hub`, `hub_1`이 `Invalid value for variable`로 거절되는 것을 봤다. AWS에서는 `.env` 없이 셸의 `AWS_REGION`과 기본값으로만 돌렸으므로, `.env`를 읽는 길은 AWS에서 확인하지 않았다.
@@ -113,3 +113,4 @@ CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `
 - 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. `requirements.txt`에 적은 줄은 검사와 배포가 같은 파일을 쓴다. [호스팅 심사, requirements.txt 규칙](platform_team/hosting_review/README.md#requirementstxt-규칙)
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)
 - 커스텀 가드레일: interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부한다(알람이 알린다). 스트리밍 응답과, 에이전트를 둔 게이트웨이 너머의 호출은 이 리포의 코드로 확인하지 않았다. [커스텀 가드레일](platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
+- 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남는다. harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다. `stop.sh`와 `resume.sh`는 아직 AWS에서 돌려 보지 않았다. [에이전트 멈추기와 재개, 한계](platform_team/agent_stop/README.md#한계)

@@ -1,10 +1,11 @@
-"""The calls of reject, of the cleanup, of the review's steps and of the deploy build, checked against the AWS
-service models on this machine. The clients are real boto3 clients, each wrapped in a botocore Stubber. So every
+"""The calls of reject, of the cleanup, of the review's steps, of the deploy build and of stopping an agent, checked
+against the AWS service models on this machine. The clients are real boto3 clients, each wrapped in a botocore Stubber. So every
 operation name and parameter is validated against the model, and every answer against the operation's output shape;
 a wrong parameter name fails here even though the fakes would accept it. No network and no credentials: the clients get dummy keys and a region."""
 import datetime
 import io
 import json
+import time
 import zipfile
 
 import boto3
@@ -13,6 +14,7 @@ from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
+from platform_team.agent_stop import stop_agent
 from platform_team.company_policy import policy_rollout
 from platform_team.company_policy.policy_engine import ensure_policy, set_mode
 from platform_team.hosting_review import agent_cleanup, deploy_build, reject_agent, review_steps
@@ -43,7 +45,7 @@ def aws(monkeypatch, tmp_path):
     monkeypatch.setattr("time.sleep", lambda seconds: None)                 # a poll answered DELETE_IN_PROGRESS
     c = Clients(boto3.Session(region_name=REGION, aws_access_key_id="test-access-key",
                               aws_secret_access_key="example"))
-    stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "logs", "iam", "ssm", "reg", "sfn", "s3")}
+    stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "logs", "iam", "ssm", "reg", "sfn", "s3", "data")}
     for st in stubs.values():
         st.activate()
     yield c, stubs
@@ -582,6 +584,68 @@ def test_rejecting_a_new_version_calls_match_the_service_models(aws):
     assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
         "status": "REJECTED", "removed": [], "note": "entry_permit_quality_agent is there: an approved version is running, "
                                                      "or an approval that stopped left it; nothing was removed"}
+
+
+# ------------------------------------------------------------------ stopping one agent and resuming it
+
+SESSION, OLD_SESSION = "hub-session-" + "a" * 32, "0f8e7d6c-5b4a-4321-8fed-cba987654321"     # 44 and 36 characters
+
+
+def test_stop_calls_match_the_service_models(aws):
+    """The target, the Runtime ARN, the stop policy, then the sessions from the log streams (a prefix and no
+    orderBy, the only combination the model allows with a prefix), each stopped with qualifier DEFAULT."""
+    c, stubs = aws
+    ctl, ssm, logs, data = (stubs[k] for k in ("ctl", "ssm", "logs", "data"))
+    ctl.add_response("list_gateway_targets", {"items": [{"targetId": TID, "name": "QualityAgent", "status": "READY",
+                                                         "createdAt": NOW, "updatedAt": NOW}]},
+                     {"gatewayIdentifier": GW, "maxResults": 100})
+    ssm.add_response("get_parameter", {"Parameter": {"Name": PARAM, "Type": "String", "Value": RUNTIME_ARN}}, {"Name": PARAM})
+    _made_policy(ctl, "stop_agent_quality_agent", {"cedar": {"statement": review_steps.cedar.stop_agent(
+        "QualityAgent", AGENT_GW_ARN, ACCOUNT, "hub-review-testcall-role")}})
+    now = int(time.time() * 1000)
+    logs.add_response("describe_log_streams", {"logStreams": [
+        {"logStreamName": f"runtime-logs-{OLD_SESSION}", "creationTime": now - 3_600_000, "lastEventTimestamp": now - 60_000,
+         "lastIngestionTime": now - 60_000, "arn": f"arn:aws:logs:{REGION}:{ACCOUNT}:log-group:{LOG}:log-stream:x", "storedBytes": 0},
+        {"logStreamName": f"runtime-logs-{SESSION}", "creationTime": now - 30_000}]},
+        {"logGroupName": LOG, "logStreamNamePrefix": "runtime-logs-"})
+    data.add_response("stop_runtime_session", {"runtimeSessionId": SESSION, "statusCode": 200},
+                      {"runtimeSessionId": SESSION, "agentRuntimeArn": RUNTIME_ARN, "qualifier": "DEFAULT"})
+    data.add_client_error("stop_runtime_session", "ResourceNotFoundException", "no session", http_status_code=404,
+                          expected_params={"runtimeSessionId": OLD_SESSION, "agentRuntimeArn": RUNTIME_ARN, "qualifier": "DEFAULT"})
+    out = stop_agent.stop(c, S, ROLLOUT_P, AGENT, say=lambda line: None)
+    assert out == {"agent": AGENT, "policy": "stop_agent_quality_agent", "stopped": [SESSION],
+                   "failed": {OLD_SESSION: "ResourceNotFoundException: no session"}}
+
+
+def test_stopped_and_resume_calls_match_the_service_models(aws):
+    """A ListPolicies item may leave enforcementMode out (it is optional in the model, which says it defaults to
+    ACTIVE): such a stop policy decides, so the agent is stopped."""
+    c, stubs = aws
+    ctl = stubs["ctl"]
+    pol = _policy("stop_agent_quality_agent")
+    assert "enforcementMode" not in pol
+    for _ in range(2):
+        ctl.add_response("list_policies", {"policies": [_policy("entry_permit_quality_agent"), pol]},
+                         {"policyEngineId": ENGINE, "maxResults": 100})
+    assert stop_agent.stopped(c, ROLLOUT_P, AGENT)
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    assert stop_agent.resume(c, S, ROLLOUT_P, AGENT) == {"agent": AGENT, "resumed": True}
+
+
+def test_a_runtime_without_its_log_group_has_no_recent_sessions_with_a_call_the_model_accepts(aws):
+    c, stubs = aws
+    stubs["logs"].add_client_error("describe_log_streams", "ResourceNotFoundException", "The specified log group does not exist.",
+                                   http_status_code=400, expected_params={"logGroupName": LOG, "logStreamNamePrefix": "runtime-logs-"})
+    assert stop_agent.recent_sessions(c, S, RUNTIME_ARN) == []
+
+
+def test_the_session_header_is_the_one_the_service_model_names_for_the_session_id(aws):
+    c, _ = aws
+    model = c.data.meta.service_model.operation_model("StopRuntimeSession").input_shape.members["runtimeSessionId"]
+    assert model.serialization == {"location": "header", "name": stop_agent.SESSION_HEADER}
+    assert (model.metadata["min"], model.metadata["max"]) == stop_agent.SESSION_ID_LENGTH
 
 
 # ------------------------------------------------------------------ the custom guardrail

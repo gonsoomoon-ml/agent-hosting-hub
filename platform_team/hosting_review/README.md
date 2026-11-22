@@ -40,7 +40,7 @@ Lambda 단계는 제한 시간(가장 길어도 900초)에 끊기기 전에 스�
 | `review_permit_<에이전트>` | Entry | 승인 전에는 심사의 시험 호출만 에이전트를 부를 수 있다. |
 | `guard_secret_<에이전트>` | Entry | 비밀값이 든 질문을 거부한다. |
 | `guard_prompt_<에이전트>` | 운영, Approve | 프롬프트 공격(`PROMPT_INJECTION`, 신뢰도 0.4 초과)인 질문을 거부한다. 전사 정책이다. 플랫폼팀이 `company_policy/rollout.sh`로 모든 에이전트에 켜고 끈다. 켜져 있으면 Approve가 새 에이전트에 같은 모드로 건다. 반려와 삭제가 지운다. |
-| `stop_agent_<에이전트>` | 운영 | 심사의 시험 호출 말고는 그 에이전트의 모든 호출을 거부한다. 심사는 만들지 않는다. 반려와 삭제가 지운다. |
+| `stop_agent_<에이전트>` | 운영 | 심사의 시험 호출 말고는 그 에이전트의 모든 호출을 거부한다. 플랫폼팀이 `agent_stop/stop.sh`로 걸고 `agent_stop/resume.sh`로 지운다(`agent_stop/README.md`). 심사는 만들지 않는다. 반려와 삭제도 지운다. |
 | `entry_permit_<에이전트>` | Approve | 사용자가 에이전트를 부를 수 있다. |
 
 예를 들면 `tool_quality_agent_Quality_get_inspection_data`(46자), `review_permit_release_review`(28자)다.

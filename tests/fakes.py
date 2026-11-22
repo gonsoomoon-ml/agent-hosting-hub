@@ -3,7 +3,7 @@ import datetime
 import json
 import types
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ParamValidationError
 
 from platform_team.hosting_review.review_steps import application_digest
 from platform_team.shared_code.hub_state import Platform
@@ -325,14 +325,41 @@ class _S3(_Client):
 
 
 class _Logs(_Client):
+    """Log groups (log_groups: names) and the log streams of a group (log_streams {group: [LogStream dicts]})."""
     service = "logs"
     def describe_log_groups(self, logGroupNamePrefix, **kw):
         return {"logGroups": [{"logGroupName": n} for n in sorted(self.o.log_groups) if n.startswith(logGroupNamePrefix)]}
+
+    def describe_log_streams(self, logGroupName, logStreamNamePrefix="", orderBy="LogStreamName", **kw):
+        """A group that is not in log_streams does not exist. Like the service model says, a prefix cannot be
+        combined with orderBy=LastEventTime."""
+        if logStreamNamePrefix and orderBy == "LastEventTime":
+            raise _client_error("InvalidParameterException", "Cannot order by LastEventTime with a logStreamNamePrefix.",
+                                "DescribeLogStreams")
+        if logGroupName not in self.o.log_streams:
+            raise _client_error("ResourceNotFoundException", "The specified log group does not exist.", "DescribeLogStreams")
+        return {"logStreams": [x for x in self.o.log_streams[logGroupName]
+                               if x["logStreamName"].startswith(logStreamNamePrefix)]}
 
     def delete_log_group(self, logGroupName):
         if logGroupName not in self.o.log_groups:
             raise _client_error("ResourceNotFoundException", "The specified log group does not exist.", "DeleteLogGroup")
         self.o.log_groups.discard(logGroupName)
+
+
+class _Data(_Client):
+    """bedrock-agentcore, the data plane: StopRuntimeSession. Each session it stops is written to stopped_sessions as
+    (agentRuntimeArn, runtimeSessionId); a session ID in session_errors raises that error instead. An ID outside 33 to
+    256 characters is refused before any call, as botocore refuses it (the service model's rule)."""
+    service = "data"
+
+    def stop_runtime_session(self, runtimeSessionId, agentRuntimeArn, qualifier=None, **kw):
+        if not 33 <= len(runtimeSessionId) <= 256:
+            raise ParamValidationError(report=f"Invalid length for parameter runtimeSessionId, value: {len(runtimeSessionId)}")
+        if runtimeSessionId in self.o.session_errors:
+            raise self.o.session_errors[runtimeSessionId]
+        self.o.stopped_sessions.append((agentRuntimeArn, runtimeSessionId))
+        return {"runtimeSessionId": runtimeSessionId, "statusCode": 200}
 
 
 class _Reg(_Client):
@@ -389,7 +416,7 @@ class _Sfn(_Client):
 
 
 class FakeClients:
-    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3).
+    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3, data).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     policy_mode: the enforcement mode of the existing_policies; parameters: the SSM values at the start; targets: the
@@ -398,8 +425,9 @@ class FakeClients:
     Recorded: created_policies (id, name, statement, kind, mode), mode_changes ((name, mode) of each update_policy),
     calls ((service, method) of every fake call, in order), deleted_policies, policies, roles, inline (role -> inline
     policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
-    "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects. Tests may also fill
-    log_groups, parameters, objects, other_records, runtime_create_errors and running (the reviews still running)."""
+    "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects, stopped_sessions
+    ((Runtime ARN, session ID) of each StopRuntimeSession). Tests may also fill log_groups, log_streams, parameters,
+    objects, other_records, runtime_create_errors, session_errors and running (the reviews still running)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
 
@@ -430,8 +458,9 @@ class FakeClients:
             runtime_delete_keeps_status, [], []
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
         self.running = list(running)
+        self.log_streams, self.stopped_sessions, self.session_errors = {}, [], {}
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
-        self.logs, self.sfn, self.s3 = _Logs(self), _Sfn(self), _S3(self)
+        self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):
