@@ -38,6 +38,13 @@ resource "aws_iam_role_policy" "agents" {
   })
 }
 
+# IAM is eventually consistent, and CreateGateway checks at once that the role may use the policy engine
+# (found by running: AccessDenied on bedrock-agentcore:AuthorizeAction right after the role policy was written).
+resource "time_sleep" "role_settles" {
+  create_duration = "20s"
+  depends_on      = [aws_iam_role_policy.agents]
+}
+
 # No protocol type: a gateway without one takes Runtime targets (HTTP); an MCP gateway does not.
 resource "aws_bedrockagentcore_gateway" "agents" {
   name            = "${var.prefix}-agents"
@@ -52,5 +59,5 @@ resource "aws_bedrockagentcore_gateway" "agents" {
     # The custom guardrail's interceptor is attached by an API call (UpdateGateway) during operation.
     ignore_changes = [interceptor_configuration]
   }
-  depends_on = [aws_iam_role_policy.agents]
+  depends_on = [time_sleep.role_settles]
 }

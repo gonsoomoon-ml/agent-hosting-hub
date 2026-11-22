@@ -32,6 +32,13 @@ resource "aws_iam_role_policy" "tools" {
   })
 }
 
+# IAM is eventually consistent, and CreateGateway checks at once that the role may use the policy engine
+# (found by running: AccessDenied on bedrock-agentcore:AuthorizeAction right after the role policy was written).
+resource "time_sleep" "role_settles" {
+  create_duration = "20s"
+  depends_on      = [aws_iam_role_policy.tools]
+}
+
 resource "aws_bedrockagentcore_gateway" "tools" {
   name            = "${var.prefix}-tools"
   description     = "Tool gateway: only permitted tool calls pass"
@@ -42,7 +49,7 @@ resource "aws_bedrockagentcore_gateway" "tools" {
     arn  = var.policy_engine_arn
     mode = "ENFORCE"
   }
-  depends_on = [aws_iam_role_policy.tools]
+  depends_on = [time_sleep.role_settles]
 }
 
 # Agents see each tool as <Target>___<tool>.

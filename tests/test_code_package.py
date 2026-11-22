@@ -1,5 +1,16 @@
-import json, zipfile
+import json, subprocess, sys, zipfile
 from platform_team.shared_code.code_package import build
+
+BUNDLED = ("platform_team.sample_tools.tool_handler", "platform_team.shared_code.aws_helpers",
+           "platform_team.company_policy.policy_engine", "platform_team.agent_gateway.gateway_targets",
+           "platform_team.agent_catalog.catalog_records")
+
+def test_the_package_needs_only_the_standard_library_and_what_it_carries(tmp_path):
+    build(tmp_path)
+    code = "import importlib, sys; sys.path.insert(0, sys.argv[1]); [importlib.import_module(m) for m in sys.argv[2:]]"
+    r = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(tmp_path / "platform_team.zip"), *BUNDLED],
+                       capture_output=True, text=True)       # -I -S: no site-packages, no current folder
+    assert r.returncode == 0, r.stderr[-1500:]
 
 def test_package_holds_the_hub_code_boto3_and_the_tool_schemas(tmp_path):
     out = build(tmp_path)

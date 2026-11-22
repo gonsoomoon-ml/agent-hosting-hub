@@ -1,10 +1,11 @@
 """Shared AWS helpers: one boto3 session with named clients, retry, status waits, SigV4 calls."""
 import json
 import time
+import urllib.error
+import urllib.request
 from functools import cached_property
 
 import boto3
-import requests
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.exceptions import ClientError
@@ -97,11 +98,17 @@ def wait_status(read, want: tuple[str, ...], what: str, timeout=300, step=4) -> 
 
 
 def signed_post(url: str, body: dict, region: str, headers: dict | None = None, creds=None, timeout=180) -> tuple[int, str]:
-    """POST a JSON body signed with SigV4 for the bedrock-agentcore service."""
+    """POST a JSON body signed with SigV4 for the bedrock-agentcore service. Returns (status, text).
+    An HTTP error status is returned, not raised; network errors and timeouts are raised.
+    Standard library only (urllib), so the hub's code package carries no HTTP client."""
     raw = json.dumps(body)
     h = {"Content-Type": "application/json", **(headers or {})}
-    req = AWSRequest(method="POST", url=url, data=raw, headers=h)
+    signed = AWSRequest(method="POST", url=url, data=raw, headers=h)
     creds = creds or boto3.Session(region_name=region).get_credentials().get_frozen_credentials()
-    SigV4Auth(creds, "bedrock-agentcore", region).add_auth(req)
-    r = requests.post(url, data=raw, headers=dict(req.headers), timeout=timeout)
-    return r.status_code, r.text.strip()
+    SigV4Auth(creds, "bedrock-agentcore", region).add_auth(signed)
+    req = urllib.request.Request(url, data=raw.encode(), headers=dict(signed.headers), method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", "replace").strip()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace").strip()

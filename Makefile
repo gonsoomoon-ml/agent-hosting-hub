@@ -10,6 +10,9 @@ export TF_VAR_region = $(AWS_REGION)
 export TF_VAR_prefix = $(DEMO_PREFIX)
 export TF_VAR_model_id = $(MODEL_ID)
 TF = terraform -chdir=platform_team/terraform
+# deploy and destroy show the plan and ask before they change the account. AUTO_APPROVE=1 skips the question
+# (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
+APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
 
 .PHONY: test package deploy seed destroy publish e2e
 
@@ -22,7 +25,7 @@ package:
 
 deploy: package
 	$(TF) init -input=false
-	$(TF) apply -input=false -auto-approve
+	$(TF) apply $(APPROVE)
 
 seed:
 	uv run python -m platform_team.agent_catalog.seed_catalog
@@ -30,7 +33,7 @@ seed:
 # The seeded record is outside Terraform's state, and a registry with records cannot be deleted: remove it first.
 destroy: package
 	uv run python -m platform_team.agent_catalog.seed_catalog --remove
-	$(TF) destroy -input=false -auto-approve
+	$(TF) destroy $(APPROVE)
 
 publish:
 	uv run python -m dev_team.publish $(AGENT)
