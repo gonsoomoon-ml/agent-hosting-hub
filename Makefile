@@ -10,6 +10,7 @@ export TF_VAR_region = $(AWS_REGION)
 export TF_VAR_prefix = $(DEMO_PREFIX)
 export TF_VAR_model_id = $(MODEL_ID)
 TF = terraform -chdir=platform_team/terraform
+SEED = uv run python -m platform_team.agent_catalog.seed_catalog
 # deploy and destroy show the plan and ask before they change the account. AUTO_APPROVE=1 skips the question
 # (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
 APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
@@ -28,12 +29,18 @@ deploy: package
 	$(TF) apply $(APPROVE)
 
 seed:
-	uv run python -m platform_team.agent_catalog.seed_catalog
+	$(SEED)
 
-# The seeded record is outside Terraform's state, and a registry with records cannot be deleted: remove it first.
+# The seeded record is outside Terraform's state, and a registry with records cannot be deleted: it goes first.
+# So the question comes before anything changes: the destroy plan, then yes or no. AUTO_APPROVE=1 skips it.
 destroy: package
-	uv run python -m platform_team.agent_catalog.seed_catalog --remove
-	$(TF) destroy $(APPROVE)
+ifneq ($(AUTO_APPROVE),1)
+	$(TF) plan -destroy
+	@printf "Destroy everything above, and the seeded catalog record? Only 'yes' is accepted: "; read answer; \
+	  [ "$$answer" = yes ] || { echo "Destroy cancelled."; exit 1; }
+endif
+	$(SEED) --remove
+	$(TF) destroy -auto-approve
 
 publish:
 	uv run python -m dev_team.publish $(AGENT)
