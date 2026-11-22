@@ -2,6 +2,7 @@
 # catalog, and create a record and ask for its approval. The hosting review adds the upload to its inbox.
 
 data "aws_caller_identity" "me" {}
+data "aws_region" "here" {}
 
 resource "aws_iam_role" "dev" {
   name = "${var.prefix}-dev-role"
@@ -19,6 +20,8 @@ resource "aws_iam_role_policy" "dev" {
     Statement = [
       # the gateway lets a call in; the Cedar policy below decides which tool answers
       { Effect = "Allow", Action = ["bedrock-agentcore:InvokeGateway"], Resource = [var.tool_gateway_arn] },
+      # publish.sh reads where the hub's inbox and catalog are (hub_state.load); found by running (Task 12)
+      { Effect = "Allow", Action = ["ssm:GetParametersByPath"], Resource = ["arn:aws:ssm:${data.aws_region.here.region}:${data.aws_caller_identity.me.account_id}:parameter/${var.prefix}/platform"] },
       {
         Effect = "Allow"
         Action = [

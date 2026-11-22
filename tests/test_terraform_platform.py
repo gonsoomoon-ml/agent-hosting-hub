@@ -57,3 +57,13 @@ def test_each_lambda_timeout_leaves_one_full_wait_after_the_margin():
                "testcall": steps.CALL_TIMEOUT, "approve": steps.POLICY_WAIT}       # the longest single wait of each step
     assert set(timeout) == set(steps.STEPS) == set(longest)
     assert [s for s in timeout if timeout[s] > 900 or (longest[s] and timeout[s] - MARGIN < longest[s])] == []
+
+# ------------------------------------------------------------------ found on AWS (Task 12)
+
+def test_the_dev_role_reads_the_hub_values_publish_needs():
+    # publish.sh runs as the dev team role and first reads /<prefix>/platform/ (hub_state.load). On AWS:
+    # "not authorized to perform: ssm:GetParametersByPath on resource: ...:parameter/hub/platform"
+    dev = block("aws_iam_role_policy", "dev")
+    reads = [line for line in dev.splitlines() if '"ssm:' in line]          # one statement per line
+    assert len(reads) == 1 and re.search(r'Action\s*=\s*\["ssm:GetParametersByPath"\]', reads[0])
+    assert re.search(r'Resource\s*=\s*\["arn:aws:ssm:\$\{[\w.]+\}:\$\{[\w.]+\}:parameter/\$\{var\.prefix\}/platform"\]', reads[0])
