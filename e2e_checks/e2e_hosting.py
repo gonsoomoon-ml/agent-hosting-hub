@@ -5,9 +5,10 @@
 Twelve checks, one [PASS] / [FAIL] line each, [INFO] lines for what was observed (timings, answers, the alert),
 then `== N checks passed, M failed, K observations`. Exit code 1 if a check failed.
    1  as the dev team role, a catalog search finds the shared tool record parts-tools           (picture 1)
-   2  as the dev team role, the shared read tool answers and another tool is refused            (D15)
+   2  as the dev team role, the shared read tool answers and another tool is refused by policy  (D15)
+      (JSON-RPC error -32002, "policy enforcement"; any other error does not count)
    3  as the dev team role, publish.sh dev_team/release_review: the record is PENDING_APPROVAL  (picture 2)
-   4  the review starts within 120 s                                                            (picture 3)
+   4  the review starts within 120 s of the request (timed from just before publish.sh)         (picture 3)
    5  the review SUCCEEDED with the steps Read:lambda .. Approve:lambda in order                (pictures 4 5 6)
    6  the record is APPROVED and a catalog search finds it                                      (picture 6)
    7  a user calls release_review through the agent gateway: 200, and a change that breaks a rule
@@ -69,7 +70,8 @@ COMPLIANT = "Change C-8 goes through the canary stage first, has a rollback plan
 QUESTION = "What was the result of inspection Q-1001, and what is the specification of the part it inspected?"
 REASON = "jinja2 2.11.2 has published advisories"
 ADVISORY = re.compile(r"\bjinja2\s+2\.11\.2\s+(GHSA-|PYSEC-|CVE-)", re.I)    # a row of pip-audit's table
-START_WAIT = 120         # s, check 4
+START_WAIT = 120         # s, check 4: from the request to the start of the review
+LATE_LOOK = 60           # s, how long after START_WAIT a late review is still looked for (to say how late it was)
 REVIEW_WAIT = 2700       # s, one review (the deploy build alone may take up to 30 min)
 ALERT_WAIT = 180         # s, after the review stopped
 SEARCH_WAIT = 180        # s, the search index follows an approval
@@ -184,6 +186,13 @@ def call_agent(s: Settings, p: Platform, agent: str, prompt: str, tries: int = 3
     return 0, "", 0.0
 
 
+def policy_refusal(text: str) -> bool:
+    """Check 2: the tool gateway refused the call by policy: JSON-RPC error -32002 "Tool Execution Denied: Tool call
+    not allowed due to policy enforcement [...]". Any other error (an unknown tool, a failed tool) is not a refusal."""
+    err = as_json(text).get("error")
+    return isinstance(err, dict) and err.get("code") == -32002 and "policy enforcement" in str(err.get("message", ""))
+
+
 def mcp(url: str, method: str, params: dict, region: str, creds) -> tuple[int, str]:
     return signed_post(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, region,
                        headers={"Accept": "application/json, text/event-stream"}, creds=creds)
@@ -199,9 +208,16 @@ def hub_tools_module():
 
 # ================================================================== the review
 
+def started_in_time(requested_at: float, started_at: float, limit: float = START_WAIT) -> bool:
+    """Check 4: the review started no later than `limit` seconds after the request (both epoch s)."""
+    return started_at - requested_at <= limit
+
+
 def execution_for(c: Clients, machine_arn: str, record_id: str, after: float, timeout: int) -> tuple[dict | None, float]:
-    """The review execution started for this record at or after `after` (epoch s). Returns it and its delay."""
-    seen, t0 = set(), time.monotonic()
+    """The review execution started for this record at or after `after` (epoch s, taken just before publish.sh makes
+    the request). Returns it and its delay from `after`. It looks until `timeout` seconds after `after` and a little
+    longer (LATE_LOOK), so a review that starts late is found and its delay shown, not taken for a missing one."""
+    seen = set()
     while True:
         for e in c.sfn.list_executions(stateMachineArn=machine_arn, maxResults=20)["executions"]:
             if e["executionArn"] in seen or e["startDate"].timestamp() < after - 5:
@@ -210,8 +226,8 @@ def execution_for(c: Clients, machine_arn: str, record_id: str, after: float, ti
             d = c.sfn.describe_execution(executionArn=e["executionArn"])
             if (as_json(d.get("input") or "").get("detail") or {}).get("registryRecordId") == record_id:
                 return d, e["startDate"].timestamp() - after
-        if time.monotonic() - t0 > timeout:
-            return None, time.monotonic() - t0
+        if time.time() - after > timeout + LATE_LOOK:
+            return None, time.time() - after
         time.sleep(3)
 
 
@@ -261,9 +277,10 @@ def review(c: Clients, p: Platform, agent: str, record_id: str, after: float, n_
     """Find the review of this record, wait until it stops, and say what it did. With n_start, check 4 is recorded."""
     ex, delay = execution_for(c, p.machine_arn, record_id, after, START_WAIT)
     if n_start:
-        check(n_start, "the review starts within 120 s", ex is not None,
+        check(n_start, "the review starts within 120 s",
+              ex is not None and started_in_time(after, ex["startDate"].timestamp()),
               f"execution {ex['name']} started {delay:.0f}s after the request" if ex else f"no execution for {agent} "
-              f"within {START_WAIT}s")
+              f"within {START_WAIT + LATE_LOOK}s of the request")
     if not ex:
         return None
     d = wait_done(c, ex["executionArn"])
@@ -381,9 +398,9 @@ def scene_dev_tools(dev: DevTeam, s: Settings, p: Platform) -> None:
     url = p.tool_gw["url"]
     code_ok, ok = mcp(url, "tools/call", {"name": SHARED_READ[0], "arguments": {"part_id": "P-100"}}, s.region, creds)
     code_no, no = mcp(url, "tools/call", {"name": OTHER_TOOL, "arguments": {"part_id": "P-100"}}, s.region, creds)
-    doc_ok, doc_no = as_json(ok), as_json(no)
+    doc_ok = as_json(ok)
     answered = PARTS["P-100"]["spec"] in ok and not (doc_ok.get("result") or {}).get("isError")
-    refused = TEST_RESULTS["P-100"]["inspector_id"] not in no and bool(doc_no.get("error") or (doc_no.get("result") or {}).get("isError"))
+    refused = TEST_RESULTS["P-100"]["inspector_id"] not in no and policy_refusal(no)
     check(2, "as the dev team role, the shared tool answers and another tool is refused", answered and refused,
           f"{SHARED_READ[0]} -> {code_ok} {ok[:140]}; {OTHER_TOOL} -> {code_no} {no[:200]}")
     info("a refused tool call as hub_tools.call_tool reads it", f"HTTP {code_no}; call_tool returns "

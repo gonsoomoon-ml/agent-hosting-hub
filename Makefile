@@ -52,7 +52,8 @@ endif
 publish:
 	dev_team/agent_template/publish.sh dev_team/$(AGENT)
 
-# Flow 1 (hosting) from end to end on the deployed hub: 16 minutes, 26 when it first removes two approved agents.
+# Flow 1 (hosting) from end to end on the deployed hub. The last run took 26 minutes, 8 of them removing the two
+# approved agents an earlier run had left.
 # The log goes to e2e_checks/last-run.log (not committed: *.log).
 e2e:
 	bash -o pipefail -c 'uv run python e2e_checks/e2e_hosting.py 2>&1 | tee e2e_checks/last-run.log'

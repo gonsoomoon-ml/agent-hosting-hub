@@ -54,3 +54,25 @@ def test_cleanup_check_knows_the_hubs_names_and_no_others():
     for name in ("hubwhole-agents", "hubspot", "github-runner", "deep_insight_runtime_vpc", "CDKToolkit",
                  "AgentCore-deepInsight-default", "/hubwhole/x"):
         assert not check_cleanup.hub_name(s, name), name
+
+
+# ------------------------------------------------------------------ fix round 1: checks 2 and 4 assert what their lines say
+
+REFUSED = ('{"jsonrpc":"2.0","id":1,"error":{"code":-32002,"message":"Tool Execution Denied: Tool call not allowed due to '
+           'policy enforcement [No policy applies to the request (denied by default).]"}}')     # the final run's log
+
+
+def test_check_2_counts_a_policy_refusal_only():
+    assert e2e.policy_refusal(REFUSED)
+    assert e2e.policy_refusal("event: message\ndata: " + REFUSED)                               # a streamed answer
+    assert not e2e.policy_refusal('{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Unknown tool: Parts___get_test_result"}}')
+    assert not e2e.policy_refusal('{"jsonrpc":"2.0","id":1,"result":{"isError":true,"content":[{"type":"text","text":"unknown tool"}]}}')
+    assert not e2e.policy_refusal('{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\\"error\\": \\"unknown tool\\"}"}]}}')
+    assert not e2e.policy_refusal("")
+
+
+def test_check_4_measures_the_start_from_the_request():
+    requested = 1_000.0
+    assert e2e.started_in_time(requested, requested + 8)          # the final run: 8 s after the request
+    assert e2e.started_in_time(requested, requested + 120)
+    assert not e2e.started_in_time(requested, requested + 125)
