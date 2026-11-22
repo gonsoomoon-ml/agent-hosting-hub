@@ -81,7 +81,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | Lambda 일곱(심사 다섯, 샘플 도구 하나, 커스텀 가드레일의 interceptor 하나), Step Functions, EventBridge, SNS, SQS | 실행과 메시지마다. interceptor는 에이전트 게이트웨이에 붙어 있는 동안 호출마다 두 번(요청과 답) 돈다. |
 | Amazon Bedrock Guardrails(커스텀 가드레일의 guardrail 하나) | interceptor가 붙어 있는 동안 호출마다 두 번(요청과 답) 검사한다. Amazon Bedrock 요금 페이지(2026-11-22에 읽었다)는 검사한 글의 양(text unit, 1,000자까지가 하나)을 필터마다 매기고, 이 guardrail이 쓰는 두 필터(낱말 필터, 정규식의 민감 정보 필터)는 무료라고 적는다. 여기서는 요금을 확인하지 않았다. |
 | S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 열(Lambda 일곱, CodeBuild 둘, state machine 하나)은 14일 보관한다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
-| CloudWatch 알람 하나(커스텀 가드레일의 `<prefix>-guardrail-errors`) | 알람이 있는 동안. CloudWatch 요금 페이지(2026-11-22에 읽었다)는 알람을 그 메트릭마다 시간 단위로 매기고, 무료 사용량(표준 해상도의 알람 메트릭 10개)이 있다고 적는다. 여기서는 확인하지 않았다. |
+| CloudWatch 알람 둘(모니터링의 `<prefix>-tool-calls`, 커스텀 가드레일의 `<prefix>-guardrail-errors`) | 알람이 있는 동안. CloudWatch 요금 페이지(2026-11-22에 읽었다)는 알람을 그 메트릭마다 시간 단위로 매기고, 무료 사용량(표준 해상도의 알람 메트릭 10개)이 있다고 적는다. 여기서는 확인하지 않았다. |
 | AWS Agent Registry, SSM 값(표준), IAM | 요금이 드는지 확인하지 않았다 |
 
 ## `make destroy`가 지우는 것과 남기는 것

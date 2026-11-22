@@ -62,12 +62,17 @@ def tools_called(messages: list) -> list:
             for block in m.get("content", []) if "toolUse" in block]
 
 
-def run(prompt: str) -> tuple[str, list]:
-    if not prompt.strip():
-        return "ERROR: empty prompt", []
+def ask_once(prompt: str) -> tuple[str, list]:
+    """One question to a fresh agent: its answer and the tools the model called."""
     try:
         agent = new_agent()
         result = agent(prompt)
     except Exception as e:      # missing setting, model access, throttling: told to the caller, not raised
         return f"ERROR: {error_text(e)}", []
     return str(result).strip(), tools_called(agent.messages)
+
+
+def run(prompt: str) -> tuple[str, list]:
+    if not prompt.strip():
+        return "ERROR: empty prompt", []
+    return ask_once(prompt)

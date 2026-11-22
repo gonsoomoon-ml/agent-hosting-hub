@@ -17,7 +17,7 @@
 
 요청은 본문이 JSON 객체이고 그 안에 글자인 `prompt`가 있으면 `prompt`만 검사한다. 다른 필드는 검사하지 않는다. 그 밖의 본문(base64가 아니거나, JSON이 아니거나, 객체가 아니거나, `prompt`가 없는 것)은 본문 전체를 글로 검사하고, 가렸으면 본문 전체를 가린 모양으로 넘긴다. 답은 언제나 전체를 검사한다. Lambda의 로그에는 어느 지점(`REQUEST`, `RESPONSE`)인지, 막았는지, 가렸는지만 남고 글은 남지 않는다. 이 동작은 코드와 단위 시험(`tests/test_interceptor.py`)이 정한 것이다.
 
-규칙을 바꾸려면 `terraform/variables.tf`의 두 변수를 바꿔 `make deploy`를 다시 돌린다. interceptor는 guardrail의 작업본(`DRAFT`)이 아니라 고정된 버전을 적용한다. 규칙이 바뀌면 Terraform은 이 순서로 바꾸도록 짜여 있다. guardrail의 작업본을 고치고, 새 버전을 만들고, Lambda의 환경 변수 `GUARDRAIL_VERSION`을 새 버전으로 바꾸고, 그다음에 옛 버전을 지운다(`replace_triggered_by`와 `create_before_destroy`). 그래서 Lambda가 지워진 버전을 가리키는 때가 없다. 옛 버전을 먼저 지우면, 그 사이에 interceptor가 실패하고 에이전트 게이트웨이는 모든 요청을 거부한다. 규칙을 바꿔 다시 올리는 것은 AWS에서 해 보지 않았다.
+규칙을 바꾸려면 `terraform/variables.tf`의 두 변수를 바꿔 `make deploy`를 다시 돌린다. interceptor는 guardrail의 작업본(`DRAFT`)이 아니라 고정된 버전을 적용한다. 규칙이 바뀌면 Terraform은 이 순서로 바꾸도록 짜여 있다. guardrail의 작업본을 고치고, 새 버전을 만들고, Lambda의 환경 변수 `GUARDRAIL_VERSION`을 새 버전으로 바꾸고, 그다음에 옛 버전을 지운다(`replace_triggered_by`와 `create_before_destroy`). 그래서 Lambda가 지워진 버전을 가리키는 때가 없다. 옛 버전을 먼저 지우면, 그 사이에 interceptor가 실패하고 에이전트 게이트웨이는 모든 요청을 거부한다. 2026-11-22에 AWS에서 규칙 하나를 바꿔(`code_names`에 지어낸 코드명 하나를 더했다) `make deploy`를 돌렸을 때 Terraform은 이 순서로 바꿨다. guardrail을 그 자리에서 고치고(1초), 새 버전 `2`를 만들고(1초), Lambda의 `GUARDRAIL_VERSION`을 `2`로 바꾸고(6초), 그다음에 옛 버전 `1`을 지웠다(0초). 계획에 든 자원은 이 셋뿐이었다(`1 to add, 2 to change, 1 to destroy`). 그 뒤 Lambda가 가리킨 버전 `2`는 `READY`였고 두 코드명을 모두 담았으며, guardrail에 남은 버전은 작업본과 `2`였다. 그때 interceptor는 게이트웨이에 붙어 있지 않았으므로, 바꾸는 동안 지나가는 호출은 보지 않았다. 같은 날 바뀐 것 없이 `make deploy`를 다시 돌렸을 때는 guardrail을 포함해 아무것도 바뀌지 않았다(`0 added, 0 changed, 0 destroyed`).
 
 ## 기본 제공 가드레일과 나눈 일
 
@@ -80,7 +80,7 @@ platform_team/custom_guardrail/guardrail.sh detach   # 뗀다
 - 금지어의 대소문자와 다른 표기, 한국어 글.
 - 가린 요청을 기본 제공 가드레일이 어떤 모양으로 보는지.
 - Lambda가 실패할 때의 거부(앞선 실행에서만 봤다)와 알람이 울리는 것.
-- 규칙을 바꿔 다시 올리는 것(새 버전).
+- interceptor가 붙어 있는 동안 규칙을 바꾸는 것. 규칙을 바꿔 다시 올리는 것은 붙이지 않은 채로만 해 봤다(위의 "무엇을 막고 무엇을 가리나").
 
 ## 요금
 

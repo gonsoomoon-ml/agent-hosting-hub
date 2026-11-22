@@ -178,3 +178,45 @@ def test_the_start_point_gives_the_custom_guardrail_the_code_and_the_alert_topic
     assert set(re.findall(r'output\s+"(\w+)"', outputs)) == {"interceptor_arn", "guardrail_id", "guardrail_version"}
     assert re.search(r'"/\$\{var\.prefix\}/platform/interceptor_arn"\s+=\s+module\.custom_guardrail\.interceptor_arn\n',
                      (ROOT / "terraform" / "outputs.tf").read_text())
+
+# ------------------------------------------------------------------ the alarm on the incident's tool
+
+MONITORING = ROOT / "agent_monitoring" / "terraform"
+
+def test_the_tool_call_alarm_watches_one_tool_on_the_tool_gateway():
+    tf = (ROOT / "agent_monitoring/terraform/main.tf").read_text()
+    for part in ('"AWS/Bedrock-AgentCore"', '"Invocations"', 'Method    = "tools/call"', 'Operation = "InvokeGateway"', 'Protocol  = "MCP"',
+                 "Name      = var.watched_tool", "Resource  = var.tool_gateway_arn", '"notBreaching"'):
+        assert part in tf
+
+def test_the_tool_call_alarm_tells_the_alert_topic_when_a_minute_has_more_calls_than_the_threshold():
+    alarm = block("aws_cloudwatch_metric_alarm", "tool_calls")
+    for pattern in (r'alarm_name\s*=\s*"\$\{var\.prefix\}-tool-calls"', r'namespace\s*=\s*"AWS/Bedrock-AgentCore"',
+                    r'metric_name\s*=\s*"Invocations"', r'statistic\s*=\s*"Sum"', r"period\s*=\s*60\b",
+                    r"evaluation_periods\s*=\s*1\b", r'comparison_operator\s*=\s*"GreaterThanThreshold"',
+                    r"threshold\s*=\s*var\.tool_calls_per_minute\b", r'treat_missing_data\s*=\s*"notBreaching"',
+                    r"alarm_actions\s*=\s*\[aws_sns_topic\.alerts\.arn\]"):
+        assert re.search(pattern, alarm), pattern
+    dims = re.search(r"dimensions\s*=\s*{(.*?)\n  }", alarm, re.S).group(1)
+    assert sorted(re.findall(r"^\s*(\w+)\s*=", dims, re.M)) == ["Method", "Name", "Operation", "Protocol", "Resource"]
+    variables = (MONITORING / "variables.tf").read_text()
+    var = lambda name: re.search(r'variable\s+"%s"\s*{(.*?)\n}' % name, variables, re.S).group(1)
+    assert "default" not in var("tool_gateway_arn")
+    assert re.search(r'default\s*=\s*"Quality___get_inspection_data"', var("watched_tool"))
+    assert re.search(r"type\s*=\s*number", var("tool_calls_per_minute"))
+    assert re.search(r"default\s*=\s*19\b", var("tool_calls_per_minute"))       # max(5, 39 // 2): see the README
+    outputs = (MONITORING / "outputs.tf").read_text()
+    assert re.search(r'output\s+"tool_alarm_name"\s*{\s*value\s*=\s*aws_cloudwatch_metric_alarm\.tool_calls\.alarm_name', outputs)
+
+def test_the_start_point_gives_the_monitoring_the_tool_gateway():
+    root = (ROOT / "terraform" / "main.tf").read_text()
+    module = re.search(r'module\s+"agent_monitoring"\s*{(.*?)\n}', root, re.S).group(1)
+    assert re.search(r"tool_gateway_arn\s*=\s*module\.tool_gateway\.gateway_arn\b", module)
+
+def test_the_watched_tool_is_a_catalog_tool_that_quality_agent_applies_for():
+    from platform_team.sample_tools.tool_schema import TARGETS
+    watched = re.search(r'variable\s+"watched_tool"\s*{[^}]*default\s*=\s*"(\w+)"', (MONITORING / "variables.tf").read_text()).group(1)
+    assert watched in {f"{t}___{x['name']}" for t, tools in TARGETS.items() for x in tools}
+    import json
+    applications = {p.parent.name: json.loads(p.read_text())["tools"] for p in pathlib.Path("dev_team").glob("*/agent.json")}
+    assert sorted(name for name, tools in applications.items() if watched in tools and name != "agent_template") == ["quality_agent"]
