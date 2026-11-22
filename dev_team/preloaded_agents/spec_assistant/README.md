@@ -39,7 +39,7 @@ arn = c.ssm.get_parameter(Name=s.ssm('agents', 'spec_assistant', 'harness_arn'))
 print(ask_harness(c, arn, 'What is the spec of part P-100?'))"
 ```
 
-`ask_harness`는 새 세션으로 질문 하나를 보내고, 돌아오는 stream의 글(`contentBlockDelta`의 `text`)을 이어 돌려준다. stream에 오류가 오면 그 내용으로 예외를 낸다. 호출에 도구, 모델, 지시문을 따로 싣지 않으므로 harness의 설정이 그대로 쓰인다. AgentCore 개발자 안내서("Security and access controls", 2026-11-22에 읽었다)는 `InvokeHarness`에 `bedrock-agentcore:InvokeHarness`와 `bedrock-agentcore:InvokeAgentRuntime`이 필요하다고 적는다. 여기서는 확인하지 않았다. 허브의 역할 가운데 `bedrock-agentcore:InvokeHarness`를 가진 것은 없다(Terraform의 정책에 이 action이 없다). 그래서 허브 안에서 이 에이전트를 부를 수 있는 것은 그 권한을 가진 플랫폼팀의 자격 증명뿐이다. 사용량 보고(`usage.sh`)는 이름이 `<prefix>_<에이전트>`인 Runtime으로 에이전트를 찾으므로 이 에이전트는 그 표에 없다(코드가 그렇다. harness가 도는 Runtime의 이름은 아래와 같이 `harness_<prefix>_spec_assistant`다).
+`ask_harness`는 새 세션으로 질문 하나를 보내고, 돌아오는 stream의 글(`contentBlockDelta`의 `text`)을 이어 돌려준다. stream에 오류가 오면 그 내용으로 예외를 낸다. 호출에 도구, 모델, 지시문을 따로 싣지 않으므로 harness의 설정이 그대로 쓰인다. AgentCore 개발자 안내서("Security and access controls", 2026-11-22에 읽었다)는 `InvokeHarness`에 `bedrock-agentcore:InvokeHarness`와 `bedrock-agentcore:InvokeAgentRuntime`이 필요하다고 적는다. 여기서는 확인하지 않았다. 허브의 역할 가운데 `bedrock-agentcore:InvokeHarness`를 가진 것은 없다(Terraform의 정책에 이 action이 없다). 그래서 허브 안에서 이 에이전트를 부를 수 있는 것은 그 권한을 가진 플랫폼팀의 자격 증명뿐이다. 사용량 보고(`usage.sh`)는 harness가 도는 Runtime(아래와 같이 이름이 `harness_<prefix>_spec_assistant`다)으로 이 에이전트를 찾아, 그 Runtime의 이름으로 메트릭을 읽고 표에 `spec_assistant`로 넣는다. 코드가 그렇게 한다. 그 Runtime의 메트릭이 사용량 보고가 읽는 모양(`Name=<Runtime 이름>::DEFAULT`)으로 남는지는 확인하지 않았다.
 
 ## 허브에서 받는 통제
 

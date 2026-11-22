@@ -14,8 +14,9 @@ Each is the sum of its one-minute data points in the window; a metric with no da
 developer guide says the Runtime's metrics come in one-minute batches and its resource usage may be up to 60 minutes
 late ("AgentCore generated runtime observability data", read on 2026-11-22).
 
-The hosted agents are the Runtimes named <prefix>_<agent> (Settings.runtime_name) whose <agent> is a valid agent
-name, so another team's Runtime and another prefix's are not read.
+The hosted agents are the Runtimes named <prefix>_<agent> (Settings.runtime_name), and harness_<prefix>_<agent> for a
+harness agent (AgentCore runs a harness on a Runtime of that name: Settings.harness_runtime_name), whose <agent> is a
+valid agent name, so another team's Runtime and another prefix's are not read.
 """
 import sys
 import time
@@ -68,24 +69,32 @@ def _sums(c, queries: list[dict], minutes: int) -> dict[str, float]:
     return out
 
 
-def hosted_agents(c, s: Settings) -> dict[str, str]:
-    """The hub's hosted agents and their Runtime ARNs, by agent name: the Runtimes named <prefix>_<agent> (every page
-    of ListAgentRuntimes)."""
-    head = s.runtime_name("")
+def _hosted(c, s: Settings) -> dict[str, tuple[str, str]]:
+    """agent -> (Runtime name, Runtime ARN) for the Runtimes named <prefix>_<agent> or harness_<prefix>_<agent> whose
+    <agent> is a valid agent name (every page of ListAgentRuntimes)."""
+    heads = (s.runtime_name(""), s.harness_runtime_name(""))
     found = {}
     for runtime in all_items(c.ctl.list_agent_runtimes, maxResults=100):
         name = runtime["agentRuntimeName"]
-        if name.startswith(head) and not name_problems(name[len(head):]):
-            found[name[len(head):]] = runtime["agentRuntimeArn"]
+        for head in heads:
+            if name.startswith(head) and not name_problems(name[len(head):]):
+                found[name[len(head):]] = (name, runtime["agentRuntimeArn"])
     return dict(sorted(found.items()))
+
+
+def hosted_agents(c, s: Settings) -> dict[str, str]:
+    """The hub's hosted agents and their Runtime ARNs, by agent name: the Runtimes named <prefix>_<agent>, and for a
+    harness agent the Runtime AgentCore runs its harness on, harness_<prefix>_<agent> (Settings.harness_runtime_name)."""
+    return {agent: arn for agent, (_, arn) in _hosted(c, s).items()}
 
 
 def usage(c, s: Settings, p: Platform, minutes: int = DEFAULT_MINUTES) -> dict[str, dict]:
     """Per hosted agent, over the last `minutes` minutes: invocations, sessions and errors of its endpoint DEFAULT
-    (whole numbers), and the vCPU-hours and GB-hours its Runtime used. `p` is not needed today."""
+    (whole numbers), and the vCPU-hours and GB-hours its Runtime used, read by that Runtime's name (a harness agent's is
+    harness_<prefix>_<agent>). `p` is not needed today."""
     out = {}
-    for agent, arn in hosted_agents(c, s).items():
-        name = f"{s.runtime_name(agent)}::{ENDPOINT}"
+    for agent, (runtime, arn) in _hosted(c, s).items():
+        name = f"{runtime}::{ENDPOINT}"
         calls = {"Name": name, "Operation": "InvokeAgentRuntime", "Resource": arn}
         use = {"Name": name, "Resource": arn, "Service": "AgentCore.Runtime"}
         sums = _sums(c, [_query(k, m, calls) for k, m in CALLS.items()] + [_query(k, m, use) for k, m in USE.items()],

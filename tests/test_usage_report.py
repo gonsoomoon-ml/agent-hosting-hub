@@ -93,6 +93,36 @@ def test_an_agent_with_no_data_points_reads_zero_not_missing(aws):
     assert out == {"quality_agent": {"invocations": 0, "sessions": 0, "errors": 0, "cpu_vcpu_hours": 0, "memory_gb_hours": 0}}
 
 
+HARNESS_RUNTIME_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/harness_hub_spec_assistant-Ab12Cd34Ef"
+
+
+def test_a_harness_agent_is_listed_by_the_runtime_agentcore_runs_it_on(aws):
+    """AgentCore runs a harness agent on a Runtime it names harness_<prefix>_<agent> (Settings.harness_runtime_name):
+    the report lists that Runtime under the agent's name and asks for its metrics by that Runtime's own name. A harness
+    Runtime of another prefix, and one whose rest is not an agent name, are not listed."""
+    c, st = aws
+    for _ in range(2):              # once for hosted_agents, once for usage
+        st["ctl"].add_response("list_agent_runtimes", {"agentRuntimes": [
+            _runtime("harness_hub_spec_assistant", HARNESS_RUNTIME_ARN),
+            _runtime("harness_hubwhole_spec_assistant",
+                     f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/harness_hubwhole_spec_assistant-Qq11Ww22Ee"),
+            _runtime("harness_hub_Bad__name", f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/harness_hub_Bad__name-Zz98Yy76Xx"),
+        ]}, {"maxResults": 100})
+    assert usage_report.hosted_agents(c, S) == {"spec_assistant": HARNESS_RUNTIME_ARN}
+    call = [("Name", "harness_hub_spec_assistant::DEFAULT"), ("Operation", "InvokeAgentRuntime"),
+            ("Resource", HARNESS_RUNTIME_ARN)]
+    use = [("Name", "harness_hub_spec_assistant::DEFAULT"), ("Resource", HARNESS_RUNTIME_ARN),
+           ("Service", "AgentCore.Runtime")]
+    queries = [_query("invocations", "Invocations", call), _query("sessions", "Sessions", call),
+               _query("errors", "Errors", call), _query("cpu_vcpu_hours", "CPUUsed-vCPUHours", use),
+               _query("memory_gb_hours", "MemoryUsed-GBHours", use)]
+    st["cw"].add_response("get_metric_data", {"MetricDataResults": [
+        _result("invocations", [2.0]), _result("sessions", [2.0]), _result("errors", []),
+        _result("cpu_vcpu_hours", []), _result("memory_gb_hours", [])]}, {"MetricDataQueries": queries, **WINDOW})
+    out = usage_report.usage(c, S, P, minutes=30)
+    assert list(out) == ["spec_assistant"] and (out["spec_assistant"]["invocations"], out["spec_assistant"]["sessions"]) == (2, 2)
+
+
 def test_tool_calls_reads_one_metric_per_catalog_tool(aws):      # Method tools/call, Operation InvokeGateway, Protocol MCP, Resource = tool gateway ARN
     c, st = aws
     tools = ["Parts___get_part_spec", "Parts___get_test_result", "Quality___get_inspection_data", "Release___file_review_request"]
