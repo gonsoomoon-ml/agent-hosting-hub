@@ -273,26 +273,38 @@ def _log(epoch_s, text, stream="runtime-logs-hub-ops-incident-abcdefghij"):
 T0 = _at(0).timestamp()
 
 
-def test_the_incident_loops_rounds_are_read_from_its_log_lines_once_each():
-    """`asking again (<n>)` lines, in time order, a number once (the same line in two streams counts once); other lines
-    are not rounds. Rounds per clock minute (UTC) for LOOP_RATE."""
+OTHER = "runtime-logs-0b6c2f3e-1111-2222-3333-abcdefghij01"     # another session's stream of the same Runtime
+
+
+def test_the_incident_loops_lines_are_read_one_per_line_without_the_otel_copy():
+    """Each `asking again (<n>)` line is one line (epoch s, stream, n), in time order, also when its number was seen
+    before (a loop that starts again counts from 1). The copy of the agent's stdout in the stream otel-rt-logs is left
+    out; other lines are not rounds. Lines per clock minute (UTC) for LOOP_RATE."""
     from e2e_checks import e2e_operations as ops
     events = [_log(T0 + 61, "asking again (3)"), _log(T0 + 1, "asking again (1)\n"), _log(T0 + 2, "asking again (2)"),
               _log(T0 + 2, "asking again (2)", stream="otel-rt-logs"), _log(T0 + 3, "Invocation completed successfully"),
-              _log(T0 + 62, "[trace_id=abcdefghij span_id=abcdefghij] asking again (4)")]
-    rounds = ops.loop_rounds(events)
-    assert [n for _, n in rounds] == [1, 2, 3, 4] and rounds[0][0] == T0 + 1
-    assert ops.per_minute(rounds) == {"06:00": 2, "06:01": 2}
-    assert ops.loop_rounds([]) == [] and ops.per_minute([]) == {}
+              _log(T0 + 62, "[trace_id=abcdefghij span_id=abcdefghij] asking again (4)"),
+              _log(T0 + 70, "asking again (1)", stream=OTHER)]                  # a loop that started again
+    lines = ops.loop_lines(events)
+    assert [(t - T0, n) for t, _, n in lines] == [(1, 1), (2, 2), (61, 3), (62, 4), (70, 1)]
+    assert lines[-1][1] == OTHER and all(stream != "otel-rt-logs" for _, stream, _ in lines)
+    assert ops.per_minute(lines) == {"06:00": 2, "06:01": 3}
+    assert ops.loop_lines([]) == [] and ops.per_minute([]) == {}
 
 
-def test_check_9_sees_a_new_loop_line_and_no_new_line():
-    """No new line: every round of the later look was in the earlier look (the count of lines did not grow)."""
+def test_check_9_fails_on_any_loop_line_newer_than_the_settle_point():
+    """Quiet means no `asking again` line newer than the settle point (the stop plus STOP_SETTLE), in any stream of the
+    Runtime but the otel-rt-logs copy. A later `asking again (1)` (a new invocation after the stop) fails the check
+    though its number was seen before; a line from before the settle point that arrives late does not."""
     from e2e_checks import e2e_operations as ops
-    earlier = ops.loop_rounds([_log(T0 + 1, "asking again (1)"), _log(T0 + 2, "asking again (2)")])
-    assert ops.no_new_lines(earlier, ops.loop_rounds([_log(T0 + 1, "asking again (1)"), _log(T0 + 2, "asking again (2)")]))
-    assert not ops.no_new_lines(earlier, earlier + ops.loop_rounds([_log(T0 + 40, "asking again (3)")]))
-    assert ops.no_new_lines([], [])
+    settle = T0 + 120
+    stopped = [_log(T0 + n, f"asking again ({n})") for n in range(1, 82)]                # 81 rounds, the last at T0+81
+    assert ops.no_new_lines(ops.loop_lines(stopped), settle)
+    assert not ops.no_new_lines(ops.loop_lines(stopped + [_log(settle + 40, "asking again (1)", stream=OTHER)]), settle)
+    assert not ops.no_new_lines(ops.loop_lines(stopped + [_log(settle + 1, "asking again (82)")]), settle)
+    assert ops.no_new_lines(ops.loop_lines(stopped + [_log(settle + 5, "asking again (81)", stream="otel-rt-logs")]),
+                            settle)                                                     # the copy, written late
+    assert ops.no_new_lines([], settle)
 
 
 def test_what_stop_sh_said_for_each_session_is_read_from_its_lines():

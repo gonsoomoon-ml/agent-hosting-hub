@@ -101,6 +101,7 @@ MASK = "{employee_id}"                   # the custom guardrail's mask of an emp
 BLOCKED_BY = "interceptor"               # in the body of the interceptor's own 403
 SPEC = PARTS["P-100"]["spec"].split(",")[0]          # only the tool gives it
 AGAIN = re.compile(r"asking again \((\d+)\)")        # a round of the incident loop (quality_agent/variants/v2-loop)
+DUPLICATE_STREAM = "otel-rt-logs"       # a Runtime log stream that holds a copy of the agent's stdout lines
 TOOL_LOGS = "BedrockAgentCoreGateway_ApplicationLogs"
 NAMESPACE = "AWS/Bedrock-AgentCore"
 
@@ -135,28 +136,30 @@ def alarm_of(envelope: dict | None) -> tuple[str, str]:
     return str(message.get("AlarmName") or ""), str(message.get("NewStateValue") or "")
 
 
-def loop_rounds(events: list[dict]) -> list[tuple[float, int]]:
-    """(epoch s, n) of each `asking again (<n>)` line of the log events, in time order; a number seen twice (the same
-    line in two streams) counts once, at its first time."""
-    first: dict[int, float] = {}
+def loop_lines(events: list[dict]) -> list[tuple[float, str, int]]:
+    """(epoch s, stream, n) of each `asking again (<n>)` line of the log events, in time order. Each line counts, also
+    when its number was seen before: a loop that starts again counts from 1. The copy of the agent's stdout in the
+    stream otel-rt-logs (DUPLICATE_STREAM) is left out, so a line is not counted twice."""
+    found = []
     for ev in events:
         m = AGAIN.search(ev.get("message", ""))
-        if m:
-            n = int(m.group(1))
-            first[n] = min(first.get(n, float("inf")), ev["timestamp"] / 1000)
-    return sorted((t, n) for n, t in first.items())
+        stream = ev.get("logStreamName", "")
+        if m and stream != DUPLICATE_STREAM:
+            found.append((ev["timestamp"] / 1000, stream, int(m.group(1))))
+    return sorted(found)
 
 
-def no_new_lines(earlier: list[tuple[float, int]], later: list[tuple[float, int]]) -> bool:
-    """Check 9: no `asking again` line came between two looks at the log: every round of the later look was in the
-    earlier one, so the count of lines did not grow."""
-    return {n for _, n in later} <= {n for _, n in earlier}
+def no_new_lines(lines: list[tuple[float, str, int]], since: float) -> bool:
+    """Check 9: no `asking again` line is newer than `since` (epoch s, the settle point after the stop), so the count of
+    lines did not grow after it. Decided by each line's own time: a line from before `since` that reaches the log
+    late does not count, a line of a loop that started again does."""
+    return not any(t > since for t, _, _ in lines)
 
 
-def per_minute(rounds: list[tuple[float, int]]) -> dict[str, int]:
-    """Rounds per clock minute (UTC, HH:MM)."""
+def per_minute(lines: list[tuple[float, str, int]]) -> dict[str, int]:
+    """Lines per clock minute (UTC, HH:MM)."""
     out: dict[str, int] = {}
-    for t, _ in rounds:
+    for t, _, _ in lines:
         key = datetime.fromtimestamp(t, timezone.utc).strftime("%H:%M")
         out[key] = out.get(key, 0) + 1
     return out
@@ -589,8 +592,8 @@ def scene_incident(o: Ops, approved: bool) -> None:
           f"subject {(envelope or {}).get('Subject')!r}; reason {str(message.get('NewStateReason'))[:300]!r}")
 
 
-def rounds_since(o: Ops, group: str) -> list[tuple[float, int]]:
-    return loop_rounds(events(o, group, o.incident_at - 5, '"asking again"'))
+def lines_since(o: Ops, group: str) -> list[tuple[float, str, int]]:
+    return loop_lines(events(o, group, o.incident_at - 5, '"asking again"'))
 
 
 def scene_stop(o: Ops) -> bool:
@@ -599,7 +602,7 @@ def scene_stop(o: Ops) -> bool:
         check(9, name, False, "not run: there was no incident call")
         return False
     group = log_group(runtime_arn(o.c, o.s, o.p, QUALITY))
-    before = rounds_since(o, group)
+    before = lines_since(o, group)
     running = bool(before) and time.time() - before[-1][0] <= LOOP_SEEN
     code, out = run(f"stop.sh {QUALITY}", [STOP, QUALITY])
     said = stop_report(out)
@@ -609,10 +612,10 @@ def scene_stop(o: Ops) -> bool:
                           [STOP, QUALITY, "--session", o.incident])
         said["given"] = stop_report(out2)
     stopped_at = time.time()
-    code_u, body_u, _ = until(o, QUALITY, NORMAL, 403, STOP_SETTLE)
+    code_u, body_u, waited_u = until(o, QUALITY, NORMAL, 403, STOP_SETTLE)
     blocked = code_u == 403 and stop_agent_name(QUALITY) in body_u
-    time.sleep(max(0.0, stopped_at + STOP_SETTLE - time.time()))
-    settled = rounds_since(o, group)
+    settle_at = stopped_at + STOP_SETTLE
+    time.sleep(max(0.0, settle_at - time.time()))
     release = call_agent(o.s, o.p, RELEASE, hosting.COMPLIANT)[0]
     docs = call_agent(o.s, o.p, DOCS, DOCS_QUESTION)[0]
     try:
@@ -620,17 +623,18 @@ def scene_stop(o: Ops) -> bool:
     except Exception as e:                  # an error of the neighbour is this check's, not the stop's
         harness_text = error_of(e)
     neighbours = {RELEASE: release, DOCS: docs, HARNESS: "answered" if SPEC in harness_text else harness_text[:120]}
-    time.sleep(max(0.0, stopped_at + STOP_SETTLE + QUIET - time.time()))
-    later = rounds_since(o, group)
-    quiet = no_new_lines(settled, later)
-    last = f"{later[-1][1]} rounds, the last {later[-1][0] - stopped_at:+.0f}s from the stop" if later else "no round"
+    time.sleep(max(0.0, settle_at + QUIET - time.time()))
+    later = lines_since(o, group)
+    quiet = no_new_lines(later, settle_at)
+    newer = sum(t > settle_at for t, _, _ in later)
+    last = f"the last {later[-1][0] - stopped_at:+.0f}s from the stop" if later else "no line"
     check(9, name, running and blocked and quiet and release == 200 and docs == 200 and SPEC in harness_text,
           f"stop.sh exit {code}" + (f" (then with --session: exit {again})" if again is not None else "")
-          + f"; loop running at the stop: {running} ({len(before)} rounds); user {code_u}: {body_u[:160]}; rounds "
-          f"{len(settled)} at {STOP_SETTLE}s after the stop, {len(later)} at {STOP_SETTLE + QUIET}s ({last}); "
-          f"neighbours {neighbours}")
+          + f"; loop running at the stop: {running} ({len(before)} lines); user {code_u} after {waited_u:.0f}s: "
+          f"{body_u[:160]}; {len(later)} lines up to {STOP_SETTLE + QUIET}s after the stop, {newer} of them newer "
+          f"than {STOP_SETTLE}s after it ({last}); neighbours {neighbours}")
     info("what stop.sh said for each session", said)
-    info("the incident's rounds per minute (asking again lines)", per_minute(later))
+    info("the incident's rounds per minute (asking again lines, otel-rt-logs left out)", per_minute(later))
     observe("the tool's calls per minute", lambda: tool_per_minute(o))
     return blocked
 
