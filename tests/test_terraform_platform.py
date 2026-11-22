@@ -1,6 +1,7 @@
 import pathlib, re
 ROOT = pathlib.Path("platform_team")
-FEATURES = ("company_policy", "agent_gateway", "tool_gateway", "sample_tools", "agent_catalog", "agent_monitoring", "dev_access")
+FEATURES = ("company_policy", "agent_gateway", "tool_gateway", "sample_tools", "agent_catalog", "agent_monitoring", "dev_access",
+            "hosting_review")
 TEXT = "\n".join(p.read_text() for p in sorted(ROOT.rglob("terraform/*.tf")))
 
 def block(kind, name):
@@ -32,5 +33,16 @@ def test_agent_gateway_has_no_protocol_type_and_keeps_what_operations_change():
 
 def test_outputs_are_published_for_the_python_side():
     for key in ("agent_gateway_id", "agent_gateway_arn", "agent_gateway_url", "tool_gateway_id", "tool_gateway_arn", "tool_gateway_url",
-                "engine_id", "engine_arn", "registry_id", "topic_arn", "tool_lambda_arn", "dev_role_arn"):
+                "engine_id", "engine_arn", "registry_id", "topic_arn", "tool_lambda_arn", "dev_role_arn", "bucket", "machine_arn"):
         assert f"/platform/{key}" in TEXT
+
+def test_the_review_gets_every_variable_its_code_reads():
+    hosting = (ROOT / "hosting_review" / "terraform" / "main.tf").read_text()
+    review = ROOT / "hosting_review"
+    lambdas = set(re.findall(r"env\[[\"'](\w+)[\"']\]", (review / "review_steps.py").read_text() + (review / "lambda_handler.py").read_text()))
+    assert lambdas and [k for k in sorted(lambdas) if not re.search(r"\b%s\s*=" % k, hosting)] == []      # Lambda environment
+    from platform_team.hosting_review.deploy_build import REQUIRED_ENV
+    per_run = {"AGENT", "CODE_KEY", "CODE_VERSION", "ROLE_ARN"}                     # from the state machine
+    project = set(REQUIRED_ENV) - per_run - {"AWS_REGION"}                           # AWS_REGION: CodeBuild sets it
+    deploy = block("aws_codebuild_project", "deploy")
+    assert [k for k in sorted(project) if not re.search(r'name\s*=\s*"%s"' % k, deploy)] == []            # CodeBuild environment

@@ -1,0 +1,98 @@
+{
+  "Comment": "Hosting review: Step Functions conducts, CodeBuild handles submitted code, Lambda grants",
+  "StartAt": "Read",
+  "States": {
+    "Read": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${fn_read}", "Payload.$": "$" },
+      "OutputPath": "$.Payload",
+      "TimeoutSeconds": 960,
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Next": "Scan"
+    },
+    "Scan": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+      "Parameters": {
+        "ProjectName": "${scan_project}",
+        "EnvironmentVariablesOverride": [
+          { "Name": "AGENT", "Value.$": "$.spec.name", "Type": "PLAINTEXT" },
+          { "Name": "CODE_KEY", "Value.$": "$.spec.code_key", "Type": "PLAINTEXT" },
+          { "Name": "CODE_VERSION", "Value.$": "$.spec.code_version", "Type": "PLAINTEXT" }
+        ]
+      },
+      "ResultSelector": { "buildId.$": "$.Build.Id", "status.$": "$.Build.BuildStatus" },
+      "ResultPath": "$.scan",
+      "TimeoutSeconds": 1200,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Next": "Grant"
+    },
+    "Grant": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${fn_grant}", "Payload.$": "$" },
+      "OutputPath": "$.Payload",
+      "TimeoutSeconds": 960,
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Next": "Deploy"
+    },
+    "Deploy": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::codebuild:startBuild.sync",
+      "Parameters": {
+        "ProjectName": "${deploy_project}",
+        "EnvironmentVariablesOverride": [
+          { "Name": "AGENT", "Value.$": "$.spec.name", "Type": "PLAINTEXT" },
+          { "Name": "CODE_KEY", "Value.$": "$.spec.code_key", "Type": "PLAINTEXT" },
+          { "Name": "CODE_VERSION", "Value.$": "$.spec.code_version", "Type": "PLAINTEXT" },
+          { "Name": "ROLE_ARN", "Value.$": "$.roleArn", "Type": "PLAINTEXT" }
+        ]
+      },
+      "ResultSelector": { "buildId.$": "$.Build.Id", "status.$": "$.Build.BuildStatus" },
+      "ResultPath": "$.deploy",
+      "TimeoutSeconds": 2100,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Next": "Entry"
+    },
+    "Entry": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${fn_entry}", "Payload.$": "$" },
+      "OutputPath": "$.Payload",
+      "TimeoutSeconds": 960,
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Next": "TestCall"
+    },
+    "TestCall": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${fn_testcall}", "Payload.$": "$" },
+      "OutputPath": "$.Payload",
+      "TimeoutSeconds": 960,
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "Next": "Approve"
+    },
+    "Approve": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": { "FunctionName": "${fn_approve}", "Payload.$": "$" },
+      "OutputPath": "$.Payload",
+      "TimeoutSeconds": 960,
+      "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Next": "Notify" }],
+      "End": true
+    },
+    "Notify": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": { "TopicArn": "${topic_arn}", "Subject": "Hosting review failed", "Message.$": "States.JsonToString($)" },
+      "Next": "Failed"
+    },
+    "Failed": { "Type": "Fail", "Error": "ReviewFailed", "Cause": "A step of the hosting review failed; the notification holds the error" }
+  }
+}

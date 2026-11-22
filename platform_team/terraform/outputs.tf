@@ -15,6 +15,8 @@ locals {
     "/${var.prefix}/platform/topic_arn"         = module.agent_monitoring.topic_arn
     "/${var.prefix}/platform/tool_lambda_arn"   = module.sample_tools.lambda_arn
     "/${var.prefix}/platform/dev_role_arn"      = module.dev_access.dev_role_arn
+    "/${var.prefix}/platform/bucket"            = module.hosting_review.bucket
+    "/${var.prefix}/platform/machine_arn"       = module.hosting_review.machine_arn
   }
 }
 

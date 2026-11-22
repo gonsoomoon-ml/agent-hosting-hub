@@ -10,6 +10,8 @@ locals {
   tool_schemas   = jsondecode(file("${local.build}/tool_schemas.json")) # TARGETS in sample_tools/tool_schema.py
   shared_read    = jsondecode(file("${local.build}/shared_read.json"))  # SHARED_READ in sample_tools/tool_schema.py
   dev_principals = length(var.dev_principals) > 0 ? var.dev_principals : ["arn:aws:iam::${data.aws_caller_identity.me.account_id}:root"]
+  # Every tool an application may name, as <Target>___<tool>: the tools of TARGETS, as the tool gateway's targets
+  catalog_tools = flatten([for target, tools in local.tool_schemas : [for t in tools : "${target}___${t.name}"]])
 }
 
 module "company_policy" {
@@ -56,4 +58,22 @@ module "dev_access" {
   tool_gateway_arn = module.tool_gateway.gateway_arn
   registry_arn     = module.agent_catalog.registry_arn
   shared_tool      = one(local.shared_read) # the Cedar template names one tool
+}
+
+module "hosting_review" {
+  source            = "../hosting_review/terraform"
+  prefix            = var.prefix
+  code_zip          = local.code_zip
+  model_id          = var.model_id
+  catalog_tools     = local.catalog_tools
+  agent_gateway_id  = module.agent_gateway.gateway_id
+  agent_gateway_arn = module.agent_gateway.gateway_arn
+  tool_gateway_arn  = module.tool_gateway.gateway_arn
+  tool_gateway_url  = module.tool_gateway.gateway_url
+  policy_engine_id  = module.company_policy.policy_engine_id
+  policy_engine_arn = module.company_policy.policy_engine_arn
+  registry_id       = module.agent_catalog.registry_id
+  registry_arn      = module.agent_catalog.registry_arn
+  topic_arn         = module.agent_monitoring.topic_arn
+  dev_role_name     = module.dev_access.dev_role_name
 }
