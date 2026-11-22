@@ -17,6 +17,7 @@ include = ["platform_team*"]
 
 [tool.setuptools.package-data]
 "platform_team.company_policy" = ["policy_templates/*.cedar"]
+"platform_team.hosting_review" = ["runtime_skeleton/*.tmpl"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

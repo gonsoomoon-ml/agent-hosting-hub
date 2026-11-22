@@ -2,7 +2,8 @@
 
     python -m platform_team.shared_code.code_package        # writes build/platform_team.zip and build/tool_schemas.json
 
-The zip holds the platform_team package (.py files and the Cedar templates) and the boto3 installed in this
+The zip holds the platform_team package (.py files, the Cedar templates, the deploy build's agentcore.json
+template) and the boto3 installed in this
 environment, copied file by file, so AWS runs the same boto3 version as the tests. Only the API models of the
 services the hub's clients use are kept. The zip is byte-for-byte the same for the same input, so Terraform
 sees no change when nothing changed.
@@ -18,7 +19,7 @@ from platform_team.sample_tools.tool_schema import SHARED_READ, TARGETS
 from platform_team.shared_code.aws_helpers import _SERVICES
 
 PACKAGE = Path(platform_team.__file__).parent
-CODE_SUFFIXES = {".py", ".cedar"}
+CODE_SUFFIXES = {".py", ".cedar", ".tmpl"}
 # boto3 and everything it imports (pure Python, so the zip runs on any Lambda architecture).
 BOTO3_DISTRIBUTIONS = ("boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "six", "urllib3")
 KEEP_MODELS = set(_SERVICES.values())

@@ -1,0 +1,25 @@
+{
+  "name": "${PROJECT}",
+  "version": 2,
+  "managedBy": "CDK",
+  "runtimes": [
+    {
+      "name": "agent",
+      "build": "CodeZip",
+      "entrypoint": "main.py",
+      "codeLocation": "app/agent",
+      "runtimeVersion": "PYTHON_3_13",
+      "executionRoleArn": "${ROLE_ARN}",
+      "instrumentation": {
+        "enableOtel": false
+      },
+      "envVars": [
+        {"name": "HUB_REGION", "value": "${HUB_REGION}"},
+        {"name": "TOOL_GATEWAY_URL", "value": "${TOOL_GATEWAY_URL}"},
+        {"name": "MODEL_ID", "value": "${MODEL_ID}"},
+        {"name": "AGENT_NAME", "value": "${AGENT_NAME}"}
+      ]
+    }
+  ],
+  "memories": []
+}
