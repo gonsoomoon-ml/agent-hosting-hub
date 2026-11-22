@@ -1,6 +1,6 @@
 # 에이전트 게이트웨이
 
-사용자가 호스팅된 에이전트를 부르는 문(`<prefix>-agents`)이다. 모든 요청에 전사 정책을 적용한다. protocol type이 없는 게이트웨이라서 Runtime target(HTTP)을 받는다. 에이전트마다 target이 하나 붙고, 그 target은 호스팅 심사가 API로 붙인다. 커스텀 가드레일(interceptor)도 운영 중에 API로 붙이므로 Terraform은 그 설정을 건드리지 않는다(`ignore_changes`).
+사용자가 호스팅된 에이전트를 부르는 문(`<prefix>-agents`)이다. 모든 요청에 전사 정책을 적용한다. protocol type이 없는 게이트웨이라서 Runtime target(HTTP)을 받는다. 에이전트마다 target이 하나 붙고, 그 target은 호스팅 심사가 API로 붙인다. 커스텀 가드레일(interceptor)도 운영 중에 API로 붙이므로(`guardrail.sh attach`, [커스텀 가드레일](../custom_guardrail/README.md)) Terraform은 그 설정을 건드리지 않는다(`ignore_changes`).
 
 ## 개념도에서의 위치
 

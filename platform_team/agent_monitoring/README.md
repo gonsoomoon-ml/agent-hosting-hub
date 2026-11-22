@@ -1,6 +1,6 @@
 # 모니터링
 
-허브의 알림이 모이는 곳이다. SNS 주제 `<prefix>-alerts`를 두고, 확인용 SQS 수신함 `<prefix>-alerts-inbox`가 그 주제를 구독한다. `alert_email`을 주면 메일도 구독한다. 지금은 알림 주제와 수신함만 있고, 알람은 아직 없다.
+허브의 알림이 모이는 곳이다. SNS 주제 `<prefix>-alerts`를 두고, 확인용 SQS 수신함 `<prefix>-alerts-inbox`가 그 주제를 구독한다. `alert_email`을 주면 메일도 구독한다. 이 모듈은 알림 주제와 수신함만 만든다. 이 주제로 알리는 알람은 지금 하나, 커스텀 가드레일의 interceptor 오류 알람(`<prefix>-guardrail-errors`)이고 [커스텀 가드레일](../custom_guardrail/README.md)의 Terraform이 만든다.
 
 ## 개념도에서의 위치
 

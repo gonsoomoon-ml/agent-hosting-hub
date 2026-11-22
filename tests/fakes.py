@@ -39,7 +39,8 @@ PLATFORM = Platform(
     tool_lambda_arn=f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:hub-tools",
     dev_role_arn=f"arn:aws:iam::{ACCOUNT}:role/hub-dev-role",
     bucket=f"hub-{ACCOUNT}-us-west-2",
-    machine_arn=f"arn:aws:states:us-west-2:{ACCOUNT}:stateMachine:hub-review")
+    machine_arn=f"arn:aws:states:us-west-2:{ACCOUNT}:stateMachine:hub-review",
+    interceptor_arn=f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:hub-guardrail")
 
 EVENT = {"detail": {"registryId": "reg-1", "registryRecordId": "rec-1"}}    # the Registry's event for the record SPEC
 STARTED = datetime.datetime(2026, 11, 22, 9, 0, tzinfo=datetime.timezone.utc)   # when the first running review started

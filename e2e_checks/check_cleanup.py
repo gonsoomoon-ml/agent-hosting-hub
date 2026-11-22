@@ -64,6 +64,7 @@ def kinds(s: Settings, c: Clients) -> dict:
                                + logs("/aws/bedrock-agentcore/runtimes/")),
         "log resource policies": lambda: [p["policyName"] for p in c.logs.describe_resource_policies()["resourcePolicies"]],
         "CloudWatch alarms": lambda: [a["AlarmName"] for a in _pages(c.cw, "describe_alarms", "MetricAlarms")],
+        "Bedrock guardrails": lambda: [g["name"] for g in _pages(c.bedrock, "list_guardrails", "guardrails")],
         "ECR repositories": lambda: [r["repositoryName"] for r in _pages(c.session.client("ecr"), "describe_repositories",
                                                                           "repositories")],
     }

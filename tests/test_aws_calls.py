@@ -582,3 +582,69 @@ def test_rejecting_a_new_version_calls_match_the_service_models(aws):
     assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
         "status": "REJECTED", "removed": [], "note": "entry_permit_quality_agent is there: an approved version is running, "
                                                      "or an approval that stopped left it; nothing was removed"}
+
+
+# ------------------------------------------------------------------ the custom guardrail
+
+GUARDRAIL_ID = "abcdefghij12"
+USAGE = {"topicPolicyUnits": 0, "contentPolicyUnits": 0, "wordPolicyUnits": 1, "sensitiveInformationPolicyUnits": 1,
+         "sensitiveInformationPolicyFreeUnits": 0, "contextualGroundingPolicyUnits": 0}
+
+
+@pytest.fixture
+def runtime(aws, monkeypatch):
+    """The interceptor's own bedrock-runtime client, made by its first use, answered by a Stubber."""
+    from platform_team.custom_guardrail import interceptor_lambda
+    monkeypatch.setenv("GUARDRAIL_ID", GUARDRAIL_ID)
+    monkeypatch.setenv("GUARDRAIL_VERSION", "1")
+    monkeypatch.setattr(interceptor_lambda, "_runtime", None)
+    c, _ = aws
+    monkeypatch.setattr("boto3.client", lambda service: c.session.client(service))       # the dummy keys and Region
+    st = Stubber(interceptor_lambda._client())
+    st.activate()
+    yield interceptor_lambda.guard, st
+    st.assert_no_pending_responses()
+    st.deactivate()
+
+
+def _applied(st, text, source, answer):
+    st.add_response("apply_guardrail", {"usage": USAGE, **answer}, {
+        "guardrailIdentifier": GUARDRAIL_ID, "guardrailVersion": "1", "source": source,
+        "content": [{"text": {"text": text}}]})
+
+
+def test_the_interceptors_guard_calls_match_the_service_model(runtime):
+    guard, st = runtime
+    banned = "Summarise the schedule of Project Falcon for part P-100."
+    _applied(st, banned, "INPUT", {"action": "GUARDRAIL_INTERVENED", "outputs": [{"text": "Blocked by the company guardrail."}],
+                                   "assessments": [{"wordPolicy": {"customWords": [
+                                       {"match": "Project Falcon", "action": "BLOCKED", "detected": True}],
+                                       "managedWordLists": []}}]})
+    assert guard(banned, "INPUT") == (True, banned)
+    with_id = "My employee id is EMP-123456."
+    _applied(st, with_id, "OUTPUT", {"action": "GUARDRAIL_INTERVENED", "outputs": [{"text": "My employee id is {employee_id}."}],
+                                     "assessments": [{"sensitiveInformationPolicy": {"regexes": [
+                                         {"name": "employee_id", "match": "EMP-123456", "regex": "EMP-\\d{6}",
+                                          "action": "ANONYMIZED", "detected": True}], "piiEntities": []}}]})
+    assert guard(with_id, "OUTPUT") == (False, "My employee id is {employee_id}.")
+    plain = "What is the spec of part P-100?"
+    _applied(st, plain, "INPUT", {"action": "NONE", "outputs": [], "assessments": [{}]})
+    assert guard(plain, "INPUT") == (False, plain)
+    assert guard("", "INPUT") == (False, "")                                   # nothing to check: no call
+
+
+def test_the_cleanup_check_lists_the_bedrock_guardrails_on_every_page(aws, monkeypatch):
+    from e2e_checks import check_cleanup
+    c, _ = aws
+    st = Stubber(c.bedrock)
+    st.activate()
+
+    def summary(name):
+        return {"id": f"{name[:4]}abcdefghij", "arn": f"arn:aws:bedrock:{REGION}:{ACCOUNT}:guardrail/abcdefghij",
+                "status": "READY", "name": name, "version": "DRAFT", "createdAt": NOW, "updatedAt": NOW}
+    st.add_response("list_guardrails", {"guardrails": [summary("other-team-guardrail")], "nextToken": "page-2"}, {})
+    st.add_response("list_guardrails", {"guardrails": [summary("hub-company-guardrail")]}, {"nextToken": "page-2"})
+    names = check_cleanup.kinds(S, c)["Bedrock guardrails"]()
+    assert [n for n in names if check_cleanup.hub_name(S, n)] == ["hub-company-guardrail"]
+    st.assert_no_pending_responses()
+    st.deactivate()
