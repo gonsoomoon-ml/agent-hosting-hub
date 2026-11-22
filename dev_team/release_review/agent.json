@@ -1,0 +1,7 @@
+{
+  "name": "release_review",
+  "team": "device",
+  "framework": "langgraph",
+  "description": "Checks a change description against the release rules and files a review request when a rule is broken.",
+  "tools": ["Release___file_review_request"]
+}
