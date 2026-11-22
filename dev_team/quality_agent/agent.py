@@ -5,7 +5,7 @@ import os
 from strands import Agent, tool
 from strands.models import BedrockModel
 
-from hub_tools import call_tool
+from hub_tools import call_tool, error_text
 
 SYSTEM_PROMPT = """You are a quality-analysis assistant. You answer questions about inspection results and part specifications.
 
@@ -69,5 +69,5 @@ def run(prompt: str) -> tuple[str, list]:
         agent = new_agent()
         result = agent(prompt)
     except Exception as e:      # missing setting, model access, throttling: told to the caller, not raised
-        return f"ERROR: {type(e).__name__}: {e}", []
+        return f"ERROR: {error_text(e)}", []
     return str(result).strip(), tools_called(agent.messages)

@@ -7,6 +7,8 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from hub_tools import error_text
+
 FILE_TOOL = "Release___file_review_request"
 
 # The release rules, in one place. The model judges a change against exactly these.
@@ -65,7 +67,7 @@ def build(call_tool, ask_model):
         try:
             text = ask_model(SYSTEM_PROMPT, state["prompt"])
         except Exception as e:      # a model failure must not look like "no violation"
-            return {"verdict": f"ERROR: the model could not check the rules: {type(e).__name__}: {e}"}
+            return {"verdict": f"ERROR: the model could not check the rules: {error_text(e)}"}
         kind, reason = _parse_verdict(text)
         if kind == "ok":
             return {"verdict": "OK"}

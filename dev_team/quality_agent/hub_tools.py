@@ -2,6 +2,7 @@
 No agent framework and no package beyond boto3. The Runtime sets TOOL_GATEWAY_URL and HUB_REGION."""
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -10,6 +11,14 @@ from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 
 SERVICE = "bedrock-agentcore"      # the name the gateway expects in the signature
+MAX_ERROR_TEXT = 300               # characters of an exception's message that reach the caller
+
+
+def error_text(e: Exception) -> str:
+    """An exception as the caller may see it: its type and a short message, with any 12-digit run (an account ID,
+    as in the role ARN of an AccessDenied) shown as <ACCOUNT>. The answer may end up on a screen."""
+    message = re.sub(r"(?<![0-9])[0-9]{12}(?![0-9])", "<ACCOUNT>", " ".join(str(e).split()))
+    return f"{type(e).__name__}: {message[:MAX_ERROR_TEXT]}"
 
 
 def _post(url: str, headers: dict, body: str) -> tuple[int, str]:
@@ -42,9 +51,13 @@ def parse_tool_response(text: str) -> str:
     if doc is None:
         return "ERROR: unexpected answer: " + text[:300]
     if doc.get("error"):
-        return "ERROR: " + str((doc["error"] or {}).get("message"))[:500]
+        error = doc["error"]          # an object with a message, as JSON-RPC says; anything else is shown as it is
+        return "ERROR: " + str(error.get("message") if isinstance(error, dict) else error)[:500]
     result = doc.get("result") or {}
-    out = " ".join(part.get("text", "") for part in result.get("content") or [])[:2000]
+    content = result.get("content") or [] if isinstance(result, dict) else None
+    if not isinstance(content, list) or not all(isinstance(part, dict) for part in content):
+        return "ERROR: unexpected answer: " + text[:300]
+    out = " ".join(str(part.get("text", "")) for part in content)[:2000]
     return ("ERROR: " + out) if result.get("isError") else out
 
 
@@ -66,7 +79,7 @@ def call_tool(tool_id: str, arguments: dict) -> str:
         SigV4Auth(credentials.get_frozen_credentials(), SERVICE, region).add_auth(request)
         status, text = _post(url, dict(request.headers), body)
     except Exception as e:      # network, timeout, signing: told to the agent, not raised inside it
-        return f"ERROR: could not reach the tool gateway: {type(e).__name__}: {e}"
+        return f"ERROR: could not reach the tool gateway: {error_text(e)}"
     answer = parse_tool_response(text)
     if status >= 400 and not answer.startswith("ERROR"):
         return f"ERROR: HTTP {status} {text[:300]}"

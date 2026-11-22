@@ -109,3 +109,39 @@ def test_the_result_wins_over_other_stream_events():
     ok = '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"M4"}]}}'
     stream = 'data: ' + ok + '\n\ndata: {"jsonrpc":"2.0","method":"notifications/progress","params":{}}\n'
     assert hub_tools.parse_tool_response(stream) == "M4"
+
+
+# ------------------------------------------------------------------ final review M-5: never raise, never show the account
+
+@pytest.mark.parametrize("error, shown", [('"Tool call not allowed"', "ERROR: Tool call not allowed"),
+                                          ('["denied", 3]', "ERROR: ['denied', 3]"), ("42", "ERROR: 42")])
+def test_a_json_rpc_error_that_is_not_an_object_is_an_error_text(error, shown):
+    assert hub_tools.parse_tool_response('{"jsonrpc":"2.0","id":1,"error":' + error + '}') == shown
+
+
+ARN_ERROR = ("An error occurred (AccessDeniedException) when calling the InvokeModel operation: User: "
+             "arn:aws:sts::111122223333:assumed-role/hub-agent-quality_agent-role/s is not authorized " + "x" * 1000)
+
+
+def test_an_exception_is_told_by_its_type_and_a_short_message_without_the_account():
+    text = hub_tools.error_text(RuntimeError(ARN_ERROR))
+    assert text.startswith("RuntimeError: An error occurred (AccessDeniedException)")
+    assert "111122223333" not in text and "arn:aws:sts::<ACCOUNT>:assumed-role" in text
+    assert len(text) <= len("RuntimeError: ") + hub_tools.MAX_ERROR_TEXT
+    assert hub_tools.error_text(ValueError("a\n  b")) == "ValueError: a b"
+
+
+def test_a_failed_call_does_not_show_the_account(monkeypatch):
+    _env(monkeypatch)
+
+    def denied(u, h, b):
+        raise OSError(ARN_ERROR)
+    monkeypatch.setattr(hub_tools, "_post", denied)
+    out = hub_tools.call_tool("x", {})
+    assert out.startswith("ERROR: could not reach the tool gateway: OSError: ") and "111122223333" not in out
+
+
+@pytest.mark.parametrize("result", ['"done"', '["a"]', '{"content": "a"}', '{"content": ["a", 3]}'])
+def test_a_result_of_another_shape_is_an_error_text_too(result):          # call_tool must not raise on any answer
+    text = '{"jsonrpc":"2.0","id":1,"result":' + result + '}'
+    assert hub_tools.parse_tool_response(text) == "ERROR: unexpected answer: " + text

@@ -8,7 +8,7 @@
 |---|---|
 | `agent.py` | 팀이 쓴다(이 폴더에는 없다). `run(prompt) -> (answer, tools_used)` 함수 하나를 만든다. |
 | `main.py` | Runtime의 진입점이다. 요청을 받아 `agent.run`을 부르고 답을 돌려준다. 고치지 않는다. |
-| `hub_tools.py` | 허브의 공유 도구를 부르는 `call_tool(tool_id, arguments)`다. 도구 게이트웨이에 서명한 요청을 보내고, 도구가 답한 text를 돌려준다. 게이트웨이가 거부하면 `ERROR: ...`로 돌려준다. |
+| `hub_tools.py` | 허브의 공유 도구를 부르는 `call_tool(tool_id, arguments)`다. 도구 게이트웨이에 서명한 요청을 보내고, 도구가 답한 text를 돌려준다. 게이트웨이가 거부하거나 호출이 실패하면 예외를 내지 않고 `ERROR: ...`로 돌려준다. 예외는 종류와 짧은 메시지(300자까지)로만 알리고, 그 안의 12자리 숫자(역할 ARN의 계정 ID 같은 것)는 `<ACCOUNT>`로 가린다(`error_text`). 에이전트의 답에 실려 화면에 나갈 수 있기 때문이다. |
 | `agent.json` | 신청서다. 이름, 팀, 프레임워크, 쓸 도구의 목록이 들어 있다. |
 | `requirements.txt` | 에이전트가 쓰는 패키지다. 아래 규칙을 지켜야 한다. |
 | `publish.sh` | 코드를 올리고 승인을 요청하는 명령이다. |

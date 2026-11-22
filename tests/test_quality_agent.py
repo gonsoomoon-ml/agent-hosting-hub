@@ -137,3 +137,15 @@ def test_each_run_starts_a_fresh_conversation(load_agent, monkeypatch):
     monkeypatch.setattr(agent, "_get_model", lambda: next(models))
     assert agent.run("one")[1] == ["Parts___get_part_spec"]
     assert agent.run("two") == ("b", [])
+
+
+def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkeypatch):    # final review M-5
+    agent = load_agent("quality_agent")
+
+    def denied():
+        raise RuntimeError("User: arn:aws:sts::111122223333:assumed-role/hub-agent-quality_agent-role/s is not "
+                           "authorized to perform: bedrock:InvokeModel " + "x" * 1000)
+    monkeypatch.setattr(agent, "new_agent", denied)
+    answer, used = agent.run("Did Q-1001 pass?")
+    assert answer.startswith("ERROR: RuntimeError: User: arn:aws:sts::<ACCOUNT>:assumed-role/") and used == []
+    assert "111122223333" not in answer and len(answer) < 400

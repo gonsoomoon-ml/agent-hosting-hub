@@ -45,6 +45,16 @@ def test_a_model_failure_is_an_error_not_a_silent_pass(load_agent):
     assert out["answer"].startswith("ERROR") and "throttled" in out["answer"] and calls == []
 
 
+def test_a_model_error_reaches_the_caller_without_the_account(load_agent):      # final review M-5
+    def denied(system, user):
+        raise RuntimeError("User: arn:aws:sts::111122223333:assumed-role/hub-agent-release_review-role/s is not "
+                           "authorized to perform: bedrock:InvokeModel " + "x" * 1000)
+    g = load_agent("release_review", "graph").build(call_tool=lambda t, a: "{}", ask_model=denied)
+    answer = g.invoke({"prompt": "Change C-9 skips tests."})["answer"]
+    assert answer.startswith("ERROR: the model could not check the rules: RuntimeError: User: arn:aws:sts::<ACCOUNT>:")
+    assert "111122223333" not in answer and len(answer) < 400
+
+
 def test_agent_imports_without_aws_or_environment(load_agent, monkeypatch):
     for name in ("HUB_REGION", "TOOL_GATEWAY_URL", "MODEL_ID", "AGENT_NAME"):
         monkeypatch.delenv(name, raising=False)
