@@ -37,6 +37,7 @@ seed:
 # boundary policy from being deleted, and a registry with records cannot be deleted: they all go first, the agents
 # before the seed. If removing the agents fails, terraform destroy does not run.
 # So the question comes before anything changes: the destroy plan, then yes or no. AUTO_APPROVE=1 skips it.
+# Last, check_cleanup lists what of the hub is still in the account (it reads only) and ends with `still present: ...`.
 destroy: package
 ifneq ($(AUTO_APPROVE),1)
 	$(TF) plan -destroy
@@ -46,9 +47,12 @@ endif
 	@$(CLEAN) || { echo "Destroy stopped before terraform destroy: the agents were not all removed (see the line above). Fix that and run make destroy again."; exit 1; }
 	$(SEED) --remove
 	$(TF) destroy -auto-approve
+	uv run python e2e_checks/check_cleanup.py
 
 publish:
 	dev_team/agent_template/publish.sh dev_team/$(AGENT)
 
+# Flow 1 (hosting) from end to end on the deployed hub: 16 minutes, 26 when it first removes two approved agents.
+# The log goes to e2e_checks/last-run.log (not committed: *.log).
 e2e:
-	uv run pytest e2e_checks -q
+	bash -o pipefail -c 'uv run python e2e_checks/e2e_hosting.py 2>&1 | tee e2e_checks/last-run.log'

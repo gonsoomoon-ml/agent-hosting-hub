@@ -57,6 +57,10 @@ Grant의 역할은 IAM 역할을 만들고 그 inline 정책을 쓸 수 있다. 
 
 운영 환경이라면 CDK를 전용 qualifier로 다시 bootstrap하고, 실행 역할에는 Runtime 스택에 필요한 권한만 담은 실행 정책(`--cloudformation-execution-policies`)을 준다. 배포 역할은 그 qualifier의 역할만 맡게 한다.
 
+## 알려진 한계: 시험 호출
+
+TestCall은 HTTP 상태만 본다. 보통 질문(`What is the spec of part P-100?`)에 200이 오고 예시 access key가 든 질문이 403이면 통과다. 답의 내용은 보지 않는다. 2026-11-22의 실행에서 `release_review`는 이 질문이 변경 설명이 아니어서 `ERROR: unexpected model answer: ...`를 200으로 돌려줬고, 심사는 통과했다. 그래서 이 단계가 보여 주는 것은 Runtime이 뜨고, 게이트웨이와 정책을 지나 답이 오고, 비밀값이 진입에서 막힌다는 것까지다. 에이전트가 제대로 일하는지는 보지 않는다.
+
 ## 반려
 
 심사가 실패하면 state machine은 실패한 단계에서 멈추고 알림을 보낸다. record는 `PENDING_APPROVAL`에 남고, 앞 단계가 만든 것도 남는다. Grant의 실행 역할과 도구 정책, Deploy의 Runtime, Entry의 target과 정책이다. 플랫폼팀은 알림을 읽고 사유를 적어 반려한다. 반려는 record를 `REJECTED`로 바꾸고 남은 것을 지운다.
