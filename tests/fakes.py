@@ -60,7 +60,8 @@ class _Ctl(_Client):
     or shows CREATING / UPDATING to the next runtime_ready_after looks (inf: for ever); runtime_status other than
     READY is where it ends instead (with runtime_failure as its failureReason). runtime_create_errors are raised by
     create_agent_runtime, in turn, before it works. A deleted Runtime is gone at once, or shows DELETING to the next
-    runtime_delete_polls looks, or ends DELETE_FAILED with runtime_delete_failure."""
+    runtime_delete_polls looks (with runtime_delete_keeps_status: the status it had before the delete), or ends
+    DELETE_FAILED with runtime_delete_failure. workload_identities: the names list_workload_identities gives."""
 
     def list_policies(self, **kw):
         return {"policies": [{"policyId": p["id"], "name": n, "definition": {p["kind"]: {"statement": p["statement"]}}}
@@ -148,7 +149,7 @@ class _Ctl(_Client):
         self.o.runtime_gets += 1
         name, rt = self._runtime_by_id(agentRuntimeId, "GetAgentRuntime")
         rt["gets"] += 1
-        if rt["status"] == "DELETING" and rt["gets"] > self.o.runtime_delete_polls:
+        if rt.get("deleting") and rt["gets"] > self.o.runtime_delete_polls:
             del self.o.runtimes[name]
             raise _client_error("ResourceNotFoundException", f"no Runtime {agentRuntimeId}", "GetAgentRuntime")
         if rt["status"] in ("CREATING", "UPDATING") and rt["gets"] > self.o.runtime_ready_after:
@@ -164,10 +165,13 @@ class _Ctl(_Client):
         if self.o.runtime_delete_failure:
             rt.update(status="DELETE_FAILED", failure=self.o.runtime_delete_failure)
         elif self.o.runtime_delete_polls:
-            rt.update(status="DELETING", gets=0)
+            rt.update(deleting=True, gets=0, **({} if self.o.runtime_delete_keeps_status else {"status": "DELETING"}))
         else:
             del self.o.runtimes[name]
         return {"agentRuntimeId": agentRuntimeId, "status": "DELETING"}
+
+    def list_workload_identities(self, **kw):
+        return {"workloadIdentities": [{"name": n} for n in self.o.workload_identities]}
 
 
 class _Iam(_Client):
@@ -343,7 +347,7 @@ class FakeClients:
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, record_name=None,
                  record_type="AGENT", runtime_status="READY", runtime_failure=None, runtime_ready_after=0,
-                 runtime_delete_failure=None, runtime_delete_polls=0):
+                 runtime_delete_failure=None, runtime_delete_polls=0, runtime_delete_keeps_status=False):
         self.record_spec = SPEC if record_spec is None else record_spec
         self.record_name, self.record_type = record_name, record_type
         self.record_status, self.status_reason = record_status, None
@@ -359,7 +363,8 @@ class FakeClients:
         self.runtimes, self.runtime_calls, self.runtime_gets, self.runtime_create_tries = {}, [], 0, 0
         self.runtime_status, self.runtime_failure, self.runtime_ready_after = runtime_status, runtime_failure, runtime_ready_after
         self.runtime_delete_failure, self.runtime_delete_polls = runtime_delete_failure, runtime_delete_polls
-        self.runtime_create_errors = []
+        self.runtime_delete_keeps_status, self.runtime_create_errors, self.workload_identities = \
+            runtime_delete_keeps_status, [], []
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
         self.running = []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)

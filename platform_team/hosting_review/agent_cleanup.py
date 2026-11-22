@@ -212,13 +212,19 @@ def _remove_target(c, s: Settings, p: Platform, agent: str) -> list[str]:
 
 
 def _runtime_status(c, rid: str) -> dict:
+    """The deleted Runtime's status as the wait reads it: GONE when it is not found. Only DELETE_FAILED means the
+    delete failed; a Runtime a failed deploy left CREATE_FAILED or UPDATE_FAILED may still show that status, which
+    reads as still deleting."""
     try:
         r = c.ctl.get_agent_runtime(agentRuntimeId=rid)
     except ClientError as e:
         if _code(e) == "ResourceNotFoundException":
             return {"status": "GONE"}
         raise
-    return {"status": r["status"], "statusReason": r.get("failureReason")}
+    status = r["status"]
+    if status.endswith("FAILED") and status != "DELETE_FAILED":
+        status = f"{status}, deleting"
+    return {"status": status, "statusReason": r.get("failureReason")}
 
 
 def _remove_runtime(c, s: Settings, agent: str) -> list[str]:

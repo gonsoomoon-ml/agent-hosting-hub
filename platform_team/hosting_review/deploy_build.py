@@ -45,8 +45,9 @@ RUNTIME_PLATFORM, RUNTIME_PYTHON, RUNTIME_VERSION = "aarch64-manylinux2014", "3.
 ENTRY_POINT = "main.py"
 CREATE_TRIES, CREATE_STEP = 8, 15      # the execution role Grant made a moment ago may not be usable yet
 READY_WAIT, READY_STEP = 900, 10       # s, until the new Runtime version is READY
-# An AccessDeniedException whose message says this: the deploy role itself lacks the action. Trying again won't help.
-OWN_ROLE_DENIED = "is not authorized to perform: bedrock-agentcore:"
+# An AccessDeniedException whose message holds one of these: the deploy role itself lacks the action (an AgentCore
+# action, or passing the execution role). Trying again won't help.
+OWN_ROLE_DENIED = ("is not authorized to perform: bedrock-agentcore:", "is not authorized to perform: iam:PassRole")
 
 
 # ================================================================== pure parts
@@ -91,8 +92,8 @@ def install_command(requirements: Path, target: Path) -> list[str]:
 
 def package(src: Path, site: Path, out: Path) -> int:
     """Zip the Runtime's code: every file under `site` (what uv installed) and the submission's top-level .py files,
-    names in sorted order, no __pycache__. A submitted .py file replaces an installed file of the same name (as the
-    copy into one folder did in the run that passed). Returns the zip's size in bytes."""
+    names in sorted order, no __pycache__. A submitted .py file replaces an installed file of the same name.
+    Returns the zip's size in bytes."""
     site, src, out = Path(site), Path(src), Path(out)
     files = {f.relative_to(site).as_posix(): f for f in site.rglob("*")
              if f.is_file() and "__pycache__" not in f.relative_to(site).parts}
@@ -128,13 +129,13 @@ def say(msg: str) -> None:
 def _create(c, name: str, config: dict) -> dict:
     """create_agent_runtime, tried again (CREATE_TRIES, CREATE_STEP apart) while the new execution role settles: the
     service answers ValidationException or AccessDeniedException until it can use the role. A denial of this step's
-    own role (OWN_ROLE_DENIED) and any other error raise at once."""
+    own role (a message with one of OWN_ROLE_DENIED) and any other error raise at once."""
     for attempt in range(CREATE_TRIES):
         try:
             return c.ctl.create_agent_runtime(agentRuntimeName=name, **config)
         except ClientError as e:
             err = e.response["Error"]
-            own = OWN_ROLE_DENIED in err.get("Message", "")
+            own = any(text in err.get("Message", "") for text in OWN_ROLE_DENIED)
             if attempt == CREATE_TRIES - 1 or own or err["Code"] not in ("ValidationException", "AccessDeniedException"):
                 raise
             say(f"create_agent_runtime: {err['Code']}: {err.get('Message', '')[:160]} (try {attempt + 1} of "

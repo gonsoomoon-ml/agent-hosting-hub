@@ -572,7 +572,15 @@ def scene_quality(c: Clients, s: Settings, p: Platform, dev: DevTeam, inbox: Ale
 
 def observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None:
     """Observation B: what a deploy leaves for one agent: its Runtime (ID, version, status), the workload identities
-    and log groups named after the Runtime, and its code packages in the inbox."""
+    and log groups named after the Runtime, and its code packages in the inbox. It only observes: an error is one
+    more [INFO] line, and the checks' summary and exit code stay as they are."""
+    try:
+        _observe_leftovers(c, s, p, agent)
+    except Exception as e:
+        info("observation B stopped", error_of(e))
+
+
+def _observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None:
     name = s.runtime_name(agent)
     runtime = next((r for r in all_items(c.ctl.list_agent_runtimes, maxResults=100) if r["agentRuntimeName"] == name),
                    None)

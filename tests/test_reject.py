@@ -315,10 +315,29 @@ def test_a_runtime_that_is_deleting_already_is_waited_on_and_not_deleted_again(c
 def test_a_runtime_still_deleting_after_the_wait_stops_the_run(clock):
     c = FakeClients(existing_roles={ROLE}, runtime_delete_polls=float("inf"))
     _deploy(c, "quality_agent")
+    t0 = clock["t"]
     with pytest.raises(CleanupFailed, match=f"removing the Runtime failed .TimeoutError: Runtime {RUNTIME} not .* "
                                             f"within {agent_cleanup.RUNTIME_WAIT}s"):
         remove_agent(c, Settings(), PLATFORM, "quality_agent")
     assert ROLE in c.existing_roles and "packages/quality_agent/v1.zip" in c.objects
+    assert clock["t"] - t0 >= agent_cleanup.RUNTIME_WAIT                       # it waited the whole time
+
+
+@pytest.mark.parametrize("failed, deploys", [("CREATE_FAILED", 1), ("UPDATE_FAILED", 2)])
+def test_a_runtime_a_failed_deploy_left_is_removed_though_it_shows_its_failure_while_deleting(clock, failed, deploys):
+    """Only DELETE_FAILED means the delete failed: a Runtime left CREATE_FAILED or UPDATE_FAILED may show that
+    status for a while after DeleteAgentRuntime."""
+    c = FakeClients(runtime_failure="the code package could not be read", runtime_delete_polls=2,
+                    runtime_delete_keeps_status=True)
+    for n in range(deploys):
+        c.runtime_status = failed if n == deploys - 1 else "READY"
+        try:
+            _deploy(c, "quality_agent", f"v{n + 1}")
+        except RuntimeError:
+            pass                                                       # the failed deploy stops the build
+    assert c.runtimes[RUNTIME]["status"] == failed
+    assert f"Runtime {RUNTIME}" in remove_agent(c, Settings(), PLATFORM, "quality_agent")
+    assert c.runtimes == {}
 
 
 # ------------------------------------------------------------------ the commands

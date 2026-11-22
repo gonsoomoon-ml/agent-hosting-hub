@@ -90,10 +90,45 @@ def test_check_9_finds_a_runtime_on_a_later_page():
     assert e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent") == {"Runtime": ["hub_quality_agent"]}
 
 
+def _observed(capsys, c):
+    from tests.fakes import PLATFORM
+    capsys.readouterr()                                  # what the fake review printed before
+    before = e2e.OBSERVED[0]
+    e2e.observe_leftovers(c, Settings(), PLATFORM, "quality_agent")
+    return e2e.OBSERVED[0] - before, capsys.readouterr().out.splitlines()
+
+
+def test_observation_b_names_the_runtime_its_workload_identity_log_groups_and_packages(capsys):
+    from tests.fakes import SPEC, FakeClients
+    from tests.test_reject import _review
+    c = FakeClients()
+    _review(c, SPEC)
+    c.workload_identities = ["hub_quality_agent-abcdefghij", "other_team_runtime-abcdefghij"]
+    n, lines = _observed(capsys, c)
+    assert n == 4 and lines == [
+        "[INFO] Runtime hub_quality_agent: hub_quality_agent-Ab12Cd34Ef version 1 READY",
+        "[INFO] workload identities named after hub_quality_agent: ['hub_quality_agent-abcdefghij']",
+        "[INFO] log groups of hub_quality_agent: ['/aws/bedrock-agentcore/runtimes/hub_quality_agent-Ab12Cd34Ef-DEFAULT']",
+        "[INFO] code packages of quality_agent in the inbox: ['packages/quality_agent/v1.zip (0 bytes)']"]
+
+
+def test_observation_b_reports_an_error_as_an_observation_and_does_not_raise(capsys):
+    from botocore.exceptions import ClientError
+    from tests.fakes import FakeClients
+    c = FakeClients()
+
+    def denied(**kw):
+        raise ClientError({"Error": {"Code": "AccessDeniedException", "Message": "not allowed"}}, "ListWorkloadIdentities")
+    c.ctl.list_workload_identities = denied
+    n, lines = _observed(capsys, c)
+    assert lines[0] == "[INFO] Runtime hub_quality_agent: none"
+    assert lines[1] == "[INFO] observation B stopped: AccessDeniedException: not allowed" and n == 2
+
+
 def test_check_9_sees_every_kind_a_passed_review_makes():
     from tests.fakes import PLATFORM, SPEC, FakeClients
     from tests.test_reject import _review
     c = FakeClients()
     _review(c, SPEC)                                 # what a passed review leaves for quality_agent
-    assert sorted(e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent")) == list(e2e.MADE_BY_A_REVIEW)
+    assert sorted(e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent")) == sorted(e2e.MADE_BY_A_REVIEW)
     assert e2e.nothing_made(c, Settings(), PLATFORM, "release_review") == {}

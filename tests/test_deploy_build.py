@@ -168,6 +168,15 @@ def test_create_is_not_tried_again_when_this_steps_own_role_lacks_a_permission()
         deploy(c, ENV, "packages/quality_agent/v1.zip")
     assert c.runtime_create_tries == 1
 
+def test_create_is_not_tried_again_when_this_steps_own_role_cannot_pass_the_execution_role():
+    c = FakeClients()
+    own = ("User: arn:aws:sts::123456789012:assumed-role/hub-review-deploy-role/x is not authorized to perform: "
+           "iam:PassRole on resource: arn:aws:iam::123456789012:role/hub-agent-quality_agent-role")
+    c.runtime_create_errors = [_error("AccessDeniedException", own)]
+    with pytest.raises(ClientError, match="is not authorized to perform: iam:PassRole"):
+        deploy(c, ENV, "packages/quality_agent/v1.zip")
+    assert c.runtime_create_tries == 1
+
 def test_create_stops_after_eight_tries():
     c = FakeClients()
     c.runtime_create_errors = [_error("ValidationException", "Role validation failed")] * 9

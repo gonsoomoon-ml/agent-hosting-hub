@@ -79,11 +79,13 @@ def _statement(doc, sid):
     return found
 
 
-def test_the_deploy_role_reaches_the_hubs_runtimes_and_packages_only():
+def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list():
     doc = document("deploy")
     runtime = _statement(doc, "TheAgentsRuntime")
-    assert re.search(r'resources\s*=\s*\["\$\{local\.agentcore\}:runtime/\$\{var\.prefix\}_\*", '
-                     r'"\$\{local\.agentcore\}:workload-identity-directory/\*"\]', runtime)
+    resources = re.search(r"resources\s*=\s*\[(.*?)\]", runtime, re.S).group(1)
+    assert re.findall(r'"([^"]+)"', resources) == [      # the Runtimes and their workload identities, by the prefix
+        "${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/default",
+        "${local.agentcore}:workload-identity-directory/default/workload-identity/${var.prefix}_*"]
     assert "ListAgentRuntimes" not in runtime
     find = _statement(doc, "FindTheRuntime")                  # the only statement on "*": a list that reads names
     assert actions(find) == ["bedrock-agentcore:ListAgentRuntimes"] and re.search(r'resources\s*=\s*\["\*"\]', find)

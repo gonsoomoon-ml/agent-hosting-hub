@@ -1,10 +1,12 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
 # found by running. The steps that handle submitted code (scan, deploy) can read the submission and hold no action
-# that grants. Scan only reads. Deploy can create and update the hub's Runtimes and pass them an agent role that
-# Grant made; it cannot make a role, a policy, a gateway target or an approval. Its one limit: one deploy role serves
-# every review, so code that runs in the deploy build could change another agent's Runtime or pass it another
-# agent's role (every agent role stays under the agent boundary) (hosting_review/README.md, the known limit).
+# that grants. Scan only reads. Deploy can create and update the hub's Runtimes and pass them a role named
+# <prefix>-agent-*-role; it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
+# name only under the agent boundary (its role's iam:PermissionsBoundary condition); a role of that name made outside
+# the hub would not be bounded, and making one takes IAM rights that none of the review's roles hold. Its one limit:
+# one deploy role serves every review, so code that runs in the deploy build could change another agent's Runtime or
+# pass it another agent's role (hosting_review/README.md, the known limit).
 # The steps that grant (Lambda) never open the submitted code.
 
 locals {
@@ -195,7 +197,8 @@ resource "aws_iam_policy" "agent_boundary" {
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
 # The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
-# reaches the Runtimes whose names start with <prefix>_ and passes only the agent roles, to AgentCore only.
+# reaches the Runtimes whose names start with <prefix>_ and their workload identities, and passes only roles named
+# <prefix>-agent-*-role, to AgentCore only.
 
 data "aws_iam_policy_document" "deploy" {
   statement {
@@ -214,16 +217,17 @@ data "aws_iam_policy_document" "deploy" {
     resources = [local.hub_code]
   }
   statement {
-    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject as in the run that passed (its agent role had no S3 action)
+    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). Not run yet with this code
     actions   = ["s3:PutObject", "s3:GetObject"]
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid = "TheAgentsRuntime" # create or update <prefix>_<agent> and wait until READY; the endpoint actions were found by running
+    sid = "TheAgentsRuntime" # create or update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Not run yet with this code
     actions = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
     "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity"]
-    resources = ["${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/*"]
+    resources = ["${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/default",
+    "${local.agentcore}:workload-identity-directory/default/workload-identity/${var.prefix}_*"]
   }
   statement {
     sid       = "FindTheRuntime" # list_agent_runtimes, every page, to find <prefix>_<agent> by name. It reads names, IDs and status only. The Service Authorization Reference gives the action no resource type, so only "*" matches it (not checked by running)
@@ -231,7 +235,7 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["*"]
   }
   statement {
-    sid       = "PassAgentRole" # roleArn of the Runtime: an execution role Grant made, handed to AgentCore only
+    sid       = "PassAgentRole" # roleArn of the Runtime: any role named <prefix>-agent-*-role (Grant makes them under the boundary), to AgentCore only
     actions   = ["iam:PassRole"]
     resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]
     condition {
