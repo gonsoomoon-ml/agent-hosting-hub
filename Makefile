@@ -43,7 +43,7 @@ endif
 	$(TF) destroy -auto-approve
 
 publish:
-	uv run python -m dev_team.publish $(AGENT)
+	dev_team/agent_template/publish.sh dev_team/$(AGENT)
 
 e2e:
 	uv run pytest e2e_checks -q
