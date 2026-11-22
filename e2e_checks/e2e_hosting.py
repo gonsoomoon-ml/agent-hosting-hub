@@ -23,8 +23,10 @@ then `== N checks passed, M failed, K observations`. Exit code 1 if a check fail
 The dev team's steps run as the dev team role (<prefix>-dev-role), the platform team's (reject.sh) and the user's
 calls with the credentials of the shell. publish.sh and reject.sh are the repo's own commands.
 Before the checks, the two agents are brought back to a known state with the repo's own cleanup (remove_agent, then
-the agent's catalog record), so the script can start again after a failed run; it refuses to start while a review
-is still running. Alerts are read through a temporary SQS queue <prefix>-e2e-alerts subscribed to the alert topic;
+the agent's catalog record), so the script can start again after a failed run. A review still running (the one make
+seed starts for the shared tool record, which ends within seconds) is waited for, up to RUNNING_WAIT seconds; the
+script refuses to start while one still runs after that.
+Alerts are read through a temporary SQS queue <prefix>-e2e-alerts subscribed to the alert topic;
 the queue and the subscription are removed at the end, also when a check fails. Everything this script makes or
 changes has a name that starts with the hub's prefix, or lives in the hub's catalog and policy engine.
 Printed output masks the account ID.
@@ -76,6 +78,8 @@ REVIEW_WAIT = 2700       # s, one review (the deploy build alone may take up to 
 ALERT_WAIT = 180         # s, after the review stopped
 SEARCH_WAIT = 180        # s, the search index follows an approval
 COMMAND_WAIT = 900       # s, publish.sh or reject.sh
+RUNNING_WAIT = 60        # s, check 0: how long the start waits for a review still running to end
+RUNNING_STEP = 5         # s, between two looks
 MADE_BY_A_REVIEW = ("Runtime", "policies", "role", "target")      # the kinds check 9 looks for, after Scan
 
 RESULTS: list[tuple[int, str, bool]] = []
@@ -598,6 +602,32 @@ def _observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None
 
 # ================================================================== main
 
+def no_review_running(sfn, machine_arn: str, say, sleep, clock, wait: float = RUNNING_WAIT,
+                      step: float = RUNNING_STEP) -> bool:
+    """Check 0: no review of the machine is RUNNING, so the cleanup that follows cannot race a review's steps. A review
+    still running is waited for: look, and while one runs, sleep `step` seconds and look again, up to `wait` seconds.
+    When none runs any more, say in one line how long it waited and for which executions, and return True. One still
+    running after `wait` fails the check (the [FAIL] line) and returns False.
+
+    The review make seed starts for the shared tool record is the usual one (it runs about 2 s). A review that starts
+    just after the last look, because its event had not arrived yet, is not seen by any wait. For the seed's review that
+    is harmless: it goes Read, Reviewable, Skipped and reads the shared tool record only, so it touches nothing the
+    cleanup or the checks touch."""
+    t0, waited = clock(), []
+    while True:
+        running = [e["name"] for e in sfn.list_executions(stateMachineArn=machine_arn, statusFilter="RUNNING")["executions"]]
+        if not running:
+            if waited:
+                say(f"waited {clock() - t0:.0f}s for the reviews still running to end: {waited}")
+            return True
+        waited += [name for name in running if name not in waited]
+        if clock() - t0 >= wait:
+            say(f"[FAIL] 0 no review is running: {running} still running. Cleaning up now would race its steps: "
+                "wait until it stops (Step Functions console), then start again")
+            return False
+        sleep(step)
+
+
 def main() -> int:
     global ACCOUNT
     # .env by the rule make and the two commands follow (README, ".env"); the commands this script runs inherit the
@@ -611,10 +641,7 @@ def main() -> int:
     if not (p.machine_arn and p.bucket and p.registry_id and p.agent_gw.get("id") and p.dev_role_arn):
         say("[FAIL] 0 the hub is deployed: run `make deploy seed` first")
         return 1
-    running = [e["name"] for e in c.sfn.list_executions(stateMachineArn=p.machine_arn, statusFilter="RUNNING")["executions"]]
-    if running:
-        say(f"[FAIL] 0 no review is running: {running} still running. Cleaning up now would race its steps: "
-            "wait until it stops (Step Functions console), then start again")
+    if not no_review_running(c.sfn, p.machine_arn, say, time.sleep, time.monotonic):
         return 1
     t0 = time.monotonic()
     known_state(c, s, p)

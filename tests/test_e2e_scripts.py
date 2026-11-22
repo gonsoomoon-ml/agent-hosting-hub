@@ -137,6 +137,59 @@ def test_check_9_sees_every_kind_a_passed_review_makes():
     assert e2e.nothing_made(c, Settings(), PLATFORM, "release_review") == {}
 
 
+# ------------------------------------------------------------------ check 0: a review still running is waited for
+
+class _Clock:
+    """Fake time for the start guard: sleep moves the clock and records the wait; after_sleep runs after each."""
+    def __init__(self, after_sleep=lambda: None):
+        self.t, self.sleeps, self.after_sleep = 1000.0, [], after_sleep
+    def now(self):
+        return self.t
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.t += seconds
+        self.after_sleep()
+
+
+def test_the_start_guard_goes_on_at_once_when_no_review_runs():
+    from tests.fakes import PLATFORM, FakeClients
+    c, clock, said = FakeClients(), _Clock(), []
+    assert e2e.no_review_running(c.sfn, PLATFORM.machine_arn, said.append, clock.sleep, clock.now) is True
+    assert clock.sleeps == [] and said == []
+
+
+def test_the_start_guard_waits_for_a_review_that_ends_and_says_so():
+    # the review make seed starts for the shared tool record ends in Skipped within seconds (2026-11-22: 1.7 s)
+    from tests.fakes import PLATFORM, FakeClients
+    c = FakeClients()
+    c.running = [("seed-review", "rec-9")]
+    clock = _Clock(after_sleep=c.running.clear)                      # gone at the second look
+    said = []
+    assert e2e.no_review_running(c.sfn, PLATFORM.machine_arn, said.append, clock.sleep, clock.now) is True
+    assert clock.sleeps == [e2e.RUNNING_STEP] and len(said) == 1
+    assert "waited" in said[0] and "seed-review" in said[0] and "[FAIL]" not in said[0]
+
+
+def test_the_start_guard_fails_after_the_bound_and_the_cleanup_does_not_run(monkeypatch, capsys):
+    from tests.fakes import PLATFORM, FakeClients
+    c = FakeClients()
+    c.running = [("long-review", "rec-9")]                           # never ends
+    c.account = "123456789012"
+    clock = _Clock()
+    monkeypatch.setattr(e2e, "ACCOUNT", "")
+    monkeypatch.setattr(e2e, "env_file_updates", lambda env, path: {})
+    monkeypatch.setattr(e2e.Clients, "for_settings", lambda s: c)
+    monkeypatch.setattr(e2e, "load", lambda s, clients: PLATFORM)
+    monkeypatch.setattr(e2e, "known_state", lambda *a: pytest.fail("the cleanup ran while a review was running"))
+    monkeypatch.setattr("time.sleep", clock.sleep)
+    monkeypatch.setattr("time.monotonic", clock.now)
+    assert e2e.main() == 1
+    out = capsys.readouterr().out.splitlines()
+    assert out[-1] == ("[FAIL] 0 no review is running: ['long-review'] still running. Cleaning up now would race its "
+                       "steps: wait until it stops (Step Functions console), then start again")
+    assert sum(clock.sleeps) == e2e.RUNNING_WAIT == 60 and set(clock.sleeps) == {e2e.RUNNING_STEP}
+
+
 @pytest.mark.parametrize("script", ["check_platform.py", "check_cleanup.py"])
 def test_a_check_script_reads_the_env_file_before_it_builds_its_settings(script):
     """Each calls os.environ.update(env_file_updates(os.environ, REPO / ".env")) before Settings.from_env(), as e2e_hosting.py does."""
