@@ -644,11 +644,12 @@ def test_stop_calls_match_the_service_models(aws):
         {"logGroupName": LOG, "logStreamNamePrefix": "runtime-logs-"})
     data.add_response("stop_runtime_session", {"runtimeSessionId": SESSION, "statusCode": 200},
                       {"runtimeSessionId": SESSION, "agentRuntimeArn": RUNTIME_ARN, "qualifier": "DEFAULT"})
-    data.add_client_error("stop_runtime_session", "ResourceNotFoundException", "no session", http_status_code=404,
+    data.add_client_error("stop_runtime_session", "ResourceNotFoundException",       # AWS's answer on 2026-11-22
+                          f"Session {OLD_SESSION} not found or has been terminated", http_status_code=404,
                           expected_params={"runtimeSessionId": OLD_SESSION, "agentRuntimeArn": RUNTIME_ARN, "qualifier": "DEFAULT"})
     out = stop_agent.stop(c, S, ROLLOUT_P, AGENT, say=lambda line: None)
-    assert out == {"agent": AGENT, "policy": "stop_agent_quality_agent", "stopped": [SESSION],
-                   "failed": {OLD_SESSION: "ResourceNotFoundException: no session"}}
+    assert out == {"agent": AGENT, "policy": "stop_agent_quality_agent", "stopped": [SESSION], "ended": [OLD_SESSION],
+                   "failed": {}}
 
 
 def test_stopped_and_resume_calls_match_the_service_models(aws):

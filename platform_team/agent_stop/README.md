@@ -27,7 +27,7 @@ platform_team/agent_stop/resume.sh <에이전트>                         # 다�
    forbid (principal, action == AgentCore::Action::"<Target>___POST:/invocations", resource == AgentCore::Gateway::"<에이전트 게이트웨이 ARN>") unless { principal == AgentCore::IamEntity::"arn:aws:sts::<ACCOUNT>:assumed-role/<prefix>-review-testcall-role" };
    ```
 
-2. 세션을 끝낸다. 세션마다 `StopRuntimeSession`(`runtimeSessionId`, `agentRuntimeArn`, `qualifier` `DEFAULT`)을 부른다. 끝내지 못한 세션은 이유와 함께 한 줄(`session <ID>: not stopped (<이유>)`)로 찍고 다음 세션으로 넘어간다. 하나라도 끝내지 못하면 명령은 0이 아닌 값으로 끝난다. 만든 멈춤 정책은 그때도 지우지 않는다.
+2. 세션을 끝낸다. 세션마다 `StopRuntimeSession`(`runtimeSessionId`, `agentRuntimeArn`, `qualifier` `DEFAULT`)을 부른다. `StopRuntimeSession`이 찾지 못하는 세션(`ResourceNotFoundException`)은 이미 끝난 것이므로 `session <ID>: already ended (<이유>)`로 찍고 실패로 세지 않는다(아래 "세션을 어디서 찾나"). 그 밖의 이유로 끝내지 못한 세션은 이유와 함께 한 줄(`session <ID>: not stopped (<이유>)`)로 찍고 다음 세션으로 넘어간다. 그런 세션이 하나라도 있으면 명령은 0이 아닌 값으로 끝난다. 만든 멈춤 정책은 그때도 지우지 않는다.
 
 진입을 먼저 막는 이유: 세션을 먼저 끝내면, 끝내는 사이에 사용자의 새 호출이 새 세션을 열 수 있다(헤더 없는 호출도 세션이 되었다. 아래 "세션을 어디서 찾나"의 2026-11-22 관찰). 그래서 진입을 먼저 막는다. 세션은 정책이 `ACTIVE`가 된 뒤에 찾으므로, 그때 stream이 있는 세션은 막기 직전에 열린 것이라도 목록에 든다. 세션을 연 뒤 stream이 얼마 만에 생기는지는 확인하지 않았다(2026-11-22에 요청을 연 지 30초에는 있었다).
 
@@ -56,7 +56,7 @@ platform_team/agent_stop/resume.sh <에이전트>                         # 다�
 
 - 최근이란: stream의 시간 셋, 곧 만든 때(`creationTime`), 마지막 이벤트(`lastEventTimestamp`), 마지막 수집(`lastIngestionTime`) 가운데 가장 늦은 것이 지난 30분 안이다. 만든 때는 stream이 생길 때 정해지므로, 1분 전에 생긴 stream의 세션도 찾는다. 세션을 연 뒤 stream이 얼마 만에 생기는지는 확인하지 않았다(2026-11-22에 요청을 연 지 30초에는 있었다). 서비스 모델의 `DescribeLogStreams` 설명(botocore 1.44.9)은 나머지 두 시간이 바로 맞지 않고 보통 한 시간 안에 갱신된다고 적는다(여기서는 확인하지 않았다).
 - 그래서 30분보다 오래 돌고 있는 세션은 마지막 이벤트나 수집 시간이 지난 30분 안으로 갱신되어 있을 때만 찾는다. 갱신이 늦으면 찾지 못한다. 그런 세션은 `--session <ID>`로 준다.
-- 30분 안에 stream이 있는 세션은 이미 끝났어도 끝내려 한다. 이미 끝난 세션이나 Runtime이 모르는 세션에 `StopRuntimeSession`이 무엇을 돌려주는지는 해 보지 않았다. 거부하면 그 세션은 끝내지 못한 것으로 찍히고, 명령은 0이 아닌 값으로 끝난다.
+- 30분 안에 stream이 있는 세션은 이미 끝났어도 끝내려 한다. 2026-11-22의 실행에서 `stop.sh`가 찾은 세션 여덟 가운데 여섯에 `StopRuntimeSession`은 `ResourceNotFoundException`(`Session <세션 ID> not found or has been terminated`)을 돌려줬다. 그 실행의 명령은 이 오류를 끝내지 못한 것으로 세어 1로 끝났다(진입은 막혔고 사고의 세션은 끝났다). 그래서 지금의 코드는 이 오류를 이미 끝난 세션으로 찍고(`already ended`) 실패로 세지 않는다. 다른 두 세션(사고의 세션과, 그 전에 연 세션 하나)에는 오류가 오지 않았다(`stopped`).
 - 서비스 모델은 `runtimeSessionId`를 33~256자로 정한다. 그보다 짧은 이름의 stream은 건너뛴다. `--session`으로 준 ID가 그 길이가 아니면 보내지 않고 끝내지 못한 것으로 찍는다.
 - 로그 그룹이 없으면 끝낼 세션 없이 넘어간다(오류로 멈추지 않는다). Runtime의 로그 그룹이 언제 생기는지는 확인하지 않았다.
 - 서비스 모델의 설명대로 `DescribeLogStreams`는 이름의 앞부분(`logStreamNamePrefix`)과 이벤트 시간 순서(`orderBy` `LastEventTime`)를 함께 받지 않는다. 그래서 앞부분으로 모든 페이지를 읽고, 시간은 코드가 고른다.

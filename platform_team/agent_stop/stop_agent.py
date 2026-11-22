@@ -41,6 +41,7 @@ RECENT_MINUTES = 30
 # times update eventually ("typically ... less than an hour"), so a recent stream is one whose latest time is recent.
 STREAM_TIMES = ("creationTime", "lastEventTimestamp", "lastIngestionTime")
 QUALIFIER = "DEFAULT"                   # the endpoint the agent gateway's target calls
+ENDED = "ResourceNotFoundException"     # StopRuntimeSession for a session that no longer runs (seen 2026-11-22)
 POLICY_WAIT = 300                       # s, until the stop policy is ACTIVE
 SHOWN = 120                             # characters of a refused SSM value in an error
 
@@ -104,9 +105,11 @@ def _not_sendable(sid: str) -> str:
 
 def stop(c, s: Settings, p: Platform, agent: str, sessions: list[str] | None = None, say=print) -> dict:
     """Block the agent's entry (stop_agent_<agent>, waited on until ACTIVE), then end its sessions: the ones given, or
-    recent_sessions when `sessions` is None. A session that cannot be stopped is reported with the reason and the rest
-    go on. An agent without an entry target, or whose Runtime ARN in SSM is not its own, raises ValueError before
-    anything is made. Returns {"agent", "policy", "stopped": [ID, ...], "failed": {ID: reason}}."""
+    recent_sessions when `sessions` is None. A session StopRuntimeSession does not find (ResourceNotFoundException, on
+    AWS on 2026-11-22 "Session <ID> not found or has been terminated") has already ended: it is reported as ended, not
+    as a failure. A session that cannot be stopped for another reason is reported with the reason and the rest go on.
+    An agent without an entry target, or whose Runtime ARN in SSM is not its own, raises ValueError before anything is
+    made. Returns {"agent", "policy", "stopped": [ID, ...], "ended": [ID, ...], "failed": {ID: reason}}."""
     check_name(agent)
     target = _entry_target(c, s, p, agent)
     arn = runtime_arn(c, s, p, agent)
@@ -118,13 +121,19 @@ def stop(c, s: Settings, p: Platform, agent: str, sessions: list[str] | None = N
     if sessions is None:
         sessions = recent_sessions(c, s, arn)
         say(f"sessions with a log stream in the last {RECENT_MINUTES} minutes ({log_group(arn)}): {len(sessions)}")
-    out = {"agent": agent, "policy": policy, "stopped": [], "failed": {}}
+    out = {"agent": agent, "policy": policy, "stopped": [], "ended": [], "failed": {}}
     for sid in dict.fromkeys(sessions):
         why = _not_sendable(sid)
         if not why:
             try:
                 c.data.stop_runtime_session(runtimeSessionId=sid, agentRuntimeArn=arn, qualifier=QUALIFIER)
-            except (ClientError, BotoCoreError) as e:
+            except ClientError as e:
+                if e.response["Error"]["Code"] == ENDED:
+                    out["ended"].append(sid)
+                    say(f"session {sid}: already ended ({cause(e)})")
+                    continue
+                why = cause(e)
+            except BotoCoreError as e:
                 why = cause(e)
         if why:
             out["failed"][sid] = why
@@ -196,7 +205,8 @@ def main(argv: list[str]) -> int:
               f"{len(out['failed']) + len(out['stopped'])} sessions not stopped: run stop again, or give the session "
               "with --session <ID>")
         return 1
-    print(f"{agent} is stopped: {out['policy']} blocks its entry; sessions stopped: {len(out['stopped'])}")
+    print(f"{agent} is stopped: {out['policy']} blocks its entry; sessions stopped: {len(out['stopped'])}"
+          + (f", already ended: {len(out['ended'])}" if out["ended"] else ""))
     return 0
 
 

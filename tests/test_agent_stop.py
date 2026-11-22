@@ -118,15 +118,42 @@ def test_a_session_that_cannot_be_stopped_is_reported_and_the_rest_go_on():
     reported with the reason, and the sessions after them are still stopped."""
     a, b, d = "a" * 36, "b" * 36, "d" * 36
     c = FakeClients(runtime_arn=ARN, targets={"QualityAgent"})
-    c.session_errors[b] = ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": "no such session"}},
+    c.session_errors[b] = ClientError({"Error": {"Code": "ThrottlingException", "Message": "Rate exceeded"}},
                                       "StopRuntimeSession")
     lines = []
     out = stop(c, Settings(), PLATFORM, "quality_agent", sessions=[a, b, "short", d], say=lines.append)
     assert out["stopped"] == [a, d] and c.stopped_sessions == [(ARN, a), (ARN, d)]
-    assert out["failed"][b] == "ResourceNotFoundException: no such session"
+    assert out["failed"][b] == "ThrottlingException: Rate exceeded"
     assert "33 to 256 characters" in out["failed"]["short"] and list(out["failed"]) == [b, "short"]
     assert c.calls.count(("data", "stop_runtime_session")) == 3                  # the short one is not sent
-    assert f"session {b}: not stopped (ResourceNotFoundException: no such session)" in lines
+    assert f"session {b}: not stopped (ThrottlingException: Rate exceeded)" in lines
+
+
+ENDED = "Session {} not found or has been terminated"       # what StopRuntimeSession answered for an ended session
+
+
+def test_a_session_that_has_already_ended_is_reported_and_is_not_a_failure():
+    """2026-11-22 on AWS: StopRuntimeSession answers ResourceNotFoundException "Session <ID> not found or has been
+    terminated" for a session whose stream is recent but which no longer runs. Nothing runs there to stop, so it is
+    reported as ended, apart from the ones stopped, and the stop does not fail for it."""
+    a, b = "a" * 36, "b" * 36
+    c = FakeClients(runtime_arn=ARN, targets={"QualityAgent"})
+    c.session_errors[b] = ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": ENDED.format(b)}},
+                                      "StopRuntimeSession")
+    lines = []
+    out = stop(c, Settings(), PLATFORM, "quality_agent", sessions=[a, b], say=lines.append)
+    assert out["stopped"] == [a] and out["ended"] == [b] and out["failed"] == {}
+    assert f"session {b}: already ended (ResourceNotFoundException: {ENDED.format(b)})" in lines
+
+
+def test_the_stop_command_succeeds_when_the_other_sessions_had_already_ended(command, capsys):
+    c = FakeClients(runtime_arn=ARN, targets={"QualityAgent"})
+    c.log_streams = {GROUP: [stream("a" * 36), stream("b" * 36, created=2)]}
+    c.session_errors["b" * 36] = ClientError({"Error": {"Code": "ResourceNotFoundException",
+                                                        "Message": ENDED.format("b" * 36)}}, "StopRuntimeSession")
+    assert command(c, "stop", "quality_agent") == 0
+    assert capsys.readouterr().out.splitlines()[-1] == (
+        "quality_agent is stopped: stop_agent_quality_agent blocks its entry; sessions stopped: 1, already ended: 1")
 
 
 def test_a_session_given_twice_is_stopped_once():
@@ -141,7 +168,8 @@ def test_stop_of_quality_leaves_quality_agent_alone():      # two hosted agents 
                     targets={"Quality", "QualityAgent"})
     c.log_streams = {GROUP.replace("hub_quality_agent", "hub_quality"): [stream("q" * 36)], GROUP: [stream("a" * 36)]}
     out = stop(c, Settings(), PLATFORM, "quality", say=quiet)
-    assert out == {"agent": "quality", "policy": "stop_agent_quality", "stopped": ["q" * 36], "failed": {}}
+    assert out == {"agent": "quality", "policy": "stop_agent_quality", "stopped": ["q" * 36], "ended": [],
+                   "failed": {}}
     assert list(c.policies) == ["stop_agent_quality"] and c.stopped_sessions == [(quality_arn, "q" * 36)]
     assert '"Quality___POST:/invocations"' in c.created_policies[0]["statement"]
     assert stopped(c, PLATFORM, "quality") and not stopped(c, PLATFORM, "quality_agent")
@@ -204,7 +232,7 @@ def test_stop_without_sessions_ends_the_recent_ones_and_looks_for_them_after_the
     lines = []
     out = stop(c, Settings(), PLATFORM, "quality_agent", say=lines.append)
     assert out == {"agent": "quality_agent", "policy": "stop_agent_quality_agent", "stopped": ["b" * 36, "a" * 36],
-                   "failed": {}}
+                   "ended": [], "failed": {}}
     # looked for once no new user call can come in, so a session opened during the stop is found too
     assert c.calls.index(("ctl", "create_policy")) < c.calls.index(("logs", "describe_log_streams"))
     assert f"sessions with a log stream in the last 30 minutes ({GROUP}): 2" in lines
