@@ -39,11 +39,11 @@ arn = c.ssm.get_parameter(Name=s.ssm('agents', 'spec_assistant', 'harness_arn'))
 print(ask_harness(c, arn, 'What is the spec of part P-100?'))"
 ```
 
-`ask_harness`는 새 세션으로 질문 하나를 보내고, 돌아오는 stream의 글(`contentBlockDelta`의 `text`)을 이어 돌려준다. stream에 오류가 오면 그 내용으로 예외를 낸다. 호출에 도구, 모델, 지시문을 따로 싣지 않으므로 harness의 설정이 그대로 쓰인다. AgentCore 개발자 안내서("Security and access controls", 2026-11-22에 읽었다)는 `InvokeHarness`에 `bedrock-agentcore:InvokeHarness`와 `bedrock-agentcore:InvokeAgentRuntime`이 필요하다고 적는다. 여기서는 확인하지 않았다. 허브의 역할 가운데 `bedrock-agentcore:InvokeHarness`를 가진 것은 없다(Terraform의 정책에 이 action이 없다). 그래서 허브 안에서 이 에이전트를 부를 수 있는 것은 그 권한을 가진 플랫폼팀의 자격 증명뿐이다. 사용량 보고(`usage.sh`)는 harness가 도는 Runtime(아래와 같이 이름이 `harness_<prefix>_spec_assistant`다)으로 이 에이전트를 찾아, 그 Runtime의 이름으로 메트릭을 읽고 표에 `spec_assistant`로 넣는다. 코드가 그렇게 한다. 그 Runtime의 메트릭이 사용량 보고가 읽는 모양(`Name=<Runtime 이름>::DEFAULT`)으로 남는지는 확인하지 않았다.
+`ask_harness`는 새 세션으로 질문 하나를 보내고, 돌아오는 stream의 글(`contentBlockDelta`의 `text`)을 이어 돌려준다. stream에 오류가 오면 그 내용으로 예외를 낸다. 호출에 도구, 모델, 지시문을 따로 싣지 않으므로 harness의 설정이 그대로 쓰인다. AgentCore 개발자 안내서("Security and access controls", 2026-11-22에 읽었다)는 `InvokeHarness`에 `bedrock-agentcore:InvokeHarness`와 `bedrock-agentcore:InvokeAgentRuntime`이 필요하다고 적는다. 여기서는 확인하지 않았다. 허브의 역할 가운데 `bedrock-agentcore:InvokeHarness`를 가진 것은 없다(Terraform의 정책에 이 action이 없다). 그래서 허브 안에서 이 에이전트를 부를 수 있는 것은 그 권한을 가진 플랫폼팀의 자격 증명뿐이다. 사용량 보고(`usage.sh`)는 harness가 도는 Runtime(아래와 같이 이름이 `harness_<prefix>_spec_assistant`다)으로 이 에이전트를 찾아, 그 Runtime의 이름으로 메트릭을 읽고 표에 `spec_assistant`로 넣는다. 코드가 그렇게 한다. 2026-11-22의 운영 확인에서 그 Runtime의 메트릭은 사용량 보고가 읽는 모양(`Name=harness_hub_spec_assistant::DEFAULT`, `Operation=InvokeAgentRuntime`, `Resource=<Runtime ARN>`)으로 있었고, `usage.sh 60`이 이 에이전트를 3번, 세션 3으로 보였다(아래).
 
 ## 허브에서 받는 통제
 
-에이전트 게이트웨이에 진입 target이 없으므로 진입의 통제를 받지 않는다. 진입 정책, 비밀값 검사, 전사 정책(`rollout.sh`), 커스텀 가드레일이 이 에이전트에 닿지 않고, 멈춤 명령(`stop.sh`)도 이 에이전트를 거부한다. 도구 호출은 도구 게이트웨이를 지나므로, 실행 역할에 걸린 도구 permit 둘만큼만 도구를 부를 수 있다. `allowedTools`는 harness가 모델에게 보여 줄 도구를 고르는 설정이고 권한이 아니다. 서비스 모델(botocore 1.44.9)의 `InvokeHarness`는 호출마다 `tools`, `allowedTools`, `systemPrompt`, `model`을 받으므로, `InvokeHarness`를 부를 수 있는 사람은 호출에서 이것들을 바꿔 보낼 수 있다. 그래도 도구 게이트웨이를 지나는 호출은 이 역할의 permit에 묶인다. 호출에서 바꿔 보내는 것은 해 보지 않았다.
+에이전트 게이트웨이에 진입 target이 없으므로 진입의 통제를 받지 않는다. 진입 정책, 비밀값 검사, 전사 정책(`rollout.sh`), 커스텀 가드레일이 이 에이전트에 닿지 않고, 멈춤 명령(`stop.sh`)도 이 에이전트를 거부한다. 도구 호출은 도구 게이트웨이를 지나므로, 실행 역할에 걸린 도구 permit 둘만큼만 도구를 부를 수 있다. `allowedTools`는 harness가 모델에게 보여 줄 도구를 고르는 설정이고 권한이 아니다. 서비스 모델(botocore 1.44.9)의 `InvokeHarness`는 호출마다 `tools`, `allowedTools`, `systemPrompt`, `model`을 받으므로, `InvokeHarness`를 부를 수 있는 사람은 호출에서 이것들을 바꿔 보낼 수 있다. 그래도 도구 게이트웨이를 지나는 호출은 이 역할의 permit에 묶인다. 호출에서 바꿔 보내는 것은 `allowedTools` 하나만, 한 번 해 봤다(아래의 운영 확인). 모델이 그 도구를 부르지 않았으므로 도구 게이트웨이가 permit이 없는 호출을 거부하는지는 그때도 보지 못했다. `tools`, `systemPrompt`, `model`을 바꿔 보내는 것은 해 보지 않았다.
 
 ## 2026-11-22의 실행에서 본 것
 
@@ -57,3 +57,13 @@ print(ask_harness(c, arn, 'What is the spec of part P-100?'))"
 - 실행 역할은 다른 에이전트의 실행 역할과 같은 문장들이다. 그 역할로 harness가 만들어지고 모델과 도구 게이트웨이를 불렀다. harness가 도는 Runtime의 로그 그룹에 거부된 줄이나 오류 줄은 없었다. AWS의 harness 실행 역할 예시에 있는 ECR Public 권한(`ecr-public:GetAuthorizationToken`, `sts:GetServiceBearerToken`)은 이 역할에 없다. 역할이 토큰을 받을 수 있는 workload identity는 `hub_spec_assistant-*`(Runtime 에이전트의 모양)이라 harness의 것(`harness_hub_spec_assistant-<10자>`)과 맞지 않는다. 그래도 위의 호출이 됐으므로 이 harness는 그 토큰을 쓰지 않은 것으로 본다(게이트웨이는 실행 역할로 SigV4 서명한다).
 - `make preload`를 다시 돌리자 4초 만에 끝났고 `(kept)`를 찍었다. 앞뒤로 비교한 것(harness의 버전과 시각, record의 상태와 시각, 정책 목록, Runtime의 버전, 심사 실행의 수, 올린 코드의 version 수)이 그대로였다. 역할의 inline 정책과 SSM 값은 비교하지 않았다(둘 다 같은 값으로 다시 쓴다).
 - `make destroy`가 이 에이전트의 도구 정책 둘, harness(`DeleteHarness`, 사라질 때까지 기다린다), harness가 돌던 Runtime의 로그 그룹, 실행 역할, SSM 값, record를 지웠다. harness가 돌던 Runtime과 그 workload identity는 harness와 함께 사라졌다. 끝에 `check_cleanup.py`가 `still present: nothing`을 찍었고, 목록으로도 harness, `hub_`나 `harness_`로 시작하는 Runtime과 workload identity가 남지 않은 것을 봤다.
+
+## 2026-11-22의 운영 확인에서 본 것
+
+같은 날 `make e2e-ops`(`e2e_checks/e2e_operations.py`)가 `make preload`로 이 에이전트를 올렸다. 그때 허브에는 커스텀 가드레일과 적용 모드의 전사 정책 `guard_prompt`가 켜져 있었다. 둘 다 에이전트 게이트웨이에 걸리므로 이 에이전트에는 닿지 않는다.
+
+- `What is the spec of part P-100?`에 도구 `Parts___get_part_spec`을 불러 `M4 x 12 mm, steel`이 든 답을 했다(stream으로 읽었다).
+- 호출에서 쓸 수 있는 도구의 목록(`allowedTools`)에 permit이 없는 도구를 더해 한 번 물었다. 목록은 `@hub_tools/Parts___get_part_spec`, `@hub_tools/Parts___get_test_result`, `@hub_tools/Quality___get_inspection_data`였고, 질문은 `What is the result of inspection Q-1001?`이었다. stream에 도구 호출이 없었다. 모델은 검사 ID로 찾는 도구가 없고 부품 ID로 찾는 도구만 있다고 답했다. 그 시간 동안 도구 게이트웨이에는 `tools/list`가 셋 있었고(이 harness를 세 번 불렀다), 그때마다 `AgentCore.Gateway.ListTools`와 `AgentCore.Policy.PartiallyAuthorizeActions`의 span이 있었다. 이 둘이 무엇을 거르는지는 확인하지 않았다.
+- `quality_agent`가 `stop.sh`로 멈춰 있는 동안 같은 질문에 답했다(`M4 x 12 mm`).
+- `usage.sh 60`의 표에 `spec_assistant 3 3 0 0.000000 0.000000`이 있었다(부른 수, 세션, 오류, CPU, 메모리). 같은 허브에서 다시 돌린 두 번째 실행에서는 `spec_assistant 6 6 0 0.028382 1.744684`였다. CPU와 메모리도 harness가 도는 Runtime의 이름으로 읽혔다.
+- 같은 허브에서 `make e2e-ops`를 다시 돌릴 때 `make preload`는 이 에이전트를 그대로 두었다.

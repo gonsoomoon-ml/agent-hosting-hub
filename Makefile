@@ -26,7 +26,7 @@ DETACH = uv run python -m platform_team.custom_guardrail.guardrail_attach detach
 # (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
 APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
 
-.PHONY: test package deploy seed preload destroy publish e2e
+.PHONY: test package deploy seed preload destroy publish e2e e2e-ops
 
 test:
 	uv run pytest tests -q
@@ -82,3 +82,8 @@ publish:
 # The log goes to e2e_checks/last-run.log (not committed: *.log).
 e2e:
 	bash -o pipefail -c 'uv run python e2e_checks/e2e_hosting.py 2>&1 | tee e2e_checks/last-run.log'
+
+# Flow 2 (operations) from end to end, on the hub make e2e leaves (release_review and quality_agent APPROVED); it runs
+# make preload itself. The log goes to e2e_checks/last-run-ops.log (not committed: *.log).
+e2e-ops:
+	bash -o pipefail -c 'uv run python e2e_checks/e2e_operations.py 2>&1 | tee e2e_checks/last-run-ops.log'
