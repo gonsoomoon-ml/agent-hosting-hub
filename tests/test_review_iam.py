@@ -30,3 +30,30 @@ def test_policy_makers_have_the_actions_found_by_running():
     assert "agent-registry:UpdateRegistryRecordStatus" in document("approve")
     assert "var.tool_gateway_arn" in document("grant") and "var.agent_gateway_arn" not in document("grant")   # grant is scoped to the tool gateway
     assert "var.agent_gateway_arn" in document("entry")
+
+# ------------------------------------------------------------------ fix round 1: the agent role's boundary, approve re-reads
+
+def statements(doc):
+    return re.findall(r"\n  statement {(.*?)\n  }", doc, re.S)
+
+def test_grant_can_make_agent_roles_only_under_the_boundary():
+    grant = document("grant")
+    writes = [s for s in statements(grant) if "iam:CreateRole" in s or "iam:PutRolePolicy" in s]
+    assert len(writes) == 1 and "iam:CreateRole" in writes[0] and "iam:PutRolePolicy" in writes[0]
+    assert re.search(r'test\s*=\s*"StringEquals"', writes[0]) and re.search(r'variable\s*=\s*"iam:PermissionsBoundary"', writes[0])
+    assert "aws_iam_policy.agent_boundary.arn" in writes[0]
+    for forbidden in ("iam:PutRolePermissionsBoundary", "iam:DeleteRolePermissionsBoundary", "iam:AttachRolePolicy",
+                      "iam:UpdateAssumeRolePolicy", "iam:DeleteRolePolicy"):
+        assert forbidden not in grant, forbidden
+    assert re.search(r'resource\s+"aws_iam_policy"\s+"agent_boundary"\s*{[^}]*name\s*=\s*"\$\{var\.prefix\}-agent-boundary"', TEXT)
+
+def test_the_boundary_allows_every_action_of_the_agent_role_and_no_wildcard():
+    from platform_team.hosting_review.review_steps import _execution_role
+    from tests.fakes import ENV
+    _, perms = _execution_role(ENV)
+    granted = {a for s in perms["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
+    boundary = actions(document("agent_boundary"))
+    assert granted and sorted(granted - set(boundary)) == [] and [a for a in boundary if "*" in a] == []
+
+def test_approve_can_read_the_record_again():
+    assert "agent-registry:GetRegistryRecord" in document("approve")

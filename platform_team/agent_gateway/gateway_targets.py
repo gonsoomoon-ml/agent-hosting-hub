@@ -29,9 +29,9 @@ def targets(c, gateway_id: str) -> dict[str, dict]:
     return {t["name"]: t for t in all_items(c.ctl.list_gateway_targets, gatewayIdentifier=gateway_id, maxResults=100)}
 
 
-def ensure_runtime_target(c, gateway_id: str, target: str, runtime_arn: str) -> str:
-    """Put a Runtime behind the gateway as target `target` and wait until it is READY; return the target ID.
-    A target with this name is kept as it is."""
+def ensure_runtime_target(c, gateway_id: str, target: str, runtime_arn: str, wait: int = 300) -> str:
+    """Put a Runtime behind the gateway as target `target` and wait up to `wait` seconds until it is READY; return
+    the target ID. A target with this name is kept as it is."""
     found = targets(c, gateway_id).get(target)
     if found:
         tid = found["targetId"]
@@ -48,5 +48,5 @@ def ensure_runtime_target(c, gateway_id: str, target: str, runtime_arn: str) -> 
                 raise
             tid = targets(c, gateway_id)[target]["targetId"]        # made a moment ago by another run
     wait_status(lambda: c.ctl.get_gateway_target(gatewayIdentifier=gateway_id, targetId=tid), ("READY",),
-                f"target {target}", step=3)
+                f"target {target}", timeout=wait, step=3)
     return tid

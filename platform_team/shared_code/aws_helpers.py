@@ -1,5 +1,6 @@
-"""Shared AWS helpers: one boto3 session with named clients, retry, status waits, SigV4 calls."""
+"""Shared AWS helpers: one boto3 session with named clients, retry, status waits and their deadline, SigV4 calls."""
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -81,6 +82,30 @@ def retry(fn, tries=8, wait=10, on=("ClientError",)):
             if type(e).__name__ not in on or i == tries - 1:
                 raise
             time.sleep(wait)
+
+
+class OutOfTime(RuntimeError):
+    """A step has no time left for its next wait, so it stops with this message instead of a Lambda timeout."""
+
+
+class Deadline:
+    """When a step must be done (the Lambda handler sets it a margin before the Lambda timeout). Each wait takes
+    its normal ceiling or the time left, whichever is shorter. Deadline() has no end: every wait gets its ceiling."""
+
+    def __init__(self, seconds: float | None = None):
+        self.end = None if seconds is None else time.monotonic() + seconds
+
+    def left(self) -> float:
+        return float("inf") if self.end is None else self.end - time.monotonic()
+
+    def wait(self, ceiling: float, what: str) -> float:
+        """How long the next wait may take. Less than a second left raises OutOfTime, before anything is made."""
+        if self.end is None:
+            return ceiling
+        left = self.left()
+        if left < 1:
+            raise OutOfTime(f"no time left for {what}: the step stops before its Lambda timeout")
+        return min(ceiling, math.floor(left))
 
 
 def wait_status(read, want: tuple[str, ...], what: str, timeout=300, step=4) -> dict:

@@ -46,3 +46,14 @@ def test_the_review_gets_every_variable_its_code_reads():
     project = set(REQUIRED_ENV) - per_run - {"AWS_REGION"}                           # AWS_REGION: CodeBuild sets it
     deploy = block("aws_codebuild_project", "deploy")
     assert [k for k in sorted(project) if not re.search(r'name\s*=\s*"%s"' % k, deploy)] == []            # CodeBuild environment
+
+def test_each_lambda_timeout_leaves_one_full_wait_after_the_margin():
+    from platform_team.hosting_review import review_steps as steps
+    from platform_team.hosting_review.lambda_handler import MARGIN
+    hosting = (ROOT / "hosting_review" / "terraform" / "main.tf").read_text()
+    body = re.search(r"\n  steps = {(.*?)\n  }", hosting, re.S).group(1)
+    timeout = {k: int(v) for k, v in re.findall(r"(\w+)\s*=\s*(\d+)", body)}
+    longest = {"read": 0, "grant": steps.POLICY_WAIT, "entry": max(steps.POLICY_WAIT, steps.TARGET_WAIT),
+               "testcall": steps.CALL_TIMEOUT, "approve": steps.POLICY_WAIT}       # the longest single wait of each step
+    assert set(timeout) == set(steps.STEPS) == set(longest)
+    assert [s for s in timeout if timeout[s] > 900 or (longest[s] and timeout[s] - MARGIN < longest[s])] == []

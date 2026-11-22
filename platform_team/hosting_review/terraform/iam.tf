@@ -118,9 +118,19 @@ data "aws_iam_policy_document" "grant" {
     resources = ["${aws_cloudwatch_log_group.step["grant"].arn}:*"]
   }
   statement {
-    sid       = "AgentExecutionRole" # get_role, create_role, put_role_policy on <prefix>-agent-<agent>-role
-    actions   = ["iam:GetRole", "iam:CreateRole", "iam:PutRolePolicy"]
+    sid       = "FindTheAgentRole" # get_role <prefix>-agent-<agent>-role
+    actions   = ["iam:GetRole"]
     resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]
+  }
+  statement {
+    sid       = "AgentRoleUnderTheBoundary" # create_role, put_role_policy: only on a role whose boundary is agent_boundary
+    actions   = ["iam:CreateRole", "iam:PutRolePolicy"]
+    resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PermissionsBoundary"
+      values   = [aws_iam_policy.agent_boundary.arn]
+    }
   }
   statement {
     sid       = "ToolPermits" # ensure_policy: list, create, wait until ACTIVE, delete one that failed
@@ -133,6 +143,50 @@ data "aws_iam_policy_document" "grant" {
     "bedrock-agentcore:GetGatewayTarget", "bedrock-agentcore:InvokeGateway"]
     resources = [var.tool_gateway_arn]
   }
+}
+
+# The ceiling of every agent execution role Grant creates: the actions of review_steps._execution_role, on the
+# resources this project uses. Grant can create a role and write its inline policy only with this boundary set,
+# and cannot change or remove a boundary, so an agent role never holds more than this, whatever its inline policy says.
+data "aws_iam_policy_document" "agent_boundary" {
+  statement {
+    sid       = "RuntimeLogGroups"
+    actions   = ["logs:DescribeLogStreams", "logs:CreateLogGroup"]
+    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/*"]
+  }
+  statement {
+    sid       = "FindLogGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:*"]
+  }
+  statement {
+    sid       = "RuntimeLogs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
+  }
+  statement {
+    sid       = "ToolGateway"
+    actions   = ["bedrock-agentcore:InvokeGateway"]
+    resources = [var.tool_gateway_arn]
+  }
+  statement {
+    sid       = "Model" # a cross-Region inference profile and the foundation models behind it
+    actions   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+    resources = ["arn:aws:bedrock:*::foundation-model/*", "arn:aws:bedrock:*:${local.account}:inference-profile/*"]
+  }
+  statement {
+    sid = "WorkloadIdentity"
+    actions = ["bedrock-agentcore:GetWorkloadAccessToken", "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+    "bedrock-agentcore:GetWorkloadAccessTokenForUserId"]
+    resources = ["${local.agentcore}:workload-identity-directory/default",
+    "${local.agentcore}:workload-identity-directory/default/workload-identity/*"]
+  }
+}
+
+resource "aws_iam_policy" "agent_boundary" {
+  name        = "${var.prefix}-agent-boundary"
+  description = "Permissions boundary of the agent execution roles the hosting review creates"
+  policy      = data.aws_iam_policy_document.agent_boundary.json
 }
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
@@ -245,8 +299,8 @@ data "aws_iam_policy_document" "approve" {
     resources = [var.agent_gateway_arn]
   }
   statement {
-    sid       = "MarkTheRecordApproved" # update_registry_record_status
-    actions   = ["agent-registry:UpdateRegistryRecordStatus"]
+    sid       = "MarkTheRecordApproved" # get_registry_record (unchanged since Read?), update_registry_record_status
+    actions   = ["agent-registry:GetRegistryRecord", "agent-registry:UpdateRegistryRecordStatus"]
     resources = ["${var.registry_arn}/record/*"]
   }
 }

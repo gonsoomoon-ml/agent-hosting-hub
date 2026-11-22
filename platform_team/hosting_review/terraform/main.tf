@@ -9,10 +9,12 @@ data "aws_region" "here" {}
 locals {
   account = data.aws_caller_identity.me.account_id
   region  = data.aws_region.here.region
-  # Lambda steps and their timeouts (s). Each covers the step's own waits: ensure_policy waits up to 300 s per
-  # policy, ensure_runtime_target up to 300 s, testcall retries for minutes. 900 s is the Lambda maximum.
+  # Lambda steps and their timeouts (s). 900 s is the Lambda maximum, and a step's waits can add up to more
+  # (300 s per policy, 300 s for a target, minutes of test calls). So each wait takes its ceiling or the time left
+  # until a deadline 60 s before the timeout (lambda_handler.MARGIN), whichever is shorter: a step that runs out
+  # of time deletes what it half-made and fails with its own message. Each timeout leaves room for one full wait.
   steps = {
-    read     = 60  # one record
+    read     = 60  # one record, no wait
     grant    = 900 # one policy per tool of the application
     entry    = 900 # a target and two policies
     testcall = 900 # a new target and a new policy take a while before they answer
@@ -20,16 +22,17 @@ locals {
   }
   # What the steps read from their environment (review_steps.py, lambda_handler.py); ACTION names the step.
   step_env = {
-    HUB_REGION    = local.region
-    PREFIX        = var.prefix
-    ACCOUNT       = local.account
-    ENGINE_ID     = var.policy_engine_id
-    AGENT_GW_ID   = var.agent_gateway_id
-    AGENT_GW_ARN  = var.agent_gateway_arn
-    TOOL_GW_ARN   = var.tool_gateway_arn
-    TESTCALL_ROLE = aws_iam_role.step["testcall"].name # the principal of entry_permit_review
-    EXAMPLE_KEY   = "AKIAIOSFODNN7EXAMPLE"             # the example access key of the AWS documentation
-    CATALOG_TOOLS = join(",", sort(var.catalog_tools))
+    HUB_REGION     = local.region
+    PREFIX         = var.prefix
+    ACCOUNT        = local.account
+    ENGINE_ID      = var.policy_engine_id
+    AGENT_GW_ID    = var.agent_gateway_id
+    AGENT_GW_ARN   = var.agent_gateway_arn
+    TOOL_GW_ARN    = var.tool_gateway_arn
+    TESTCALL_ROLE  = aws_iam_role.step["testcall"].name # the principal of entry_permit_review
+    EXAMPLE_KEY    = "AKIAIOSFODNN7EXAMPLE"             # the example access key of the AWS documentation
+    CATALOG_TOOLS  = join(",", sort(var.catalog_tools))
+    AGENT_BOUNDARY = aws_iam_policy.agent_boundary.arn # Grant creates agent roles under this boundary
   }
 }
 

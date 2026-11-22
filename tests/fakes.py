@@ -15,7 +15,7 @@ ENV = {
     "AGENT_GW_ID": "agentgw1", "AGENT_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/agentgw1",
     "TOOL_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/toolgw1",
     "TESTCALL_ROLE": "hub-review-testcall-role", "EXAMPLE_KEY": "AKIAIOSFODNN7EXAMPLE",
-    "CATALOG_TOOLS": ",".join(TOOLS),
+    "CATALOG_TOOLS": ",".join(TOOLS), "AGENT_BOUNDARY": f"arn:aws:iam::{ACCOUNT}:policy/hub-agent-boundary",
 }
 
 SPEC = {"name": "quality_agent", "team": "appliance", "framework": "strands",
@@ -95,8 +95,8 @@ class _Iam:
                 {"Error": {"Code": "NoSuchEntity", "Message": "no role"}}, "GetRole")
         return {"Role": {"Arn": f"arn:aws:iam::{ACCOUNT}:role/{RoleName}"}}
 
-    def create_role(self, RoleName, AssumeRolePolicyDocument, **kw):
-        self.o.roles[RoleName] = {"trust": json.loads(AssumeRolePolicyDocument)}
+    def create_role(self, RoleName, AssumeRolePolicyDocument, PermissionsBoundary=None, **kw):
+        self.o.roles[RoleName] = {"trust": json.loads(AssumeRolePolicyDocument), "boundary": PermissionsBoundary}
         return {"Role": {"Arn": f"arn:aws:iam::{ACCOUNT}:role/{RoleName}"}}
 
     def put_role_policy(self, RoleName, PolicyName, PolicyDocument):
