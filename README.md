@@ -12,7 +12,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 |---|---|---|
 | `platform_team/` | 플랫폼팀 | 허브의 틀. 기능마다 폴더 하나와 그 안의 Terraform 모듈이다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md) |
 | `dev_team/` | 개발팀 | [에이전트 템플릿](dev_team/agent_template/README.md)과 올리는 명령(`publish.sh`), 예시 에이전트 둘: [release_review](dev_team/release_review/README.md)(LangGraph), [quality_agent](dev_team/quality_agent/README.md)(Strands) |
-| `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트. `e2e_hosting.py`(흐름 1의 끝에서 끝까지), `check_platform.py`(허브의 틀), `check_cleanup.py`(지운 뒤 남은 것) |
+| `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트. `e2e_hosting.py`(흐름 1의 끝에서 끝까지), `check_platform.py`(허브의 틀), `check_cleanup.py`(지운 뒤 남은 것). `spikes/`는 제품의 일부가 아니라 만들면서 가정을 확인한 스크립트다([확인 시험](e2e_checks/spikes/README.md)) |
 | `tests/` | 누구나 | 단위 시험(`make test`). AWS를 부르지 않는다. |
 
 ## 사전 요건
@@ -37,15 +37,15 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 시간은 2026-11-22의 실행(`us-west-2`, 접두어 `hub`)에서 잰 것이다. "고친 뒤의 실행"은 같은 날 최종 검토의 지적을 고친 코드로 `make deploy`, `make seed`, `make e2e`, `make destroy`를 한 번씩 돌린 것이다. `make deploy`와 `make destroy`는 `AUTO_APPROVE=1`로 돌렸으므로 `yes`를 묻는 대화는 확인하지 않았다.
 
-이 표의 시간은 모두 심사의 배포 단계가 AgentCore CLI(`agentcore deploy`, CDK와 CloudFormation)로 Runtime을 올리던 때의 것이다. Deploy 단계의 시간에는 CLI의 설치와 스택을 만드는 시간이, `make destroy`의 시간에는 스택을 지우는 시간이 들어 있다. 지금의 배포 단계(코드를 묶어 `CreateAgentRuntime`이나 `UpdateAgentRuntime`을 부른다)로는 아직 재지 않았다.
+열 "CLI로 배포하던 때"의 시간은 심사의 배포 단계가 AgentCore CLI(`agentcore deploy`, CDK와 CloudFormation)로 Runtime을 올리던 때의 것이다. 그 Deploy 단계의 시간에는 CLI의 설치와 스택을 만드는 시간이, `make destroy`의 시간에는 스택을 지우는 시간이 들어 있다. 열 "지금의 배포 단계"는 코드를 묶어 `CreateAgentRuntime`이나 `UpdateAgentRuntime`을 부르는 지금의 코드로 같은 날 따로 잰 것이다. 그 실행의 첫 시도는 배포 역할의 권한이 모자라 Deploy에서 멈췄다(`make e2e` 12개 가운데 6개 통과, 401초). 권한을 고쳐 `make deploy`를 다시 돌린 두 번째 시도에서 `make e2e`가 12개 모두 통과했다. 빈 계정의 `make deploy`와 첫 `make seed`는 첫 시도의 값이고, 나머지는 두 번째 시도, 그 뒤의 확인 시험(`e2e_checks/spikes/spike_operations.py`, 새 버전의 심사), `make destroy`의 값이다.
 
-| 순서 | 명령 | 하는 일 | 걸린 시간 |
-|---|---|---|---|
-| 1 | `make deploy` | 코드 묶음(`build/`)을 만들고 `terraform apply`로 허브의 틀을 올린다. 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). `AUTO_APPROVE=1`이면 묻지 않는다. | 빈 계정에서 226초(3분 46초, `AUTO_APPROVE=1`). 이미 올린 허브에 다시 올린 두 번은 11~12초였다(무엇이 바뀌었느냐에 따라 다르다). 고친 뒤의 실행에서는 빈 계정에서 227초 |
-| 2 | `make seed` | 공유 도구 record(`parts-tools`)를 카탈로그에 넣고 승인한다. 개발자의 첫 검색이 이것을 찾는다. | 6초 |
-| 3 | `dev_team/agent_template/publish.sh dev_team/<에이전트> [변형]` (같은 일을 하는 `make publish AGENT=<에이전트>`는 확인하지 않았다) | 개발팀이 코드를 제출함에 올리고 신청서를 카탈로그에 쓰고 승인을 요청한다. 요청하면 호스팅 심사가 저절로 시작한다. 셸의 자격 증명으로 돌고, 개발팀 역할(`<prefix>-dev-role`)의 권한이면 된다(`make e2e`가 이 역할로 돌린다). | 명령은 6초. 심사는 통과할 때 409~490초(그 가운데 Deploy 단계가 310~363초), Scan에서 떨어질 때 30~33초. 세 번의 실행에서 잰 범위다. 고친 뒤의 실행에서는 통과 440초와 453초(Deploy 316초, 315초), Scan에서 떨어질 때 29초 |
-| 4 | `make e2e` | 흐름 1을 끝에서 끝까지 확인한다(아래). 두 에이전트를 제출하고, 심사, 승인, 반려, 재신청, 호출까지 본다. 기록은 `e2e_checks/last-run.log`에 남는다. | 고치기 전의 마지막 실행(`make e2e`, 12개 통과)에서 1555초(26분). 그 가운데 497초는 그 앞의 실행이 남긴 승인된 에이전트 둘을 먼저 지운 시간이다. 에이전트가 없는 허브라면 약 1058초로 본다(잰 값이 아니라 1555에서 497을 뺀 값). 그때까지 에이전트가 없는 허브에서 잰 것은 첫 실행의 966초뿐이었는데, 그 실행은 고치기 전의 스크립트를 `make e2e` 없이 돌렸고 12개 가운데 11개가 통과했다. 고친 뒤의 실행(`make e2e`, 12개 통과)은 에이전트가 없는 허브에서 996초(16분 36초)였다 |
-| 5 | `make destroy` | 허브가 만든 것을 모두 지운다(아래). 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). | 승인된 에이전트 둘이 있는 허브에서 675초(11분 15초, `AUTO_APPROVE=1`). 대부분은 에이전트의 Runtime 스택을 지우는 시간(스택마다 4분 남짓)이다. 고친 뒤의 실행에서는 같은 허브에서 654초(10분 54초) |
+| 순서 | 명령 | 하는 일 | 걸린 시간: CLI로 배포하던 때 | 걸린 시간: 지금의 배포 단계 |
+|---|---|---|---|---|
+| 1 | `make deploy` | 코드 묶음(`build/`)을 만들고 `terraform apply`로 허브의 틀을 올린다. 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). `AUTO_APPROVE=1`이면 묻지 않는다. | 빈 계정에서 226초(3분 46초, `AUTO_APPROVE=1`). 이미 올린 허브에 다시 올린 두 번은 11~12초였다(무엇이 바뀌었느냐에 따라 다르다). 고친 뒤의 실행에서는 빈 계정에서 227초 | 빈 계정에서 234초(3분 54초). 배포 역할의 정책만 바꿔 다시 올린 두 번은 11초와 10초 |
+| 2 | `make seed` | 공유 도구 record(`parts-tools`)를 카탈로그에 넣고 승인한다. 개발자의 첫 검색이 이것을 찾는다. | 6초 | record를 처음 만들 때 6초. 승인된 record가 이미 있으면 그대로 두고 1초 |
+| 3 | `dev_team/agent_template/publish.sh dev_team/<에이전트> [변형]` (같은 일을 하는 `make publish AGENT=<에이전트>`는 확인하지 않았다) | 개발팀이 코드를 제출함에 올리고 신청서를 카탈로그에 쓰고 승인을 요청한다. 요청하면 호스팅 심사가 저절로 시작한다. 셸의 자격 증명으로 돌고, 개발팀 역할(`<prefix>-dev-role`)의 권한이면 된다(`make e2e`가 이 역할로 돌린다). | 명령은 6초. 심사는 통과할 때 409~490초(그 가운데 Deploy 단계가 310~363초), Scan에서 떨어질 때 30~33초. 세 번의 실행에서 잰 범위다. 고친 뒤의 실행에서는 통과 440초와 453초(Deploy 316초, 315초), Scan에서 떨어질 때 29초 | 명령은 6초. 심사는 통과할 때 356초와 385초(Deploy 254초, 255초), Scan에서 떨어질 때 31초. Deploy 단계의 대부분은 새 Runtime이 `READY`가 되기를 기다리는 시간이다(231~232초, 세 번). 코드 묶음은 `release_review` 31,584,418바이트, `quality_agent` 30,815,269바이트다. 승인된 에이전트의 새 버전(Runtime을 고친다)은 심사 308초와 296초(Deploy 266초, 244초)였고, 새 버전이 `READY`가 되기까지 241초와 221초였다 |
+| 4 | `make e2e` | 흐름 1을 끝에서 끝까지 확인한다(아래). 두 에이전트를 제출하고, 심사, 승인, 반려, 재신청, 호출까지 본다. 기록은 `e2e_checks/last-run.log`에 남는다. | 고치기 전의 마지막 실행(`make e2e`, 12개 통과)에서 1555초(26분). 그 가운데 497초는 그 앞의 실행이 남긴 승인된 에이전트 둘을 먼저 지운 시간이다. 에이전트가 없는 허브라면 약 1058초로 본다(잰 값이 아니라 1555에서 497을 뺀 값). 그때까지 에이전트가 없는 허브에서 잰 것은 첫 실행의 966초뿐이었는데, 그 실행은 고치기 전의 스크립트를 `make e2e` 없이 돌렸고 12개 가운데 11개가 통과했다. 고친 뒤의 실행(`make e2e`, 12개 통과)은 에이전트가 없는 허브에서 996초(16분 36초)였다 | 857초(14분 17초, 12개 통과). 첫 시도가 남긴 두 에이전트의 역할, 정책, record를 먼저 지운 17초가 들어 있다(그때 남은 Runtime은 없었다) |
+| 5 | `make destroy` | 허브가 만든 것을 모두 지운다(아래). 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). | 승인된 에이전트 둘이 있는 허브에서 675초(11분 15초, `AUTO_APPROVE=1`). 대부분은 에이전트의 Runtime 스택을 지우는 시간(스택마다 4분 남짓)이다. 고친 뒤의 실행에서는 같은 허브에서 654초(10분 54초) | 승인된 에이전트 둘이 있는 허브에서 566초(9분 26초). 그 가운데 Runtime 둘을 지우는 시간이 약 195초씩이다(`DeleteAgentRuntime` 뒤 `DELETING`에서 사라지기까지) |
 
 `make test`는 단위 시험이다(AWS를 부르지 않는다).
 
@@ -77,7 +77,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | Amazon Bedrock 모델(`MODEL_ID`) | 에이전트가 답할 때마다. 심사의 시험 호출과 `make e2e`의 호출도 포함된다. |
 | AgentCore Runtime(승인된 에이전트마다 하나) | 에이전트가 호출을 처리하는 동안 |
 | AgentCore Gateway 둘, Policy(policy engine과 가드레일 검사) | 호출과 권한 판단마다 |
-| CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "다섯 명령"). |
+| CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "다섯 명령"). 지금의 배포 단계에서는 Deploy 단계가 244~266초였고, 그 가운데 221~241초는 build가 Runtime이 `READY`가 되기를 기다린 시간이다. |
 | Lambda 여섯(심사 다섯, 샘플 도구 하나), Step Functions, EventBridge, SNS, SQS | 실행과 메시지마다 |
 | S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 아홉(Lambda 여섯, CodeBuild 둘, state machine 하나)은 14일 보관한다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
 | AWS Agent Registry, SSM 값(표준), IAM | 요금이 드는지 확인하지 않았다 |
@@ -86,7 +86,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 `make destroy`는 지울 것의 계획을 보여 주고 `yes`를 받은 뒤(이 실행은 `AUTO_APPROVE=1`로 묻지 않고 돌렸다) 네 번에 나눠 지운다.
 
-1. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌고, API로 만든 Runtime에서는 아직 확인하지 않았다.
+1. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다.
 2. `make seed`가 넣은 공유 도구 record.
 3. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 1에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
 4. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, SSM 값, 로그 그룹.
@@ -95,7 +95,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 허브는 CDK를 쓰지 않으므로 계정의 CDK bootstrap(스택 `CDKToolkit`과 그 bucket)에 손대지 않는다. CLI로 배포하던 때의 실행은 그 bucket에 에이전트 코드의 사본(에이전트마다 31 MB 남짓의 zip 하나)과 CDK template을 남겼다. 허브는 이 사본을 지우지 않는다.
 
-CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `check_cleanup.py`가 `still present: nothing`을 찍었고, 게이트웨이, 카탈로그, Runtime마다 서비스가 만든 workload identity도 그 주인과 함께 사라졌다(목록으로 확인했다). 지금의 배포로 만든 허브는 아직 `make destroy`로 지워 보지 않았다.
+CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `check_cleanup.py`가 `still present: nothing`을 찍었고, 게이트웨이, 카탈로그, Runtime마다 서비스가 만든 workload identity도 그 주인과 함께 사라졌다(목록으로 확인했다). 지금의 배포로 만든 허브를 2026-11-22에 `make destroy`로 지웠을 때도(승인된 에이전트 둘, 그 가운데 하나는 Runtime 버전 3) `check_cleanup.py`가 `still present: nothing`을 찍었다. 이름이 `AgentCore-`로 시작하는 스택, `hub_`로 시작하는 Runtime과 workload identity, 제출함 bucket(그래서 `packages/` 아래의 묶음)도 남지 않았고, 계정의 `CDKToolkit` 스택은 그대로 있었다(목록으로 확인했다).
 
 ## 알려진 한계
 

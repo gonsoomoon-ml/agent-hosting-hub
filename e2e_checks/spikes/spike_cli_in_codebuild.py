@@ -16,7 +16,7 @@ earlier cli path; it keeps its own names and need not run again.
   down  delete the stack, the CDK asset objects the builds uploaded, the project and its log group, the two roles.
         Then list what is left.
 
-Usage:   AWS_REGION=us-west-2 uv run --with 'boto3>=1.44.9' --with requests python e2e_checks/spike_cli_in_codebuild.py up test
+Usage:   AWS_REGION=us-west-2 uv run --with 'boto3>=1.44.9' --with requests python e2e_checks/spikes/spike_cli_in_codebuild.py up test
          ... spike_cli_in_codebuild.py down
 Names:   everything this script creates starts with "hubspike". Printed output and saved logs mask the account ID.
 The script keeps no state file: every step finds its resources by name.

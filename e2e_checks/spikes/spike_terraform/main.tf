@@ -4,10 +4,10 @@
 # MCP gateway, both attached to the same engine in ENFORCE mode; one Lambda tool target; one Cedar policy; one Registry.
 # The argument values mirror what checks/whole-process created with boto3. Every name starts with "hubtf".
 #
-#   terraform -chdir=e2e_checks/spike_terraform init
-#   terraform -chdir=e2e_checks/spike_terraform apply -auto-approve
-#   terraform -chdir=e2e_checks/spike_terraform plan -detailed-exitcode     # 0 = no changes
-#   terraform -chdir=e2e_checks/spike_terraform destroy -auto-approve
+#   terraform -chdir=e2e_checks/spikes/spike_terraform init
+#   terraform -chdir=e2e_checks/spikes/spike_terraform apply -auto-approve
+#   terraform -chdir=e2e_checks/spikes/spike_terraform plan -detailed-exitcode     # 0 = no changes
+#   terraform -chdir=e2e_checks/spikes/spike_terraform destroy -auto-approve
 #
 # Check with boto3 (the agent gateway has no protocolType; both gateways have the same engine):
 #   AWS_REGION=us-west-2 uv run --with 'boto3>=1.44.9' python -c "import boto3; c = boto3.client('bedrock-agentcore-control');
