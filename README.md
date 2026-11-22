@@ -24,11 +24,11 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ### `.env`
 
-`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `e2e_checks/`의 스크립트 셋(`e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`)이 모두 같은 규칙을 따른다.
+`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `usage.sh`, `e2e_checks/`의 스크립트 셋(`e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`)이 모두 같은 규칙을 따른다.
 
 - `.env`에서 읽는 것은 이 세 줄뿐이다. 다른 줄은 읽지도 내보내지도 않는다. 그래서 `.env`에 자격 증명을 적어 두어도 명령이 쓰는 자격 증명은 바뀌지 않는다.
-- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다. 값이 빈 줄(`DEMO_PREFIX=`)은 없는 줄과 같아서, 그 이름은 셸의 값이나 기본값을 쓴다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`가 같은 규칙을 따른다.
-- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
+- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다. 값이 빈 줄(`DEMO_PREFIX=`)은 없는 줄과 같아서, 그 이름은 셸의 값이나 기본값을 쓴다. `make`, `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `usage.sh`, `e2e_hosting.py`, `check_platform.py`, `check_cleanup.py`가 같은 규칙을 따른다.
+- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `rollout.sh`, `guardrail.sh`, `stop.sh`, `resume.sh`, `usage.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
 - 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자다(`hub`, `demo2`). 정책 엔진, Runtime, 게이트웨이, bucket의 이름이 접두어로 시작하는데, 그 이름들의 규칙을 모두 지키는 모양이 이것이다. 다른 모양이면 Terraform(`make deploy`)과 Python 명령이 아무것도 만들기 전에 거부한다.
 
 `.env`를 읽는 규칙과 `Settings`의 접두어 거절은 단위 시험(`tests/test_hub_env.py`)이 확인한다. Terraform의 거절은 Terraform의 `validation`이 하는 것이고, 2026-11-22에 `terraform plan -var prefix=…`로 `my-hub`, `Hub`, `hub_1`이 `Invalid value for variable`로 거절되는 것을 봤다. AWS에서는 `.env` 없이 셸의 `AWS_REGION`과 기본값으로만 돌렸으므로, `.env`를 읽는 길은 AWS에서 확인하지 않았다.
@@ -80,7 +80,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "다섯 명령"). 지금의 배포 단계에서는 Deploy 단계가 244~266초였고, 그 가운데 221~241초는 build가 Runtime이 `READY`가 되기를 기다린 시간이다. 심사를 다진 뒤의 실행에서는 Scan 31~36초, Deploy 257초와 264초(그 가운데 `READY`를 기다린 시간 231초와 242초)였다. |
 | Lambda 일곱(심사 다섯, 샘플 도구 하나, 커스텀 가드레일의 interceptor 하나), Step Functions, EventBridge, SNS, SQS | 실행과 메시지마다. interceptor는 에이전트 게이트웨이에 붙어 있는 동안 호출마다 두 번(요청과 답) 돈다. |
 | Amazon Bedrock Guardrails(커스텀 가드레일의 guardrail 하나) | interceptor가 붙어 있는 동안 호출마다 두 번(요청과 답) 검사한다. Amazon Bedrock 요금 페이지(2026-11-22에 읽었다)는 검사한 글의 양(text unit, 1,000자까지가 하나)을 필터마다 매기고, 이 guardrail이 쓰는 두 필터(낱말 필터, 정규식의 민감 정보 필터)는 무료라고 적는다. 여기서는 요금을 확인하지 않았다. |
-| S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 열(Lambda 일곱, CodeBuild 둘, state machine 하나)은 14일 보관한다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
+| S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 열둘(Lambda 일곱, CodeBuild 둘, state machine 하나, 게이트웨이 둘)은 14일 보관한다. 에이전트와 게이트웨이의 span은 계정의 Transaction Search가 받는다(2026-11-22의 실행에서는 로그 그룹 `aws/spans`에 들어갔다). 그 설정은 계정의 것이라 허브가 바꾸지 않는다. span의 요금은 확인하지 않았다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
 | CloudWatch 알람 둘(모니터링의 `<prefix>-tool-calls`, 커스텀 가드레일의 `<prefix>-guardrail-errors`) | 알람이 있는 동안. CloudWatch 요금 페이지(2026-11-22에 읽었다)는 알람을 그 메트릭마다 시간 단위로 매기고, 무료 사용량(표준 해상도의 알람 메트릭 10개)이 있다고 적는다. 여기서는 확인하지 않았다. |
 | AWS Agent Registry, SSM 값(표준), IAM | 요금이 드는지 확인하지 않았다 |
 
@@ -93,9 +93,11 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 3. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`, 운영 중에 더하면 `guard_prompt_`, `stop_agent_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다.
 4. `make seed`가 넣은 공유 도구 record.
 5. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 3에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
-6. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, 커스텀 가드레일의 guardrail과 그 버전, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, 알람, SSM 값, 로그 그룹.
+6. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, 커스텀 가드레일의 guardrail과 그 버전, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, 알람, 게이트웨이 둘의 로그와 trace 전달(source, destination, delivery), SSM 값, 로그 그룹.
 
 마지막에 `e2e_checks/check_cleanup.py`가 접두어로 시작하는 자원이 남았는지 종류마다 찾아보고 `still present: nothing`(또는 남은 종류)을 찍는다. 읽기만 한다.
+
+에이전트와 게이트웨이의 span은 계정의 로그 그룹 `aws/spans`(Transaction Search)에 들어간다. 그 로그 그룹은 계정의 것이라 `make destroy`가 지우지 않고, span은 계정의 보관 기간(2026-11-22에 30일)까지 남는다. [모니터링](platform_team/agent_monitoring/README.md#무엇이-어디에-남는가)
 
 허브는 CDK를 쓰지 않으므로 계정의 CDK bootstrap(스택 `CDKToolkit`과 그 bucket)에 손대지 않는다. CLI로 배포하던 때의 실행은 그 bucket에 에이전트 코드의 사본(에이전트마다 31 MB 남짓의 zip 하나)과 CDK template을 남겼다. 허브는 이 사본을 지우지 않는다.
 
@@ -113,4 +115,5 @@ CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `
 - 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. `requirements.txt`에 적은 줄은 검사와 배포가 같은 파일을 쓴다. [호스팅 심사, requirements.txt 규칙](platform_team/hosting_review/README.md#requirementstxt-규칙)
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)
 - 커스텀 가드레일: interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부한다(알람이 알린다). 스트리밍 응답과, 에이전트를 둔 게이트웨이 너머의 호출은 이 리포의 코드로 확인하지 않았다. [커스텀 가드레일](platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
+- 에이전트의 trace와 메트릭: 실행 역할은 X-Ray에 trace를 `"*"`로 쓸 수 있고(이 action들에는 자원 종류가 없다), namespace `bedrock-agentcore`에 메트릭을 쓸 수 있다. 그 namespace는 계정의 다른 에이전트도 쓴다. span은 계정의 로그 그룹 `aws/spans`에 들어가고, 2026-11-22의 실행에서 그 span에는 모델의 토큰 수와 호출에 쓴 access key ID가 있었다. [호스팅 심사, 에이전트 실행 역할의 상한](platform_team/hosting_review/README.md#에이전트-실행-역할의-상한권한-경계), [모니터링, 에이전트의 trace](platform_team/agent_monitoring/README.md#에이전트의-trace)
 - 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남는다(2026-11-21의 확인 실행에서 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었다). harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다. `stop.sh`와 `resume.sh`는 아직 AWS에서 돌려 보지 않았다. [에이전트 멈추기와 재개, 한계](platform_team/agent_stop/README.md#한계)

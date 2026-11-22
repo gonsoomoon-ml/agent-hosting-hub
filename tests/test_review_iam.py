@@ -52,6 +52,26 @@ def test_the_boundary_allows_every_action_of_the_agent_role_and_no_wildcard():
     boundary = actions(document("agent_boundary"))
     assert granted and sorted(granted - set(boundary)) == [] and [a for a in boundary if "*" in a] == []
 
+def test_the_boundary_allows_what_the_agent_role_holds_for_tracing():
+    # The four X-Ray actions have no resource type in the Service Authorization Reference, so only "*" matches them;
+    # PutMetricData is held to the namespace bedrock-agentcore, as in the agent role (review_steps._execution_role).
+    boundary = document("agent_boundary")
+    traces = _statement(boundary, "Traces")
+    assert actions(traces) == ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules",
+                               "xray:GetSamplingTargets"]
+    assert _resources(traces) == ["*"] and "condition" not in traces
+    metrics = _statement(boundary, "OwnMetrics")
+    assert actions(metrics) == ["cloudwatch:PutMetricData"] and _resources(metrics) == ["*"]
+    assert re.search(r'condition\s*{\s*test\s*=\s*"StringEquals"\s*variable\s*=\s*"cloudwatch:namespace"\s*'
+                     r'values\s*=\s*\["bedrock-agentcore"\]\s*}', metrics)
+    assert [s for s in statements(boundary) if '["*"]' in s] == [traces, metrics]     # nothing else on "*"
+    assert "logs:PutResourcePolicy" not in boundary
+    from platform_team.hosting_review.review_steps import _execution_role
+    from tests.fakes import ENV
+    _, perms = _execution_role(ENV, "quality_agent")
+    held = {a for s in perms["Statement"] for a in s["Action"] if a.startswith(("xray:", "cloudwatch:"))}
+    assert held == set(actions(traces)) | set(actions(metrics))
+
 def test_approve_can_read_the_record_again():
     assert "agent-registry:GetRegistryRecord" in document("approve")
 

@@ -30,7 +30,7 @@
 - 직접 참조(`pkg @ URL`, URL, `file:`, 경로): 검사가 내용을 볼 수 없는 코드가 설치된다.
 - 환경 표시(`; python_version >= "3.10"`): 검사와 배포가 서로 다른 기계를 기준으로 판단해 검사에서 빠진 줄이 배포에서 설치될 수 있다. Runtime은 Linux aarch64, CPython 3.13 하나다.
 
-설치는 그 환경의 wheel만 받는다. 템플릿의 `bedrock-agentcore`, `boto3`, `botocore`는 `main.py`와 `hub_tools.py`가 쓰므로 지우지 않는다. Runtime에는 `requirements.txt`에 적은 패키지만 있다.
+설치는 그 환경의 wheel만 받는다. 템플릿의 `bedrock-agentcore`, `boto3`, `botocore`는 `main.py`와 `hub_tools.py`가 쓰므로 지우지 않는다. `aws-opentelemetry-distro`도 지우지 않는다. 허브는 Runtime을 `opentelemetry-instrument main.py`로 띄워 에이전트가 trace를 내게 하는데, 그 명령이 이 패키지에 들어 있다. AgentCore 개발자 안내서의 코드 배포 문제 해결("Troubleshooting direct code deployment", 2026-11-22에 읽었다)은 Node.js에서 이 명령에 필요한 패키지가 묶음에 없으면 Runtime을 만들 때 실패한다고 적고, Python의 경우는 적지 않는다. 이 패키지 없이 띄우는 것은 여기서 해 보지 않았다. Runtime에는 `requirements.txt`에 적은 패키지만 있다.
 
 ## 팀이 쓰지 않는 것
 

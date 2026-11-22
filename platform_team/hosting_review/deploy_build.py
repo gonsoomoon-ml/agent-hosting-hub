@@ -43,7 +43,11 @@ REQUIRED_ENV = ("AGENT", "CODE_KEY", "CODE_VERSION", "ROLE_ARN", "BUCKET", "PREF
 PLATFORM_OWNED = ("pyproject.toml", "uv.lock", "uv.toml", ".python-version")
 # What the Runtime runs (runtime_config): CPython 3.13 on Linux arm64, so the wheels are for that platform.
 RUNTIME_PLATFORM, RUNTIME_PYTHON, RUNTIME_VERSION = "aarch64-manylinux2014", "3.13", "PYTHON_3_13"
-ENTRY_POINT = "main.py"
+# main.py started under the OpenTelemetry wrapper, so the agent sends traces: the entry point of the AWS guide's
+# direct code deployment for Python ("Direct code deployment for Python", AgentCore developer guide, read on
+# 2026-11-22). The wrapper comes from the ADOT package (aws-opentelemetry-distro), which the agent template's
+# requirements.txt pins; the service model takes at most two items.
+ENTRY_POINT = ("opentelemetry-instrument", "main.py")
 CREATE_TRIES, CREATE_STEP = 8, 15      # the execution role Grant made a moment ago may not be usable yet
 READY_WAIT, READY_STEP = 900, 10       # s, until the new Runtime version is READY
 # An AccessDeniedException whose message holds one of these: the deploy role itself lacks the action (an AgentCore
@@ -96,12 +100,13 @@ def package(src: Path, site: Path, out: Path) -> int:
 
 
 def runtime_config(env: dict, key: str) -> dict:
-    """The arguments that create and update the Runtime alike: the package at `key` in the inbox, the execution role
-    Grant made, a public network, HTTP, and the hub's four environment variables."""
+    """The arguments that create and update the Runtime alike: the package at `key` in the inbox, started with
+    tracing on (ENTRY_POINT), the execution role Grant made, a public network, HTTP, and the hub's four environment
+    variables."""
     s = _settings(env)
     return {
         "agentRuntimeArtifact": {"codeConfiguration": {"code": {"s3": {"bucket": env["BUCKET"], "prefix": key}},
-                                                       "runtime": RUNTIME_VERSION, "entryPoint": [ENTRY_POINT]}},
+                                                       "runtime": RUNTIME_VERSION, "entryPoint": list(ENTRY_POINT)}},
         "roleArn": env["ROLE_ARN"],
         "networkConfiguration": {"networkMode": "PUBLIC"},
         "protocolConfiguration": {"serverProtocol": "HTTP"},

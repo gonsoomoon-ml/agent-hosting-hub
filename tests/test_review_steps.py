@@ -238,6 +238,21 @@ def test_an_agent_role_may_call_its_model_and_no_other():
         "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
         "arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"]
 
+def test_an_agent_role_may_send_traces_and_its_own_metrics():
+    # The AWS example of a Runtime execution role (IAM Permissions for AgentCore Runtime, read on 2026-11-22): the four
+    # X-Ray actions on "*" (the Service Authorization Reference gives them no resource type), and PutMetricData only
+    # into the namespace bedrock-agentcore.
+    _, perms = steps._execution_role(ENV, "quality_agent")
+    [xray] = [s for s in perms["Statement"] if any(a.startswith("xray:") for a in s["Action"])]
+    assert xray == {"Effect": "Allow", "Action": ["xray:PutTraceSegments", "xray:PutTelemetryRecords",
+                                                 "xray:GetSamplingRules", "xray:GetSamplingTargets"], "Resource": ["*"]}
+    [metrics] = [s for s in perms["Statement"] if "cloudwatch:PutMetricData" in s["Action"]]
+    assert metrics == {"Effect": "Allow", "Action": ["cloudwatch:PutMetricData"], "Resource": ["*"],
+                       "Condition": {"StringEquals": {"cloudwatch:namespace": "bedrock-agentcore"}}}
+    on_everything = [s for s in perms["Statement"] if "*" in s["Resource"]]
+    assert on_everything == [xray, metrics]             # nothing else of the role is on "*"
+    assert not [a for s in perms["Statement"] for a in s["Action"] if a.startswith("logs:PutResourcePolicy")]
+
 def test_grant_gives_the_agent_role_the_model_of_its_environment():
     # A model ID without a cross-Region prefix (us., eu., ...) names a foundation model of the hub's Region.
     c = FakeClients()

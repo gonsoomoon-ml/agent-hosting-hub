@@ -213,6 +213,54 @@ def test_the_start_point_gives_the_monitoring_the_tool_gateway():
     module = re.search(r'module\s+"agent_monitoring"\s*{(.*?)\n}', root, re.S).group(1)
     assert re.search(r"tool_gateway_arn\s*=\s*module\.tool_gateway\.gateway_arn\b", module)
 
+# ------------------------------------------------------------------ the gateways' logs and traces
+
+def test_each_gateway_delivers_its_logs_to_its_own_log_group_and_its_traces_to_xray():
+    tf = (MONITORING / "main.tf").read_text()
+    gateways = re.search(r"\n  gateways = {(.*?)\n  }", tf, re.S).group(1)
+    assert re.findall(r"(\w+)\s*=\s*(var\.\w+)", gateways) == [("agents", "var.agent_gateway_arn"), ("tools", "var.tool_gateway_arn")]
+    group = block("aws_cloudwatch_log_group", "gateway")
+    assert re.search(r"for_each\s*=\s*local\.gateways\b", group)
+    assert re.search(r'name\s*=\s*"/aws/vendedlogs/bedrock-agentcore/\$\{var\.prefix\}-\$\{each\.key\}"', group)
+    assert re.search(r"retention_in_days\s*=\s*14\b", group)
+    for kind, log_type in (("logs", "APPLICATION_LOGS"), ("traces", "TRACES")):
+        source = block("aws_cloudwatch_log_delivery_source", f"gateway_{kind}")
+        assert re.search(r"for_each\s*=\s*local\.gateways\b", source), kind
+        assert re.search(r'name\s*=\s*"\$\{var\.prefix\}-\$\{each\.key\}-%s"' % kind, source), kind
+        assert re.search(r'log_type\s*=\s*"%s"' % log_type, source) and re.search(r"resource_arn\s*=\s*each\.value\b", source)
+        delivery = block("aws_cloudwatch_log_delivery", f"gateway_{kind}")
+        assert re.search(r"for_each\s*=\s*local\.gateways\b", delivery), kind
+        assert re.search(r"delivery_source_name\s*=\s*aws_cloudwatch_log_delivery_source\.gateway_%s\[each\.key\]\.name" % kind, delivery)
+        assert re.search(r"delivery_destination_arn\s*=\s*aws_cloudwatch_log_delivery_destination\.gateway_%s\[each\.key\]\.arn" % kind,
+                         delivery)
+    logs = block("aws_cloudwatch_log_delivery_destination", "gateway_logs")
+    assert re.search(r'name\s*=\s*"\$\{var\.prefix\}-\$\{each\.key\}-logs"', logs)
+    assert re.search(r"delivery_destination_configuration\s*{\s*destination_resource_arn\s*=\s*"
+                     r"aws_cloudwatch_log_group\.gateway\[each\.key\]\.arn\s*}", logs)
+    traces = block("aws_cloudwatch_log_delivery_destination", "gateway_traces")
+    assert re.search(r'name\s*=\s*"\$\{var\.prefix\}-\$\{each\.key\}-traces"', traces)
+    assert re.search(r'delivery_destination_type\s*=\s*"XRAY"', traces) and "delivery_destination_configuration" not in traces
+    variables = (MONITORING / "variables.tf").read_text()
+    assert "default" not in re.search(r'variable\s+"agent_gateway_arn"\s*{(.*?)\n}', variables, re.S).group(1)
+
+def test_the_log_delivery_writes_to_the_gateway_log_groups_under_the_hubs_own_resource_policy():
+    # Without a resource policy of its own, the delivery adds a statement to the account's shared policy, which
+    # `terraform destroy` would leave behind (the state machine's log has the same policy, hosting_review).
+    policy = block("aws_cloudwatch_log_resource_policy", "gateway_logs")
+    assert re.search(r'policy_name\s*=\s*"\$\{var\.prefix\}-gateway-logs"', policy)
+    assert 'Principal = { Service = "delivery.logs.amazonaws.com" }' in policy
+    assert re.search(r'Action\s*=\s*\["logs:CreateLogStream", "logs:PutLogEvents"\]', policy)
+    assert re.search(r'Resource\s*=\s*\[for g in aws_cloudwatch_log_group\.gateway : "\$\{g\.arn\}:log-stream:\*"\]', policy)
+    assert re.search(r'StringEquals\s*=\s*{\s*"aws:SourceAccount"\s*=\s*local\.account\s*}', policy)
+    delivery = block("aws_cloudwatch_log_delivery", "gateway_logs")
+    assert re.search(r"depends_on\s*=\s*\[aws_cloudwatch_log_resource_policy\.gateway_logs\]", delivery)
+
+def test_the_start_point_gives_the_monitoring_both_gateways():
+    root = (ROOT / "terraform" / "main.tf").read_text()
+    module = re.search(r'module\s+"agent_monitoring"\s*{(.*?)\n}', root, re.S).group(1)
+    assert re.search(r"agent_gateway_arn\s*=\s*module\.agent_gateway\.gateway_arn\b", module)
+    assert re.search(r"tool_gateway_arn\s*=\s*module\.tool_gateway\.gateway_arn\b", module)
+
 def test_the_watched_tool_is_a_catalog_tool_that_quality_agent_applies_for():
     from platform_team.sample_tools.tool_schema import TARGETS
     watched = re.search(r'variable\s+"watched_tool"\s*{[^}]*default\s*=\s*"(\w+)"', (MONITORING / "variables.tf").read_text()).group(1)

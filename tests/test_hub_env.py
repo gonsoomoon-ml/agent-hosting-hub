@@ -1,5 +1,5 @@
 """The hub's settings outside Python: one rule for .env (make, publish.sh, reject.sh, rollout.sh, guardrail.sh, stop.sh,
-resume.sh, e2e_hosting.py), the prefix rule, the model ID default, and the Makefile's destroy. Each test runs on a copy
+resume.sh, usage.sh, e2e_hosting.py), the prefix rule, the model ID default, and the Makefile's destroy. Each test runs on a copy
 of the files in a temporary folder, so it never reads or writes a real .env."""
 import os
 import pathlib
@@ -15,6 +15,7 @@ PUBLISH, REJECT = "dev_team/agent_template/publish.sh", "platform_team/hosting_r
 ROLLOUT = "platform_team/company_policy/rollout.sh"
 GUARDRAIL = "platform_team/custom_guardrail/guardrail.sh"
 STOP, RESUME = "platform_team/agent_stop/stop.sh", "platform_team/agent_stop/resume.sh"
+USAGE = "platform_team/agent_monitoring/usage.sh"
 RULE = "platform_team/shared_code/hub_env.sh"                  # every command sources it
 SHOWN = "prefix=$DEMO_PREFIX region=$AWS_REGION model=$MODEL_ID loaded=${HUB_ENV_LOADED:-no} key=${AWS_ACCESS_KEY_ID:-none} token=${SOME_TOKEN:-none}"
 DOTENV = ("DEMO_PREFIX=fromdotenv\nMODEL_ID=model-from-dotenv\nAWS_ACCESS_KEY_ID=key-of-the-dotenv\n"
@@ -22,10 +23,10 @@ DOTENV = ("DEMO_PREFIX=fromdotenv\nMODEL_ID=model-from-dotenv\nAWS_ACCESS_KEY_ID
 
 
 def _copy(tmp_path) -> tuple[pathlib.Path, dict]:
-    """A copy of the Makefile and the six commands, a stub uv that prints what it was given, and a clean environment:
+    """A copy of the Makefile and the seven commands, a stub uv that prints what it was given, and a clean environment:
     the shell sets the prefix, the region and an access key, and nothing says .env was read already."""
     repo = tmp_path / "repo"
-    for name in ("Makefile", PUBLISH, REJECT, ROLLOUT, GUARDRAIL, STOP, RESUME, RULE):
+    for name in ("Makefile", PUBLISH, REJECT, ROLLOUT, GUARDRAIL, STOP, RESUME, USAGE, RULE):
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_bytes((ROOT / name).read_bytes())
         (repo / name).chmod(0o755)
@@ -54,6 +55,7 @@ COMMANDS = {"publish.sh": lambda repo: [str(repo / PUBLISH), str(repo / "dev_tea
             "guardrail.sh": lambda repo: [str(repo / GUARDRAIL), "status"],
             "stop.sh": lambda repo: [str(repo / STOP), "quality_agent", "--session", "a" * 36],
             "resume.sh": lambda repo: [str(repo / RESUME), "quality_agent"],
+            "usage.sh": lambda repo: [str(repo / USAGE), "30"],
             "make publish": lambda repo: ["make", "-s", "publish", "AGENT=some_agent"]}
 
 
@@ -80,7 +82,8 @@ def test_a_value_on_the_make_command_line_wins_and_the_command_does_not_read_env
     assert "prefix=fromcmdline" in out and "model=model-from-dotenv" in out and "loaded=1" in out
 
 
-@pytest.mark.parametrize("command", ["publish.sh", "reject.sh", "rollout.sh", "guardrail.sh", "stop.sh", "resume.sh"])
+@pytest.mark.parametrize("command", ["publish.sh", "reject.sh", "rollout.sh", "guardrail.sh", "stop.sh", "resume.sh",
+                                     "usage.sh"])
 def test_a_command_told_env_was_read_already_does_not_read_it(tmp_path, command):
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text(DOTENV)
@@ -100,7 +103,7 @@ def test_the_e2e_script_reads_env_by_the_same_rule(tmp_path):
 
 def test_an_empty_line_in_the_env_file_is_no_value_for_any_reader(tmp_path):
     """shell DEMO_PREFIX=fromshell, .env line `DEMO_PREFIX=`: make, publish.sh, reject.sh, rollout.sh, guardrail.sh,
-    stop.sh, resume.sh and env_file_updates all use fromshell."""
+    stop.sh, resume.sh, usage.sh and env_file_updates all use fromshell."""
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text("DEMO_PREFIX=\nMODEL_ID=model-from-dotenv\n")
     for command in COMMANDS:
@@ -118,7 +121,7 @@ def test_an_empty_line_in_the_env_file_is_no_value_for_any_reader(tmp_path):
 
 def test_nothing_else_from_the_env_file_reaches_stdout_or_stderr(tmp_path):
     """.env holds SOME_TOKEN=do-not-export: the value is in neither stream of publish.sh, reject.sh, rollout.sh,
-    guardrail.sh, stop.sh, resume.sh or `make publish`."""
+    guardrail.sh, stop.sh, resume.sh, usage.sh or `make publish`."""
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text(DOTENV)
     for command in COMMANDS:

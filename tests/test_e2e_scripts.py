@@ -60,6 +60,43 @@ def test_cleanup_check_knows_the_hubs_names_and_no_others():
         assert not check_cleanup.hub_name(s, name), name
 
 
+def test_cleanup_check_lists_the_log_deliveries_and_the_gateway_log_groups(monkeypatch, tmp_path):
+    """Delivery sources and destinations by name, deliveries by the name of their source, and the log groups under
+    /aws/vendedlogs/bedrock-agentcore/; the hub's are the names hub_name takes. The calls are checked against the
+    service model (a real logs client in a botocore Stubber)."""
+    import boto3
+    from botocore.stub import Stubber
+    from platform_team.shared_code.aws_helpers import Clients
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-credentials"))
+    s = Settings()
+    c = Clients(boto3.Session(region_name="us-west-2", aws_access_key_id="test-access-key", aws_secret_access_key="example"))
+    kinds = check_cleanup.kinds(s, c)
+    gw = "arn:aws:bedrock-agentcore:us-west-2:123456789012:gateway/hub-agents-abcdefghij"
+    with Stubber(c.logs) as st:
+        st.add_response("describe_delivery_sources", {"deliverySources": [
+            {"name": "hub-agents-logs", "resourceArns": [gw], "logType": "APPLICATION_LOGS"},
+            {"name": "other_runtime-abcdefghij-traces-source", "logType": "TRACES"}]}, {})
+        st.add_response("describe_delivery_destinations", {"deliveryDestinations": [
+            {"name": "hub-agents-traces", "deliveryDestinationType": "XRAY"}, {"name": "someone-elses"}]}, {})
+        st.add_response("describe_deliveries", {"deliveries": [
+            {"id": "abcdefghij123456", "deliverySourceName": "hub-tools-logs"},
+            {"id": "abcdefghij654321", "deliverySourceName": "other_runtime-abcdefghij-traces-source"}]}, {})
+        for prefix in ("/aws/lambda/", "/aws/codebuild/", "/aws/vendedlogs/states/", "/aws/vendedlogs/bedrock-agentcore/",
+                       "/aws/bedrock-agentcore/runtimes/"):
+            groups = [{"logGroupName": "/aws/vendedlogs/bedrock-agentcore/hub-tools"}] if "bedrock-agentcore/" in prefix \
+                and "vendedlogs" in prefix else []
+            st.add_response("describe_log_groups", {"logGroups": groups}, {"logGroupNamePrefix": prefix})
+        found = {kind: kinds[kind]() for kind in ("log delivery sources", "log delivery destinations", "log deliveries",
+                                                  "log groups")}
+        st.assert_no_pending_responses()
+    assert found["log delivery sources"] == ["hub-agents-logs", "other_runtime-abcdefghij-traces-source"]
+    assert [n for n in found["log delivery destinations"] if check_cleanup.hub_name(s, n)] == ["hub-agents-traces"]
+    assert [n for n in found["log deliveries"] if check_cleanup.hub_name(s, n)] == ["hub-tools-logs"]
+    assert found["log groups"] == ["/aws/vendedlogs/bedrock-agentcore/hub-tools"]
+    assert check_cleanup.hub_name(s, found["log groups"][0].rsplit("/", 1)[-1])
+
+
 # ------------------------------------------------------------------ fix round 1: checks 2 and 4 assert what their lines say
 
 REFUSED = ('{"jsonrpc":"2.0","id":1,"error":{"code":-32002,"message":"Tool Execution Denied: Tool call not allowed due to '

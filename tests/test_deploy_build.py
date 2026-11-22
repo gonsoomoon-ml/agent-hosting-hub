@@ -96,14 +96,33 @@ def test_the_package_is_the_same_for_the_same_files(tmp_path):
 def test_the_runtime_gets_the_agents_role_and_the_hubs_four_variables():
     cfg = runtime_config(ENV, "packages/quality_agent/v1.zip")
     assert cfg["roleArn"] == ENV["ROLE_ARN"] and sorted(cfg["environmentVariables"]) == ["AGENT_NAME", "HUB_REGION", "MODEL_ID", "TOOL_GATEWAY_URL"]
-    assert cfg["agentRuntimeArtifact"]["codeConfiguration"]["entryPoint"] == ["main.py"]
+    assert cfg["agentRuntimeArtifact"]["codeConfiguration"]["entryPoint"] == ["opentelemetry-instrument", "main.py"]
     assert cfg == {
         "agentRuntimeArtifact": {"codeConfiguration": {
             "code": {"s3": {"bucket": "hub-123456789012-us-west-2", "prefix": "packages/quality_agent/v1.zip"}},
-            "runtime": "PYTHON_3_13", "entryPoint": ["main.py"]}},
+            "runtime": "PYTHON_3_13", "entryPoint": ["opentelemetry-instrument", "main.py"]}},
         "roleArn": ROLE, "networkConfiguration": {"networkMode": "PUBLIC"}, "protocolConfiguration": {"serverProtocol": "HTTP"},
         "environmentVariables": {"HUB_REGION": "us-west-2", "TOOL_GATEWAY_URL": GW, "MODEL_ID": MODEL, "AGENT_NAME": "quality_agent"},
         "description": "hosted agent"}
+
+ADOT = "aws-opentelemetry-distro==0.24.0"       # PyPI's latest on 2026-11-22
+
+
+def test_the_runtime_is_started_with_tracing_on():
+    # The AWS guide's direct code deployment for Python: entryPoint ["opentelemetry-instrument", "main.py"], with the
+    # ADOT package (aws-opentelemetry-distro) in the code package. The service model takes at most two items.
+    import botocore.session
+    entry = runtime_config(ENV, "packages/quality_agent/v1.zip")["agentRuntimeArtifact"]["codeConfiguration"]["entryPoint"]
+    assert entry == ["opentelemetry-instrument", "main.py"]
+    model = botocore.session.get_session().get_service_model("bedrock-agentcore-control")
+    shape = model.operation_model("CreateAgentRuntime").input_shape.members["agentRuntimeArtifact"]
+    entry_shape = shape.members["codeConfiguration"].members["entryPoint"]
+    assert len(entry) <= entry_shape.metadata["max"] == 2
+    # the package comes from requirements.txt: the template and every agent folder hold the pin (a variant only adds lines)
+    dev = Path(d.__file__).resolve().parents[2] / "dev_team"
+    for req in [dev / "agent_template" / "requirements.txt", *sorted(dev.glob("*/requirements.txt")),
+                *sorted(dev.glob("*/variants/*/requirements.txt"))]:
+        assert ADOT in req.read_text().splitlines(), req
 
 def test_a_first_deploy_creates_the_runtime_and_a_later_one_updates_it():
     c = FakeClients()

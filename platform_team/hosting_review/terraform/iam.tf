@@ -192,6 +192,21 @@ data "aws_iam_policy_document" "agent_boundary" {
     resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
   }
   statement {
+    sid       = "Traces" # the agent's spans (the AWS example of a Runtime execution role). The Service Authorization Reference gives these actions no resource type, so only "*" matches them
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets"]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "OwnMetrics" # the agent's own metrics, into the namespace bedrock-agentcore only (the same example)
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["bedrock-agentcore"]
+    }
+  }
+  statement {
     sid       = "ToolGateway"
     actions   = ["bedrock-agentcore:InvokeGateway"]
     resources = [var.tool_gateway_arn]

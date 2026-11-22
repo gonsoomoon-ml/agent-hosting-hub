@@ -10,7 +10,12 @@ variable "alert_email" {
 }
 
 variable "tool_gateway_arn" {
-  description = "The tool gateway (tool_gateway): the alarm counts calls of one of its tools"
+  description = "The tool gateway (tool_gateway): the alarm counts calls of one of its tools; its logs and traces are delivered"
+  type        = string
+}
+
+variable "agent_gateway_arn" {
+  description = "The agent gateway (agent_gateway): its logs and traces are delivered"
   type        = string
 }
 
