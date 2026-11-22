@@ -48,8 +48,9 @@ def test_printed_lines_hold_no_account_id_and_no_other_long_number(monkeypatch):
 
 def test_cleanup_check_knows_the_hubs_names_and_no_others():
     s = Settings()
-    for name in ("hub-agents", "hub_pe", "hubQualityAgent_default_agent-eHcqNQ7n5v", "AgentCore-hubQualityAgent-default",
-                 "/hub/platform/bucket", "hub-e2e-alerts"):
+    for name in ("hub-agents", "hub_pe", "hub_quality_agent", "hub_quality_agent-eHcqNQ7n5v-DEFAULT",
+                 "/hub/platform/bucket", "hub-e2e-alerts",
+                 "hubQualityAgent_default_agent-eHcqNQ7n5v", "AgentCore-hubQualityAgent-default"):     # the CLI's names
         assert check_cleanup.hub_name(s, name), name
     for name in ("hubwhole-agents", "hubspot", "github-runner", "other_team_runtime", "CDKToolkit",
                  "AgentCore-otherTeam-default", "/hubwhole/x"):
@@ -84,6 +85,15 @@ def test_check_9_finds_a_runtime_on_a_later_page():
     from tests.fakes import PLATFORM, FakeClients
     c = FakeClients()
     pages = {None: {"agentRuntimes": [{"agentRuntimeName": f"other_{i}"} for i in range(100)], "nextToken": "p2"},
-             "p2": {"agentRuntimes": [{"agentRuntimeName": "hubQualityAgent_default_agent"}]}}
+             "p2": {"agentRuntimes": [{"agentRuntimeName": "hub_quality_agent"}]}}
     c.ctl.list_agent_runtimes = lambda **kw: pages[kw.get("nextToken")]
-    assert e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent") == {"Runtime": ["hubQualityAgent_default_agent"]}
+    assert e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent") == {"Runtime": ["hub_quality_agent"]}
+
+
+def test_check_9_sees_every_kind_a_passed_review_makes():
+    from tests.fakes import PLATFORM, SPEC, FakeClients
+    from tests.test_reject import _review
+    c = FakeClients()
+    _review(c, SPEC)                                 # what a passed review leaves for quality_agent
+    assert sorted(e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent")) == list(e2e.MADE_BY_A_REVIEW)
+    assert e2e.nothing_made(c, Settings(), PLATFORM, "release_review") == {}

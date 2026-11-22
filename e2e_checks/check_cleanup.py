@@ -4,9 +4,11 @@
 
 One line per kind of resource, with the names of the hub's that are still there, then
 `still present: nothing` or the kinds that still hold something (exit code 1).
-A name is the hub's when it has the hub's prefix the way the hub writes it: <prefix>-..., <prefix>_..., /<prefix>/...,
-or <prefix> followed by an upper-case letter (CLI projects, Runtimes, stacks). Nothing is changed.
-Kept on purpose and not listed: the code CDK uploaded to the account's CDK bootstrap bucket (shared with other stacks).
+A name is the hub's when it has the hub's prefix the way the hub writes it: <prefix>-..., <prefix>_... (the Runtimes
+<prefix>_<agent>), /<prefix>/.... Two more shapes are the names an AgentCore CLI deploy gives: <prefix> followed by
+an upper-case letter (its projects and Runtimes) and AgentCore-<prefix>... (its CloudFormation stacks). The hub
+makes no such names now; they are still looked for, so what an earlier version of the hub left is listed too.
+Nothing is changed.
 Not seen: the workload identity the registry service makes for itself. It is named registry-<registry ID>, without
 the hub's prefix, so hub_name cannot tell it from another registry's; it goes with the registry (in the recorded run
 a listing by hand showed it gone).

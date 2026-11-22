@@ -75,7 +75,7 @@ def application(rec: dict, env: dict) -> tuple[dict, str]:
     if app.get("name") != rec.get("name"):
         problems.append(f"the application's name {_shown(app.get('name'))} is not the record's name "
                         f"{_shown(rec.get('name'))}")
-    problems += application_form.validate(app, set(filter(None, env["CATALOG_TOOLS"].split(","))), _settings(env))
+    problems += application_form.validate(app, set(filter(None, env["CATALOG_TOOLS"].split(","))))
     problems += [f"missing: {k}" for k in ("code_key", "code_version") if not app.get(k)]
     key, version = app.get("code_key"), app.get("code_version")
     if key and not (isinstance(key, str) and key.startswith(SUBMISSIONS) and len(key) > len(SUBMISSIONS)):

@@ -44,7 +44,7 @@ def reject(c, s: Settings, p: Platform, agent: str, reason: str) -> dict:
     The registry rejects a record that is pending approval. A record already REJECTED keeps its status and reason
     and is cleaned again (a run after one that stopped part way). An APPROVED record is refused: approved agents are
     stopped, not rejected. Any other status, a missing record or a blank reason is refused too, and so is a record
-    whose review is still running (running_reviews) and an agent whose role or stack is not this hub's
+    whose review is still running (running_reviews) and an agent whose role or Runtime is not this hub's
     (agent_cleanup.check_agent); then nothing changes."""
     check_name(agent)
     reason = (reason or "").strip()
@@ -63,7 +63,7 @@ def reject(c, s: Settings, p: Platform, agent: str, reason: str) -> dict:
     running = running_reviews(c, p, rec["recordId"])
     if running:                     # its steps would make again what this removes
         raise ValueError(f"a review of record {agent} is still running ({', '.join(running)}): reject after it stops")
-    check_agent(c, s, agent)        # reads only: a role or stack that is not this hub's stops it here
+    check_agent(c, s, agent)        # reads only: a role or Runtime that is not this hub's stops it here
     if status == "PENDING_APPROVAL":
         set_status(c, p.registry_id, rec["recordId"], "REJECTED", reason)
     return {"status": "REJECTED", "removed": remove_agent(c, s, p, agent)}

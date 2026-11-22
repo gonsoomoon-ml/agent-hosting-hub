@@ -1,10 +1,11 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
-# found by running (checks/whole-process). The steps that handle submitted code (scan, deploy) can read the
-# submission, and their own policies hold no action that grants. The deploy role, though, assumes the CDK bootstrap
-# roles, and with the default bootstrap these reach the CloudFormation execution role, which is AdministratorAccess:
-# in the default setup the separation is whole for scan only (hosting_review/README.md, the deploy step's known
-# limit). The steps that grant (Lambda) never open the submitted code.
+# found by running. The steps that handle submitted code (scan, deploy) can read the submission and hold no action
+# that grants. Scan only reads. Deploy can create and update the hub's Runtimes and pass them an agent role that
+# Grant made; it cannot make a role, a policy, a gateway target or an approval. Its one limit: one deploy role serves
+# every review, so code that runs in the deploy build could change another agent's Runtime or pass it another
+# agent's role (every agent role stays under the agent boundary) (hosting_review/README.md, the known limit).
+# The steps that grant (Lambda) never open the submitted code.
 
 locals {
   agentcore  = "arn:aws:bedrock-agentcore:${local.region}:${local.account}"
@@ -193,10 +194,8 @@ resource "aws_iam_policy" "agent_boundary" {
 }
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
-# The CLI path (agentcore deploy): CloudFormation creates the Runtime through the CDK bootstrap roles, so this role
-# needs no bedrock-agentcore action and no iam:PassRole. Known limit: the CDK roles lead to the CDK execution role,
-# which the default bootstrap makes AdministratorAccess, so code run in the deploy build is an administrator of the
-# account (README.md).
+# The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
+# reaches the Runtimes whose names start with <prefix>_ and passes only the agent roles, to AgentCore only.
 
 data "aws_iam_policy_document" "deploy" {
   statement {
@@ -215,14 +214,31 @@ data "aws_iam_policy_document" "deploy" {
     resources = [local.hub_code]
   }
   statement {
-    sid       = "CdkBootstrapRoles" # found by running (Task 0): asset publishing, deploy and lookup roles of this account and Region
-    actions   = ["sts:AssumeRole"]
-    resources = ["arn:aws:iam::${local.account}:role/cdk-hnb659fds-*-${local.account}-${local.region}"]
+    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject as in the run that passed (its agent role had no S3 action)
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid       = "TransactionSearchCheck" # found by running (Task 0): the CLI only reads it; the action has no resource type
-    actions   = ["xray:GetTraceSegmentDestination"]
+    sid = "TheAgentsRuntime" # create or update <prefix>_<agent> and wait until READY; the endpoint actions were found by running
+    actions = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
+      "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
+    "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity"]
+    resources = ["${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/*"]
+  }
+  statement {
+    sid       = "FindTheRuntime" # list_agent_runtimes, every page, to find <prefix>_<agent> by name. It reads names, IDs and status only. The Service Authorization Reference gives the action no resource type, so only "*" matches it (not checked by running)
+    actions   = ["bedrock-agentcore:ListAgentRuntimes"]
     resources = ["*"]
+  }
+  statement {
+    sid       = "PassAgentRole" # roleArn of the Runtime: an execution role Grant made, handed to AgentCore only
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["bedrock-agentcore.amazonaws.com"]
+    }
   }
   statement {
     sid       = "WriteTheRuntimeArn" # put_parameter /<prefix>/agents/<agent>/runtime_arn, read by Entry

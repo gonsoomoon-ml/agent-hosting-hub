@@ -38,8 +38,8 @@ deploy: package
 seed:
 	$(SEED)
 
-# Outside Terraform's state: what the hosting review made for each agent (policies, gateway target, Runtime stack and
-# logs, execution role, SSM values), the agents' catalog records and the seeded record. An agent role keeps the
+# Outside Terraform's state: what the hosting review made for each agent (policies, gateway target, Runtime and its
+# logs, code packages, execution role, SSM values), the agents' catalog records and the seeded record. An agent role keeps the
 # boundary policy from being deleted, and a registry with records cannot be deleted: they all go first, the agents
 # before the seed. Then `agent_cleanup --records` deletes any record still in the hub's registry (another type, a name
 # the rules refuse) and prints each one. If a step fails, terraform destroy does not run.

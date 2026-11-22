@@ -1,10 +1,11 @@
 # The hosting review: a catalog record that asks for approval starts a Step Functions state machine.
 # Read, Grant, Entry, TestCall and Approve are Lambda functions (review_steps.py): they grant, and never open the
 # submitted code. Scan and Deploy are CodeBuild projects (the buildspecs in ../): they handle the submitted code, and
-# their roles' own policies hold no action that grants. Deploy's role assumes the CDK bootstrap roles, which with the
-# default bootstrap lead to an AdministratorAccess execution role, so by default the separation is whole for Scan
-# only (../README.md, the deploy step's known limit). Every step has its own role (iam.tf). A failed step publishes
-# to the alert topic.
+# their roles hold no action that grants. Scan only reads. Deploy can create and update the hub's Runtimes and pass
+# them an agent role that Grant made; it cannot make a role, a policy, a gateway target or an approval. Its one
+# limit: one deploy role serves every review, so code that runs in the deploy build could change another agent's
+# Runtime or pass it another agent's role (every agent role stays under the agent boundary) (../README.md, the known
+# limit). Every step has its own role (iam.tf). A failed step publishes to the alert topic.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
@@ -148,7 +149,7 @@ resource "aws_cloudwatch_log_group" "deploy" {
 
 resource "aws_codebuild_project" "deploy" {
   name          = "${var.prefix}-review-deploy"
-  description   = "Hosting review, Deploy: put the submission on AgentCore Runtime with the AgentCore CLI"
+  description   = "Hosting review, Deploy: package the submission and create or update its AgentCore Runtime"
   service_role  = aws_iam_role.deploy.arn
   build_timeout = 30
   source {

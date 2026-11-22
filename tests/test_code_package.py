@@ -18,7 +18,8 @@ def test_package_holds_the_hub_code_boto3_and_the_tool_schemas(tmp_path):
     names = zipfile.ZipFile(tmp_path / "platform_team.zip").namelist()
     assert "platform_team/sample_tools/tool_handler.py" in names and "platform_team/shared_code/config.py" in names
     assert "platform_team/company_policy/policy_templates/tool-permit.cedar" in names
-    assert "platform_team/hosting_review/runtime_skeleton/agentcore.json.tmpl" in names    # the deploy build reads it
+    assert "platform_team/hosting_review/deploy_build.py" in names                         # the deploy build runs it
+    assert not any(n.startswith("platform_team/hosting_review/runtime_skeleton/") for n in names)
     assert not any(n.endswith(".tf") for n in names)
     assert any(n.startswith("boto3/") for n in names) and any(n.startswith("botocore/data/bedrock-agentcore-control/") for n in names)
     assert not any(n.startswith("botocore/data/ec2/") for n in names)           # unused API models are dropped

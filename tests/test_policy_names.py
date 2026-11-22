@@ -65,11 +65,11 @@ def test_an_agent_name_that_is_not_lower_case_segments_is_refused(name):
     assert any(p.startswith("name must") for p in validate({**APP, "name": name}, CATALOG))
 
 
-def test_valid_agent_names_give_one_to_one_project_names():
+def test_valid_agent_names_give_one_to_one_runtime_and_target_names():
     s, valid = Settings(), ["ab_c", "a_bc", "abc", "agent1", "quality_agent", "quality"]
     assert all(validate({**APP, "name": n}, CATALOG) == [] for n in valid)
-    assert len({s.project_name(n) for n in valid}) == len(valid)
-    assert (s.project_name("ab_c"), s.project_name("a_bc")) == ("hubAbC", "hubABc")
+    assert len({s.runtime_name(n) for n in valid}) == len({s.target_name(n) for n in valid}) == len(valid)
+    assert (s.target_name("ab_c"), s.target_name("a_bc")) == ("AbC", "ABc")
 
 
 def test_every_example_application_passes_the_form_check():
@@ -87,15 +87,8 @@ def test_a_policy_name_over_the_limit_is_refused_with_the_room_the_agent_name_ha
                         "name may have at most 48, so for this policy the agent name may have at most 15 characters"]
 
 
-def test_a_cli_project_name_over_the_limit_is_refused_with_the_room_the_agent_name_has():
-    problems = validate({**APP, "name": "abcdefghij_klmnopqrstu"}, CATALOG)          # hubAbcdefghijKlmnopqrstu
-    assert problems == ["CLI project name hubAbcdefghijKlmnopqrstu has 24 characters; the AgentCore CLI allows at "
-                        "most 23, so with the prefix hub the agent name may have at most 20 characters besides "
-                        "its underscores"]
-    long_prefix = validate({**APP, "name": "quality_agent_xy"}, CATALOG, Settings(prefix="longprefix"))   # 10, the most
-    assert long_prefix == ["CLI project name longprefixQualityAgentXy has 24 characters; the AgentCore CLI allows at "
-                           "most 23, so with the prefix longprefix the agent name may have at most 13 characters "
-                           "besides its underscores"]
+def test_a_name_the_cli_refused_as_too_long_is_valid_now():
+    assert validate({**APP, "name": "abcdefghij_klmnopqrstu"}, CATALOG) == []       # 22 characters, Runtime name 26
 
 
 def test_read_refuses_a_name_that_does_not_fit_before_grant_makes_anything():

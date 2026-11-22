@@ -21,8 +21,6 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 - AWS 자격 증명. 허브는 IAM 역할, 정책 엔진, 게이트웨이, Lambda, CodeBuild, Step Functions, S3 bucket 등을 만든다. 이 문서의 시간은 관리자 권한의 자격 증명으로 잰 것이다.
 - 리전 `us-west-2`. 셸의 기본 리전이 다르면 `AWS_REGION=us-west-2`(도구에 따라 `AWS_DEFAULT_REGION`도)를 준다. 리전, 접두어, 모델은 `.env`로도 정할 수 있다(아래 "`.env`").
 - Amazon Bedrock 모델 사용 권한. 에이전트가 부르는 모델은 `MODEL_ID`(기본값은 추론 프로파일 `us.anthropic.claude-haiku-4-5-20251001-v1:0`)다.
-- CDK bootstrap. 심사의 배포 단계가 AgentCore CLI(`agentcore deploy`, CDK)로 Runtime을 올리므로 계정과 리전에 기본 qualifier(`hnb659fds`)의 bootstrap 스택 `CDKToolkit`이 있어야 한다. 없으면 `npx aws-cdk bootstrap aws://<ACCOUNT>/us-west-2`로 만든다(이 실행은 계정에 이미 있던 bootstrap을 썼고, 이 명령은 확인하지 않았다). 리포의 명령은 로컬에서 Node.js를 쓰지 않는다. CLI는 CodeBuild 안에서 설치된다.
-- CloudWatch Transaction Search. 배포 build의 AgentCore CLI가 "enabling CloudWatch Transaction Search"를 찍는다. 이 실행의 계정에는 이미 켜져 있었고, 배포 역할은 그 설정을 읽기만 할 수 있다(`xray:GetTraceSegmentDestination`). 꺼진 계정에서 어떻게 되는지는 확인하지 않았다.
 
 ### `.env`
 
@@ -31,13 +29,15 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 - `.env`에서 읽는 것은 이 세 줄뿐이다. 다른 줄은 읽지도 내보내지도 않는다. 그래서 `.env`에 자격 증명을 적어 두어도 명령이 쓰는 자격 증명은 바뀌지 않는다.
 - 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다.
 - 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
-- 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자다(`hub`, `demo2`). 정책 엔진, CLI 프로젝트, 게이트웨이, bucket의 이름이 접두어로 시작하는데, 그 이름들의 규칙을 모두 지키는 모양이 이것이다. 다른 모양이면 Terraform(`make deploy`)과 Python 명령이 아무것도 만들기 전에 거부한다.
+- 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자다(`hub`, `demo2`). 정책 엔진, Runtime, 게이트웨이, bucket의 이름이 접두어로 시작하는데, 그 이름들의 규칙을 모두 지키는 모양이 이것이다. 다른 모양이면 Terraform(`make deploy`)과 Python 명령이 아무것도 만들기 전에 거부한다.
 
 이 규칙은 단위 시험(`tests/test_hub_env.py`)으로 확인했다. AWS에서는 `.env` 없이 셸의 `AWS_REGION`과 기본값으로만 돌렸으므로, `.env`를 읽는 길은 AWS에서 확인하지 않았다.
 
 ## 다섯 명령
 
 시간은 2026-11-22의 실행(`us-west-2`, 접두어 `hub`)에서 잰 것이다. "고친 뒤의 실행"은 같은 날 최종 검토의 지적을 고친 코드로 `make deploy`, `make seed`, `make e2e`, `make destroy`를 한 번씩 돌린 것이다. `make deploy`와 `make destroy`는 `AUTO_APPROVE=1`로 돌렸으므로 `yes`를 묻는 대화는 확인하지 않았다.
+
+이 표의 시간은 모두 심사의 배포 단계가 AgentCore CLI(`agentcore deploy`, CDK와 CloudFormation)로 Runtime을 올리던 때의 것이다. Deploy 단계의 시간에는 CLI의 설치와 스택을 만드는 시간이, `make destroy`의 시간에는 스택을 지우는 시간이 들어 있다. 지금의 배포 단계(코드를 묶어 `CreateAgentRuntime`이나 `UpdateAgentRuntime`을 부른다)로는 아직 재지 않았다.
 
 | 순서 | 명령 | 하는 일 | 걸린 시간 |
 |---|---|---|---|
@@ -77,33 +77,33 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | Amazon Bedrock 모델(`MODEL_ID`) | 에이전트가 답할 때마다. 심사의 시험 호출과 `make e2e`의 호출도 포함된다. |
 | AgentCore Runtime(승인된 에이전트마다 하나) | 에이전트가 호출을 처리하는 동안 |
 | AgentCore Gateway 둘, Policy(policy engine과 가드레일 검사) | 호출과 권한 판단마다 |
-| CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. |
+| CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "다섯 명령"). |
 | Lambda 여섯(심사 다섯, 샘플 도구 하나), Step Functions, EventBridge, SNS, SQS | 실행과 메시지마다 |
-| S3(제출함, CDK bootstrap bucket의 사본), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 아홉(Lambda 여섯, CodeBuild 둘, state machine 하나)은 14일 보관한다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
+| S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 아홉(Lambda 여섯, CodeBuild 둘, state machine 하나)은 14일 보관한다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
 | AWS Agent Registry, SSM 값(표준), IAM | 요금이 드는지 확인하지 않았다 |
 
 ## `make destroy`가 지우는 것과 남기는 것
 
 `make destroy`는 지울 것의 계획을 보여 주고 `yes`를 받은 뒤(이 실행은 `AUTO_APPROVE=1`로 묻지 않고 돌렸다) 네 번에 나눠 지운다.
 
-1. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`), 에이전트 게이트웨이의 target, Runtime이 든 CloudFormation 스택 `AgentCore-<prefix><에이전트>-default`, Runtime의 로그 그룹, 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 Runtime과 함께 사라졌다.
+1. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌고, API로 만든 Runtime에서는 아직 확인하지 않았다.
 2. `make seed`가 넣은 공유 도구 record.
 3. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 1에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
 4. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, SSM 값, 로그 그룹.
 
 마지막에 `e2e_checks/check_cleanup.py`가 접두어로 시작하는 자원이 남았는지 종류마다 찾아보고 `still present: nothing`(또는 남은 종류)을 찍는다. 읽기만 한다.
 
-남기는 것: CDK가 계정의 CDK bootstrap bucket(`cdk-hnb659fds-assets-<ACCOUNT>-<region>`)에 올린 에이전트 코드의 사본. 이 bucket은 다른 스택과 함께 쓰므로 허브가 지우지 않는다. CDK bootstrap 스택 `CDKToolkit`도 허브가 만든 것이 아니므로 그대로 둔다. 이 실행에서 남은 것은 에이전트 코드의 zip 둘(에이전트마다 하나, 31 MB 남짓)과 CDK template 둘이었다. 같은 코드를 다시 올리면 같은 사본을 다시 쓴다.
+허브는 CDK를 쓰지 않으므로 계정의 CDK bootstrap(스택 `CDKToolkit`과 그 bucket)에 손대지 않는다. CLI로 배포하던 때의 실행은 그 bucket에 에이전트 코드의 사본(에이전트마다 31 MB 남짓의 zip 하나)과 CDK template을 남겼다. 허브는 이 사본을 지우지 않는다.
 
-그 밖에는 남지 않았다. `check_cleanup.py`가 `still present: nothing`을 찍었고, 게이트웨이, 카탈로그, Runtime마다 서비스가 만든 workload identity도 그 주인과 함께 사라졌다(목록으로 확인했다).
+CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `check_cleanup.py`가 `still present: nothing`을 찍었고, 게이트웨이, 카탈로그, Runtime마다 서비스가 만든 workload identity도 그 주인과 함께 사라졌다(목록으로 확인했다). 지금의 배포로 만든 허브는 아직 `make destroy`로 지워 보지 않았다.
 
 ## 알려진 한계
 
 각 기능의 문서에 있다.
 
-- 배포 단계의 권한: 배포 역할은 CDK bootstrap 역할을 거쳐 CloudFormation 실행 역할에 닿고, 기본 bootstrap에서 그 역할은 관리자 권한이다. 그래서 기본 구성에서 역할의 분리가 온전한 것은 검사(Scan) 단계뿐이고, 배포 build 안에서 코드를 실행할 수 있으면 계정의 관리자와 같다. [호스팅 심사, 알려진 한계](platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
+- 배포 단계의 권한: 검사(Scan)의 역할은 제출물을 읽기만 한다. 배포(Deploy)의 역할은 허브의 Runtime을 만들고 고칠 수 있고, 그 Runtime에 Grant가 만든 실행 역할을 넘길 수 있다. 역할, 정책, target을 만들거나 record를 승인하지는 못한다. 남는 한계는 하나다. 배포 역할 하나가 모든 심사에 쓰이므로, 배포 build 안에서 코드를 실행할 수 있으면 허브의 다른 에이전트의 Runtime을 바꾸거나 다른 에이전트의 실행 역할을 넘길 수 있다(실행 역할은 모두 권한 경계 안에 있다). [호스팅 심사, 알려진 한계](platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
 - 시험 호출은 HTTP 상태만 보고 답의 내용은 보지 않는다. [호스팅 심사, 시험 호출](platform_team/hosting_review/README.md#알려진-한계-시험-호출)
 - 반려의 한계: 심사가 도는 동안에는 반려가 거부한다. 이미 승인된 에이전트의 새 버전에는 반려를 쓰지 않는다. [호스팅 심사, 반려의 한계](platform_team/hosting_review/README.md#한계)
 - 개발팀 역할의 카탈로그 권한은 모든 record에 걸린다. [개발팀의 권한](platform_team/dev_access/README.md#카탈로그-권한의-범위)
-- 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. [런타임 뼈대, requirements.txt 규칙](platform_team/hosting_review/runtime_skeleton/README.md#requirementstxt-규칙)
+- 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. [호스팅 심사, requirements.txt 규칙](platform_team/hosting_review/README.md#requirementstxt-규칙)
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)

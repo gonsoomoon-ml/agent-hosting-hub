@@ -4,6 +4,8 @@
 The review pipeline's deploy step can put a team's agent on AgentCore Runtime in two ways:
   cli  CodeBuild runs `agentcore deploy` with an execution role made beforehand (this spike)
   api  CodeBuild packages the code and calls CreateAgentRuntime (passed in checks/whole-process)
+The hub's deploy step now takes the api path (platform_team/hosting_review/deploy_build.py). This spike records the
+earlier cli path; it keeps its own names and need not run again.
 
   up    create the agent's execution role, the deploy role (the CodeBuild service role) and the CodeBuild project.
         The deploy role starts small: assume the CDK bootstrap roles, write its own build log. Actions that a build

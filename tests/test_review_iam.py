@@ -11,9 +11,7 @@ def actions(doc):
     """Every action named in the `actions = [...]` lists of a policy document."""
     return [a for block in re.findall(r"actions\s*=\s*\[(.*?)\]", doc, re.S) for a in re.findall(r'"([^"]+)"', block)]
 
-def test_steps_that_handle_submitted_code_cannot_grant_or_approve_by_their_own_policy():
-    """Their own policy documents only. The deploy role reaches more through the CDK bootstrap roles, which with the
-    default bootstrap lead to an AdministratorAccess execution role (hosting_review/README.md, the known limit)."""
+def test_steps_that_handle_submitted_code_cannot_grant_or_approve():
     for step in ("scan", "deploy"):
         doc = document(step)
         for forbidden in ("agent-registry:Update", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:CreateGatewayTarget", "iam:CreateRole"):
@@ -26,9 +24,6 @@ def test_policy_makers_have_the_actions_found_by_running():
         for action in ("bedrock-agentcore:ManageResourceScopedPolicy", "bedrock-agentcore:GetGateway",
                        "bedrock-agentcore:ListGatewayTargets", "bedrock-agentcore:InvokeGateway", "bedrock-agentcore:CreatePolicy"):
             assert action in document(step), (step, action)
-    deploy = document("deploy")      # the CLI path: CloudFormation creates the Runtime through the CDK roles
-    assert "sts:AssumeRole" in deploy and "cdk-hnb659fds-" in deploy
-    assert "bedrock-agentcore:Create" not in deploy and "iam:PassRole" not in deploy
     assert "agent-registry:UpdateRegistryRecordStatus" in document("approve")
     assert "var.tool_gateway_arn" in document("grant") and "var.agent_gateway_arn" not in document("grant")   # grant is scoped to the tool gateway
     assert "var.agent_gateway_arn" in document("entry")
@@ -59,3 +54,44 @@ def test_the_boundary_allows_every_action_of_the_agent_role_and_no_wildcard():
 
 def test_approve_can_read_the_record_again():
     assert "agent-registry:GetRegistryRecord" in document("approve")
+
+
+# ------------------------------------------------------------------ the deploy step calls CreateAgentRuntime itself
+
+def test_the_deploy_role_makes_runtimes_and_hands_them_agent_roles_and_grants_nothing():
+    doc = document("deploy")
+    for action in ("iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "sts:AssumeRole", "bedrock-agentcore:CreatePolicy",
+                   "bedrock-agentcore:CreateGatewayTarget", "agent-registry:UpdateRegistryRecordStatus"):
+        assert action not in doc
+    assert '"iam:PassRole"' in doc and "iam:PassedToService" in doc and "${var.prefix}-agent-*-role" in doc
+    assert sorted(actions(doc)) == sorted([
+        "logs:CreateLogStream", "logs:PutLogEvents", "s3:GetObject", "s3:GetObjectVersion", "s3:GetObject",
+        "s3:PutObject", "s3:GetObject",
+        "bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
+        "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
+        "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity",
+        "bedrock-agentcore:ListAgentRuntimes", "iam:PassRole", "ssm:PutParameter"])
+    assert "xray:" not in doc and "cdk-" not in doc
+
+
+def _statement(doc, sid):
+    [found] = [s for s in statements(doc) if re.search(r'sid\s*=\s*"%s"' % sid, s)]
+    return found
+
+
+def test_the_deploy_role_reaches_the_hubs_runtimes_and_packages_only():
+    doc = document("deploy")
+    runtime = _statement(doc, "TheAgentsRuntime")
+    assert re.search(r'resources\s*=\s*\["\$\{local\.agentcore\}:runtime/\$\{var\.prefix\}_\*", '
+                     r'"\$\{local\.agentcore\}:workload-identity-directory/\*"\]', runtime)
+    assert "ListAgentRuntimes" not in runtime
+    find = _statement(doc, "FindTheRuntime")                  # the only statement on "*": a list that reads names
+    assert actions(find) == ["bedrock-agentcore:ListAgentRuntimes"] and re.search(r'resources\s*=\s*\["\*"\]', find)
+    assert [s for s in statements(doc) if '["*"]' in s] == [find]
+    pkg = _statement(doc, "ThePackage")
+    assert sorted(actions(pkg)) == ["s3:GetObject", "s3:PutObject"] and "/packages/*" in pkg
+    passing = _statement(doc, "PassAgentRole")
+    assert actions(passing) == ["iam:PassRole"]
+    assert re.search(r'test\s*=\s*"StringEquals"', passing) and re.search(r'variable\s*=\s*"iam:PassedToService"', passing)
+    assert '"bedrock-agentcore.amazonaws.com"' in passing
+    assert 'resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]' in passing

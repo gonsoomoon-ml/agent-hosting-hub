@@ -50,7 +50,7 @@ from platform_team.hosting_review.agent_cleanup import remove_agent
 from platform_team.sample_tools.tool_data import INSPECTIONS, PARTS, TEST_RESULTS
 from platform_team.sample_tools.tool_schema import SHARED_READ, TARGETS
 from platform_team.shared_code.aws_helpers import Clients, all_items, mask, retry, signed_post
-from platform_team.shared_code.config import Settings, env_file_updates
+from platform_team.shared_code.config import PACKAGES, Settings, env_file_updates
 from platform_team.shared_code.hub_state import Platform, load
 
 REPO = Path(__file__).resolve().parents[1]
@@ -76,6 +76,7 @@ REVIEW_WAIT = 2700       # s, one review (the deploy build alone may take up to 
 ALERT_WAIT = 180         # s, after the review stopped
 SEARCH_WAIT = 180        # s, the search index follows an approval
 COMMAND_WAIT = 900       # s, publish.sh or reject.sh
+MADE_BY_A_REVIEW = ("Runtime", "policies", "role", "target")      # the kinds check 9 looks for, after Scan
 
 RESULTS: list[tuple[int, str, bool]] = []
 OBSERVED = [0]
@@ -482,7 +483,8 @@ def scan_log_lines(c: Clients, message: dict) -> tuple[str, list[str]]:
 
 
 def nothing_made(c: Clients, s: Settings, p: Platform, agent: str) -> dict[str, list[str]]:
-    """What exists for the agent of the kinds the review makes after Scan: role, policies, target, Runtime, stack."""
+    """What exists for the agent of the kinds the review makes after Scan (MADE_BY_A_REVIEW): role, policies, target,
+    Runtime."""
     found: dict[str, list[str]] = {}
     try:
         c.iam.get_role(RoleName=s.agent_role(agent))
@@ -495,12 +497,6 @@ def nothing_made(c: Clients, s: Settings, p: Platform, agent: str) -> dict[str, 
     found["target"] = [n for n in targets(c, p.agent_gw["id"]) if n == s.target_name(agent)]
     found["Runtime"] = [r["agentRuntimeName"] for r in all_items(c.ctl.list_agent_runtimes, maxResults=100)
                         if r["agentRuntimeName"] == s.runtime_name(agent)]          # every page: it asserts absence
-    try:
-        st = c.cfn.describe_stacks(StackName=s.stack_name(agent))["Stacks"][0]
-        found["stack"] = [f"{st['StackName']} {st['StackStatus']}"]
-    except ClientError as e:
-        if "does not exist" not in e.response["Error"]["Message"]:
-            raise
     return {k: v for k, v in found.items() if v}
 
 
@@ -541,7 +537,7 @@ def scene_quality(c: Clients, s: Settings, p: Platform, dev: DevTeam, inbox: Ale
 
     left = nothing_made(c, s, p, QUALITY)
     control = nothing_made(c, s, p, RELEASE)       # the same look finds what a passed review made
-    sees = sorted(control) == ["Runtime", "policies", "role", "stack", "target"]
+    sees = sorted(control) == list(MADE_BY_A_REVIEW)
     check(9, "that submission made no role, policy, target or Runtime", not left and sees,
           f"found {left or 'nothing'} for {QUALITY}; the same look finds {sorted(control) or 'nothing'} for {RELEASE}")
 
@@ -574,38 +570,22 @@ def scene_quality(c: Clients, s: Settings, p: Platform, dev: DevTeam, inbox: Ale
     info("employee ID in quality_agent's answer", f"{ids} as the tool gave it (plan 2 masks it)" if ids else "none")
 
 
-def observe_leftovers(c: Clients, s: Settings, agent: str) -> None:
-    """Observation B: what a deploy leaves for one agent beyond its stack, Runtime log groups and SSM value."""
-    project = s.project_name(agent)
-    try:
-        held = [f"{r['ResourceType']} {r.get('PhysicalResourceId', '')}" for page in
-                c.cfn.get_paginator("list_stack_resources").paginate(StackName=s.stack_name(agent))
-                for r in page["StackResourceSummaries"]]
-    except ClientError as e:
-        held = [error_of(e)]
-    info(f"stack {s.stack_name(agent)} holds", held)
-    wis = []
-    token = None
-    while True:
-        page = c.ctl.list_workload_identities(maxResults=20, **({"nextToken": token} if token else {}))
-        wis += [w["name"] for w in page.get("workloadIdentities", []) if project in w["name"]]
-        token = page.get("nextToken")
-        if not token:
-            break
-    info(f"workload identities named after {project}", wis or "none")
-    groups = [g["logGroupName"] for page in c.logs.get_paginator("describe_log_groups").paginate()
-              for g in page["logGroups"] if project in g["logGroupName"]]
-    info(f"log groups named after {project}", groups or "none")
-    repos = [r["repositoryName"] for page in c.session.client("ecr").get_paginator("describe_repositories").paginate()
-             for r in page["repositories"] if project.lower() in r["repositoryName"].lower()]
-    info(f"ECR repositories named after {project}", repos or "none")
-    try:
-        body = c.cfn.get_template(StackName=s.stack_name(agent))["TemplateBody"]
-        text = body if isinstance(body, str) else json.dumps(body)
-        assets = sorted(set(re.findall(r"[0-9a-f]{64}\.zip", text)))
-        info(f"CDK assets the stack names (kept on purpose, CDK bootstrap bucket)", assets or "none")
-    except ClientError as e:
-        info("CDK assets", error_of(e))
+def observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None:
+    """Observation B: what a deploy leaves for one agent: its Runtime (ID, version, status), the workload identities
+    and log groups named after the Runtime, and its code packages in the inbox."""
+    name = s.runtime_name(agent)
+    runtime = next((r for r in all_items(c.ctl.list_agent_runtimes, maxResults=100) if r["agentRuntimeName"] == name),
+                   None)
+    info(f"Runtime {name}", f"{runtime['agentRuntimeId']} version {runtime['agentRuntimeVersion']} {runtime['status']}"
+         if runtime else "none")
+    wis = [w["name"] for w in all_items(c.ctl.list_workload_identities, maxResults=20) if name in w["name"]]
+    info(f"workload identities named after {name}", wis or "none")
+    groups = [g["logGroupName"] for page in c.logs.get_paginator("describe_log_groups").paginate(
+        logGroupNamePrefix=f"/aws/bedrock-agentcore/runtimes/{name}-") for g in page["logGroups"]]
+    info(f"log groups of {name}", groups or "none")
+    packages = [f"{o['Key']} ({o.get('Size', 0)} bytes)" for page in c.s3.get_paginator("list_object_versions").paginate(
+        Bucket=p.bucket, Prefix=f"{PACKAGES}{agent}/") for o in page.get("Versions", [])]
+    info(f"code packages of {agent} in the inbox", packages or "none")
 
 
 # ================================================================== main
@@ -638,7 +618,7 @@ def main() -> int:
         scene_dev_tools(dev, s, p)
         scene_release(c, s, p, dev)
         scene_quality(c, s, p, dev, inbox)
-        observe_leftovers(c, s, QUALITY)
+        observe_leftovers(c, s, p, QUALITY)
     finally:
         inbox.close()
     failed = [f"{n} {name}" for n, name, ok in RESULTS if not ok]

@@ -7,7 +7,7 @@ from pathlib import Path
 DEFAULT_REGION = "us-west-2"
 DEFAULT_PREFIX = "hub"
 DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-# The prefix starts every name: the policy engine takes [A-Za-z][A-Za-z0-9_]*, the CLI project letters and digits,
+# The prefix starts every name: the policy engine takes [A-Za-z][A-Za-z0-9_]*, a Runtime [a-zA-Z][a-zA-Z0-9_]*,
 # a gateway no "_", a bucket no upper case. platform_team/terraform/variables.tf checks the same rule.
 PREFIX_PATTERN = r"[a-z][a-z0-9]{1,9}"
 
@@ -31,10 +31,9 @@ def env_file_updates(env, path: Path) -> dict[str, str]:
                 found[name] = value
     return {**found, ENV_LOADED: "1"}
 
-MAX_PROJECT_NAME = 23  # AgentCore CLI limit
-_PROJECT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*")
 # A Runtime's ID is its name, "-" and 10 letters or digits AgentCore adds (as in the runs: <name>-eHcqNQ7n5v).
 RUNTIME_ID_TAIL = r"-[A-Za-z0-9]{10}"
+PACKAGES = "packages/"     # in the inbox bucket: the code packages the deploy build makes, packages/<agent>/...
 
 
 def _camel(snake: str) -> str:
@@ -50,8 +49,8 @@ class Settings:
     def __post_init__(self):
         if not isinstance(self.prefix, str) or not re.fullmatch(PREFIX_PATTERN, self.prefix):
             raise ValueError(f"prefix {self.prefix!r} must be 2 to 10 lower-case letters or digits, starting with a "
-                             "letter: it starts the names of the policy engine, the CLI projects, the gateways and "
-                             "the bucket")
+                             "letter: it starts the names of the policy engine, the Runtimes, the gateways and the "
+                             "bucket")
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -100,17 +99,14 @@ class Settings:
         """The permissions boundary every agent role carries (hosting_review/terraform/iam.tf)."""
         return f"{self.prefix}-agent-boundary"
 
-    def project_name(self, agent: str) -> str:
-        name = self.prefix + _camel(agent)
-        if len(name) > MAX_PROJECT_NAME or not _PROJECT_NAME.fullmatch(name):
-            raise ValueError(
-                f"project name {name!r} must start with a letter, be alphanumeric, "
-                f"and be at most {MAX_PROJECT_NAME} characters"
-            )
-        return name
-
     def runtime_name(self, agent: str) -> str:
-        return f"{self.project_name(agent)}_default_agent"
+        """The agent's AgentCore Runtime: <prefix>_<agent>. AgentCore takes [a-zA-Z][a-zA-Z0-9_]{0,47}; a prefix has
+        at most 10 characters and an agent name 31 (application_form), so every name fits."""
+        return f"{self.prefix}_{agent}"
+
+    def package_key(self, agent: str, code_version: str) -> str:
+        """The agent's code package in the inbox, one per submitted object version (the deploy build writes it)."""
+        return f"{PACKAGES}{agent}/{code_version}.zip"
 
     def runtime_id_pattern(self, agent: str) -> str:
         """The ID of this agent's Runtime, as a pattern to full-match: <runtime_name>-<10 letters or digits>."""
@@ -119,9 +115,6 @@ class Settings:
     def runtime_arn_pattern(self, agent: str, account: str) -> str:
         """The ARN of this agent's Runtime in this account and Region, as a pattern to full-match."""
         return re.escape(f"arn:aws:bedrock-agentcore:{self.region}:{account}:runtime/") + self.runtime_id_pattern(agent)
-
-    def stack_name(self, agent: str) -> str:
-        return f"AgentCore-{self.project_name(agent)}-default"
 
     def target_name(self, agent: str) -> str:
         return _camel(agent)

@@ -55,7 +55,12 @@ class _Client:
 
 
 class _Ctl(_Client):
-    """bedrock-agentcore-control: policies and gateway targets."""
+    """bedrock-agentcore-control: policies, gateway targets and Runtimes.
+    Runtimes: runtimes {name: {"id", "arn", "version", "config", "status", "gets"}}. A new or updated Runtime is READY,
+    or shows CREATING / UPDATING to the next runtime_ready_after looks (inf: for ever); runtime_status other than
+    READY is where it ends instead (with runtime_failure as its failureReason). runtime_create_errors are raised by
+    create_agent_runtime, in turn, before it works. A deleted Runtime is gone at once, or shows DELETING to the next
+    runtime_delete_polls looks, or ends DELETE_FAILED with runtime_delete_failure."""
 
     def list_policies(self, **kw):
         return {"policies": [{"policyId": p["id"], "name": n, "definition": {p["kind"]: {"statement": p["statement"]}}}
@@ -103,6 +108,66 @@ class _Ctl(_Client):
             raise _client_error("ResourceNotFoundException", "no target", "DeleteGatewayTarget")
         del self.o.targets[name]
         return {"targetId": targetId, "status": "DELETING"}
+
+    def _runtime_by_id(self, agentRuntimeId, op):
+        name = next((n for n, r in self.o.runtimes.items() if r["id"] == agentRuntimeId), None)
+        if name is None:
+            raise _client_error("ResourceNotFoundException", f"no Runtime {agentRuntimeId}", op)
+        return name, self.o.runtimes[name]
+
+    def _made(self, rt, status):
+        rt.update(status=status, gets=0)
+        return {"agentRuntimeArn": rt["arn"], "agentRuntimeId": rt["id"], "agentRuntimeVersion": rt["version"],
+                "status": status}
+
+    def list_agent_runtimes(self, **kw):
+        return {"agentRuntimes": [{"agentRuntimeName": n, "agentRuntimeId": r["id"], "agentRuntimeArn": r["arn"],
+                                   "agentRuntimeVersion": r["version"], "status": r["status"]}
+                                  for n, r in sorted(self.o.runtimes.items())]}
+
+    def create_agent_runtime(self, agentRuntimeName, **config):
+        self.o.runtime_create_tries += 1
+        if self.o.runtime_create_errors:
+            raise self.o.runtime_create_errors.pop(0)
+        if agentRuntimeName in self.o.runtimes:
+            raise _client_error("ConflictException", f"Runtime {agentRuntimeName} already exists", "CreateAgentRuntime")
+        rid = f"{agentRuntimeName}-Ab12Cd34Ef"
+        rt = {"id": rid, "arn": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:runtime/{rid}", "version": "1",
+              "config": config}
+        self.o.runtimes[agentRuntimeName] = rt
+        self.o.runtime_calls.append(f"create {agentRuntimeName}")
+        return self._made(rt, "CREATING")
+
+    def update_agent_runtime(self, agentRuntimeId, **config):
+        _, rt = self._runtime_by_id(agentRuntimeId, "UpdateAgentRuntime")
+        rt.update(version=str(int(rt["version"]) + 1), config=config)
+        self.o.runtime_calls.append(f"update {agentRuntimeId}")
+        return self._made(rt, "UPDATING")
+
+    def get_agent_runtime(self, agentRuntimeId):
+        self.o.runtime_gets += 1
+        name, rt = self._runtime_by_id(agentRuntimeId, "GetAgentRuntime")
+        rt["gets"] += 1
+        if rt["status"] == "DELETING" and rt["gets"] > self.o.runtime_delete_polls:
+            del self.o.runtimes[name]
+            raise _client_error("ResourceNotFoundException", f"no Runtime {agentRuntimeId}", "GetAgentRuntime")
+        if rt["status"] in ("CREATING", "UPDATING") and rt["gets"] > self.o.runtime_ready_after:
+            rt.update(status=self.o.runtime_status,
+                      **({"failure": self.o.runtime_failure} if self.o.runtime_status != "READY" else {}))
+        return {"agentRuntimeName": name, "agentRuntimeId": rt["id"], "agentRuntimeArn": rt["arn"],
+                "agentRuntimeVersion": rt["version"], "roleArn": rt["config"].get("roleArn", ""), "status": rt["status"],
+                **({"failureReason": rt["failure"]} if rt.get("failure") else {})}
+
+    def delete_agent_runtime(self, agentRuntimeId):
+        name, rt = self._runtime_by_id(agentRuntimeId, "DeleteAgentRuntime")
+        self.o.runtime_calls.append(f"delete {agentRuntimeId}")
+        if self.o.runtime_delete_failure:
+            rt.update(status="DELETE_FAILED", failure=self.o.runtime_delete_failure)
+        elif self.o.runtime_delete_polls:
+            rt.update(status="DELETING", gets=0)
+        else:
+            del self.o.runtimes[name]
+        return {"agentRuntimeId": agentRuntimeId, "status": "DELETING"}
 
 
 class _Iam(_Client):
@@ -169,6 +234,12 @@ class _Iam(_Client):
 
 
 class _Ssm(_Client):
+    def put_parameter(self, Name, Value, Type, Overwrite=False):
+        if Name in self.o.parameters and not Overwrite:
+            raise _client_error("ParameterAlreadyExists", Name, "PutParameter")
+        self.o.parameters[Name] = Value
+        return {"Version": 1}
+
     def get_parameter(self, Name):
         if Name in self.o.parameters:
             return {"Parameter": {"Name": Name, "Value": self.o.parameters[Name]}}
@@ -186,44 +257,24 @@ class _Ssm(_Client):
         del self.o.parameters[Name]
 
 
-class _Cfn(_Client):
-    """CloudFormation: stacks {name: {"status", "reason", "resources", "template"}}. A deleted stack is gone at once,
-    or shows DELETE_IN_PROGRESS to the next stack_delete_polls looks (inf: for ever), or ends DELETE_FAILED with
-    stack_delete_reason."""
+class _S3(_Client):
+    """The inbox bucket (its name is not checked): objects {key: [version IDs, oldest first]}."""
 
-    def _stack(self, StackName, op):
-        st = self.o.stacks.get(StackName)
-        if st is not None and st.get("polls_left") is not None:
-            if st["polls_left"] <= 0:
-                del self.o.stacks[StackName]
-                st = None
-            else:
-                st["polls_left"] -= 1
-        if st is None:
-            raise _client_error("ValidationError", f"Stack with id {StackName} does not exist", op)
-        return st
+    def put_object(self, Bucket, Key, Body=b"", **kw):
+        versions = self.o.objects.setdefault(Key, [])
+        versions.append(f"{Key}-version-{len(versions) + 1}")
+        return {"VersionId": versions[-1]}
 
-    def describe_stacks(self, StackName):
-        st = self._stack(StackName, "DescribeStacks")
-        return {"Stacks": [{"StackName": StackName, "StackStatus": st["status"],
-                            **({"StackStatusReason": st["reason"]} if st.get("reason") else {})}]}
+    def list_object_versions(self, Bucket, Prefix="", **kw):
+        return {"Versions": [{"Key": k, "VersionId": v} for k, vs in sorted(self.o.objects.items()) if k.startswith(Prefix)
+                             for v in vs]}
 
-    def list_stack_resources(self, StackName):
-        return {"StackResourceSummaries": list(self._stack(StackName, "ListStackResources").get("resources", []))}
-
-    def get_template(self, StackName):
-        return {"TemplateBody": self._stack(StackName, "GetTemplate").get("template", {"Resources": {}})}
-
-    def delete_stack(self, StackName):
-        st = self.o.stacks.get(StackName)
-        if st is None:
-            return {}
-        if self.o.stack_delete_reason:
-            st.update(status="DELETE_FAILED", reason=self.o.stack_delete_reason)
-        elif self.o.stack_delete_polls:
-            st.update(status="DELETE_IN_PROGRESS", polls_left=self.o.stack_delete_polls)
-        else:
-            del self.o.stacks[StackName]
+    def delete_object(self, Bucket, Key, VersionId=None):
+        versions = self.o.objects.get(Key, [])
+        if VersionId in versions:
+            versions.remove(VersionId)
+        if not versions:
+            self.o.objects.pop(Key, None)
         return {}
 
 
@@ -279,18 +330,20 @@ class _Sfn(_Client):
 
 
 class FakeClients:
-    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, cfn, logs).
+    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     Recorded: created_policies (id, name, statement), deleted_policies, policies, roles, inline (role -> inline
-    policy names), targets, posts (url, body), record_status, status_reason. Tests may also fill stacks, log_groups,
-    parameters, other_records and running (the reviews still running)."""
+    policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
+    "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects. Tests may also fill
+    log_groups, parameters, objects, other_records, runtime_create_errors and running (the reviews still running)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
-                 policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, stack_delete_reason=None,
-                 stack_delete_polls=0, record_name=None, record_type="AGENT"):
+                 policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, record_name=None,
+                 record_type="AGENT", runtime_status="READY", runtime_failure=None, runtime_ready_after=0,
+                 runtime_delete_failure=None, runtime_delete_polls=0):
         self.record_spec = SPEC if record_spec is None else record_spec
         self.record_name, self.record_type = record_name, record_type
         self.record_status, self.status_reason = record_status, None
@@ -302,12 +355,15 @@ class FakeClients:
         self.created_policies, self.deleted_policies = [], []
         self.roles, self.targets, self.target_arns, self.posts = {}, {}, {}, []
         self.inline = {r: {"agent"} for r in self.existing_roles}
-        self.stacks, self.log_groups, self.parameters, self.other_records = {}, set(), {}, []
-        self.stack_delete_reason, self.stack_delete_polls = stack_delete_reason, stack_delete_polls
+        self.log_groups, self.parameters, self.other_records, self.objects = set(), {}, [], {}
+        self.runtimes, self.runtime_calls, self.runtime_gets, self.runtime_create_tries = {}, [], 0, 0
+        self.runtime_status, self.runtime_failure, self.runtime_ready_after = runtime_status, runtime_failure, runtime_ready_after
+        self.runtime_delete_failure, self.runtime_delete_polls = runtime_delete_failure, runtime_delete_polls
+        self.runtime_create_errors = []
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
         self.running = []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
-        self.cfn, self.logs, self.sfn = _Cfn(self), _Logs(self), _Sfn(self)
+        self.logs, self.sfn, self.s3 = _Logs(self), _Sfn(self), _S3(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):

@@ -4,9 +4,10 @@
     python -m platform_team.hosting_review.agent_cleanup --records    # make destroy, right before terraform destroy
 
 What the review makes for an agent: Grant makes the execution role (with its inline policy) and one tool permit per
-tool; Deploy (the AgentCore CLI, with CDK) makes a CloudFormation stack that holds the Runtime and writes the Runtime
-ARN to SSM; the Runtime writes its own log groups; Entry makes the gateway target, the test call's entry permit and
-the guard; Approve makes the users' entry permit.
+tool; Deploy puts the code package in the inbox (packages/<agent>/<code version>.zip), creates or updates the Runtime
+<prefix>_<agent> (CreateAgentRuntime, UpdateAgentRuntime) and writes the Runtime ARN to SSM; the Runtime writes its
+own log groups; Entry makes the gateway target, the test call's entry permit and the guard; Approve makes the users'
+entry permit.
 
 remove_agent removes one agent's things (reject_agent calls it). clean_agents removes every agent's things and its
 catalog record, approved agents too (make destroy calls it): an agent role keeps Terraform from deleting the
@@ -15,16 +16,16 @@ make destroy only, after the agents and the seed) deletes whatever record is sti
 each one: a record of another type, or with a name the rules refuse, is not an agent the steps above find.
 
 Every name comes from Settings and company_policy.policy_names for that one agent, never from a pattern wider
-than it. A name is not proof enough for the role and the stack, so before anything is deleted check_agent reads
+than it. A name is not proof enough for the role and the Runtime, so before anything is deleted check_agent reads
 them: the role must carry the hub's agent boundary (Grant can make no other agent role) and have no managed policy
-or instance profile, and the stack must hold this agent's Runtime. Anything else is not this hub's, and nothing of
-that agent is deleted. A thing that is not there is already gone, so running again is safe; any other error stops
-the run and says which step failed.
+or instance profile, and the Runtime of the agent's name must run under the agent's role in its own account.
+Anything else is not this hub's, and nothing of that agent is deleted. A thing that is not there is already gone,
+so running again is safe; any other error stops the run and says which step failed.
 
-Kept on purpose: the submitted zip in the submission bucket (the record of what was submitted; the bucket goes with
-terraform destroy) and the code CDK uploaded to the account's CDK bootstrap bucket (shared with other stacks).
+Kept on purpose: the submitted zip in the inbox (the record of what was submitted; the bucket goes with terraform
+destroy). Without the platform values in SSM the bucket's name is not known, and the packages stay for terraform
+destroy, which empties the bucket.
 """
-import json
 import re
 import sys
 
@@ -37,21 +38,22 @@ from platform_team.company_policy.policy_engine import drop_policy, list_policie
 from platform_team.company_policy.policy_names import (entry_permit_name, guard_secret_name, review_permit_name,
                                                        tool_policy_pattern)
 from platform_team.shared_code.aws_helpers import Clients, all_items, wait_status
-from platform_team.shared_code.config import RUNTIME_ID_TAIL, Settings
+from platform_team.shared_code.config import PACKAGES, RUNTIME_ID_TAIL, Settings
 from platform_team.shared_code.hub_state import Platform, load
 
 TARGET_WAIT = 300        # s, until a deleted gateway target is gone
-STACK_WAIT = 900         # s, until a Runtime's stack is deleted
-STACK_STEP = 10          # s, between two looks at the stack
+RUNTIME_WAIT = 600       # s, until a deleted Runtime is gone
+RUNTIME_STEP = 5         # s, between two looks at the Runtime
 # A Runtime's log group is /aws/bedrock-agentcore/runtimes/<Runtime ID>-<endpoint>, and its ID is
 # <Runtime name>-<10 letters or digits>. A Runtime name has no "-", so the name and the "-" after it are exact.
 RUNTIME_LOGS = "/aws/bedrock-agentcore/runtimes/"
 RUNTIME_LOG_TAIL = RUNTIME_ID_TAIL + r"(-.*)?"
-RUNTIME_TYPE = "AWS::BedrockAgentCore::Runtime"     # its physical ID in a stack is the Runtime ID (Task 0's run)
+_ROLE_ARN = re.compile(r"arn:aws:iam::([0-9]{12}):role/(.+)")
+_RUNTIME_ARN = re.compile(r"arn:aws:bedrock-agentcore:[a-z0-9-]+:([0-9]{12}):runtime/.+")
 
 
 class NotOwned(ValueError):
-    """A role or stack has the agent's name but is not this hub's as it stands. Nothing of the agent is deleted."""
+    """A role or Runtime has the agent's name but is not this hub's as it stands. Nothing of the agent is deleted."""
 
 
 class CleanupFailed(RuntimeError):
@@ -132,53 +134,41 @@ def _check_role(c, s: Settings, agent: str) -> None:
                        "remove the role from them first")
 
 
-def _stack_gone(e: Exception) -> bool:
-    return _code(e) == "ValidationError" and "does not exist" in e.response["Error"].get("Message", "")
-
-
-def _template_runtimes(c, stack: str) -> list[str]:
-    """The Runtime names the stack's template declares."""
-    body = c.cfn.get_template(StackName=stack)["TemplateBody"]      # botocore parses a JSON template into a dict
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except ValueError:
-            return []
-    return [(r.get("Properties") or {}).get("AgentRuntimeName", "") for r in (body.get("Resources") or {}).values()
-            if isinstance(r, dict) and r.get("Type") == RUNTIME_TYPE]
-
-
-def _check_stack(c, stack: str, runtime: str) -> None:
-    """The stack must hold this agent's Runtime: a Runtime resource whose physical ID is <runtime>-<10 characters>,
-    or, when no Runtime was made (a deploy that rolled back), a template that declares the Runtime <runtime>."""
-    if _stack_status(c, stack)["status"] in ("GONE", "DELETE_COMPLETE"):
-        return
+def _find_runtime(c, name: str) -> dict | None:
+    """The Runtime of this name as GetAgentRuntime gives it (with its roleArn), or None. Every page is read."""
+    found = next((r for r in all_items(c.ctl.list_agent_runtimes, maxResults=100) if r["agentRuntimeName"] == name), None)
+    if found is None:
+        return None
     try:
-        held = [r.get("PhysicalResourceId") or "" for page in c.cfn.get_paginator("list_stack_resources").paginate(
-            StackName=stack) for r in page["StackResourceSummaries"] if r["ResourceType"] == RUNTIME_TYPE]
-        own = re.compile(re.escape(runtime) + RUNTIME_ID_TAIL)
-        if any(own.fullmatch(h) for h in held):
-            return
-        made = [h for h in held if h]
-        if not made and runtime in _template_runtimes(c, stack):
-            return
+        return c.ctl.get_agent_runtime(agentRuntimeId=found["agentRuntimeId"])
     except ClientError as e:
-        if _stack_gone(e):
-            return
+        if _code(e) == "ResourceNotFoundException":
+            return None                                 # deleted between the two calls
         raise
-    raise NotOwned(f"stack {stack} does not hold this agent's Runtime {runtime}: it holds "
-                   f"{', '.join(made) or 'no Runtime made for it'}")
+
+
+def _check_runtime(c, s: Settings, agent: str) -> dict | None:
+    """The agent's Runtime, if there is one, after checking it is this hub's: the Runtime named Settings.runtime_name
+    runs under Settings.agent_role(agent) of the Runtime's own account. Raises NotOwned otherwise. Reads only."""
+    name, role = s.runtime_name(agent), s.agent_role(agent)
+    runtime = _find_runtime(c, name)
+    if runtime is None:
+        return None
+    arn, own = _ROLE_ARN.fullmatch(runtime.get("roleArn") or ""), _RUNTIME_ARN.fullmatch(runtime["agentRuntimeArn"])
+    if not arn:
+        raise NotOwned(f"Runtime {name} is not this hub's: its execution role is not an IAM role ARN")
+    if arn.group(2) != role:
+        raise NotOwned(f"Runtime {name} is not this hub's: it runs under role {arn.group(2)}, not {role}")
+    if not own or arn.group(1) != own.group(1):
+        raise NotOwned(f"Runtime {name} is not this hub's: it runs under role {role} of another account")
+    return runtime
 
 
 def check_agent(c, s: Settings, agent: str) -> None:
-    """Raise NotOwned when the agent's role or stack exists but is not this hub's as it stands. Reads only."""
+    """Raise NotOwned when the agent's role or Runtime exists but is not this hub's as it stands. Reads only."""
     check_name(agent)
     _check_role(c, s, agent)
-    try:
-        stack, runtime = s.stack_name(agent), s.runtime_name(agent)
-    except ValueError:              # no CLI project name for this agent: Deploy could not have made a stack
-        return
-    _check_stack(c, stack, runtime)
+    _check_runtime(c, s, agent)
 
 
 # ================================================================== one agent
@@ -221,24 +211,28 @@ def _remove_target(c, s: Settings, p: Platform, agent: str) -> list[str]:
     return [f"target {name}"]
 
 
-def _stack_status(c, name: str) -> dict:
+def _runtime_status(c, rid: str) -> dict:
     try:
-        stack = c.cfn.describe_stacks(StackName=name)["Stacks"][0]
+        r = c.ctl.get_agent_runtime(agentRuntimeId=rid)
     except ClientError as e:
-        if _stack_gone(e):
+        if _code(e) == "ResourceNotFoundException":
             return {"status": "GONE"}
         raise
-    return {"status": stack["StackStatus"], "statusReason": stack.get("StackStatusReason")}
+    return {"status": r["status"], "statusReason": r.get("failureReason")}
 
 
-def _remove_stack(c, name: str) -> list[str]:
-    """Delete the stack that holds the Runtime and wait until it is gone. DELETE_FAILED raises with the reason."""
-    gone = ("GONE", "DELETE_COMPLETE")
-    if _stack_status(c, name)["status"] in gone:
+def _remove_runtime(c, s: Settings, agent: str) -> list[str]:
+    """Delete the agent's Runtime (checked again: _check_runtime) and wait until it is gone. DELETE_FAILED raises
+    with the Runtime's failureReason. A Runtime that is DELETING already is waited on, not deleted again."""
+    runtime = _check_runtime(c, s, agent)
+    if runtime is None:
         return []
-    c.cfn.delete_stack(StackName=name)
-    wait_status(lambda: _stack_status(c, name), gone, f"stack {name}", timeout=STACK_WAIT, step=STACK_STEP)
-    return [f"stack {name}"]
+    name, rid = runtime["agentRuntimeName"], runtime["agentRuntimeId"]
+    if runtime["status"] != "DELETING" and not _delete(lambda: c.ctl.delete_agent_runtime(agentRuntimeId=rid),
+                                                       "ResourceNotFoundException"):
+        return []
+    wait_status(lambda: _runtime_status(c, rid), ("GONE",), f"Runtime {name}", timeout=RUNTIME_WAIT, step=RUNTIME_STEP)
+    return [f"Runtime {name}"]
 
 
 def _remove_log_groups(c, runtime: str) -> list[str]:
@@ -249,6 +243,25 @@ def _remove_log_groups(c, runtime: str) -> list[str]:
     return [f"log group {n}" for n in names
             if own.fullmatch(n) and _delete(lambda n=n: c.logs.delete_log_group(logGroupName=n),
                                             "ResourceNotFoundException")]
+
+
+def _remove_packages(c, p: Platform, agent: str) -> list[str]:
+    """Every version (and delete marker) of the agent's code packages in the inbox: packages/<agent>/. The inbox keeps
+    versions, so deleting the current one only would leave the others."""
+    if not p.bucket:
+        return []                                       # no platform values: terraform destroy empties the bucket
+    prefix = f"{PACKAGES}{agent}/"
+    try:
+        found = [(o["Key"], o["VersionId"]) for page in c.s3.get_paginator("list_object_versions").paginate(
+            Bucket=p.bucket, Prefix=prefix) for o in page.get("Versions", []) + page.get("DeleteMarkers", [])
+            if o["Key"].startswith(prefix)]
+    except ClientError as e:
+        if _code(e) == "NoSuchBucket":
+            return []                                   # the bucket is gone, and the packages with it
+        raise
+    for key, version in found:
+        c.s3.delete_object(Bucket=p.bucket, Key=key, VersionId=version)
+    return [f"package {key}" for key in sorted({key for key, _ in found})]
 
 
 def _remove_role(c, name: str) -> list[str]:
@@ -274,23 +287,20 @@ def _remove_parameters(c, s: Settings, agent: str) -> list[str]:
 
 def remove_agent(c, s: Settings, p: Platform, agent: str) -> list[str]:
     """Remove what the hosting review made for this agent, in this order: its policies, its gateway target (waits
-    until it is gone), the stack that holds its Runtime (waits until it is gone), the Runtime's log groups, its
+    until it is gone), its Runtime (waits until it is gone), the Runtime's log groups, its code packages, its
     execution role, and its SSM values. Returns what was removed, as "<kind> <name>"; what was not there is not
-    listed. check_agent runs first: a role or stack that is not this hub's stops it before anything is deleted. A
+    listed. check_agent runs first: a role or Runtime that is not this hub's stops it before anything is deleted. A
     step that fails raises CleanupFailed, and the steps after it do not run."""
     check_name(agent)
     try:
         check_agent(c, s, agent)
     except Exception as e:
-        raise CleanupFailed(f"{agent}: checking that its role and stack are this hub's", e, []) from e
-    try:
-        stack, runtime = s.stack_name(agent), s.runtime_name(agent)
-    except ValueError:              # no CLI project name for this agent: Deploy could not have made a stack or Runtime
-        stack = runtime = None
+        raise CleanupFailed(f"{agent}: checking that its role and Runtime are this hub's", e, []) from e
     plan = [("policies", lambda: _remove_policies(c, p, agent)),
             ("gateway target", lambda: _remove_target(c, s, p, agent)),
-            ("Runtime stack", lambda: _remove_stack(c, stack) if stack else []),
-            ("Runtime log groups", lambda: _remove_log_groups(c, runtime) if runtime else []),
+            ("Runtime", lambda: _remove_runtime(c, s, agent)),
+            ("Runtime log groups", lambda: _remove_log_groups(c, s.runtime_name(agent))),
+            ("code packages", lambda: _remove_packages(c, p, agent)),
             ("execution role", lambda: _remove_role(c, s.agent_role(agent))),
             ("SSM values", lambda: _remove_parameters(c, s, agent))]
     removed = []
