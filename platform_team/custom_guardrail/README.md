@@ -17,7 +17,7 @@
 
 요청은 본문이 JSON 객체이고 그 안에 글자인 `prompt`가 있으면 `prompt`만 검사한다. 다른 필드는 검사하지 않는다. 그 밖의 본문(base64가 아니거나, JSON이 아니거나, 객체가 아니거나, `prompt`가 없는 것)은 본문 전체를 글로 검사하고, 가렸으면 본문 전체를 가린 모양으로 넘긴다. 답은 언제나 전체를 검사한다. Lambda의 로그에는 어느 지점(`REQUEST`, `RESPONSE`)인지, 막았는지, 가렸는지만 남고 글은 남지 않는다. 이 동작은 코드와 단위 시험(`tests/test_interceptor.py`)이 정한 것이다.
 
-규칙을 바꾸려면 `terraform/variables.tf`의 두 변수를 바꿔 `make deploy`를 다시 돌린다. interceptor는 guardrail의 작업본(`DRAFT`)이 아니라 고정된 버전을 적용한다. 규칙이 바뀌면 Terraform이 새 버전을 만들고 Lambda의 환경 변수 `GUARDRAIL_VERSION`을 바꾼다(`replace_triggered_by`). 규칙을 바꿔 다시 올리는 것은 해 보지 않았다.
+규칙을 바꾸려면 `terraform/variables.tf`의 두 변수를 바꿔 `make deploy`를 다시 돌린다. interceptor는 guardrail의 작업본(`DRAFT`)이 아니라 고정된 버전을 적용한다. 규칙이 바뀌면 Terraform은 이 순서로 바꾸도록 짜여 있다. guardrail의 작업본을 고치고, 새 버전을 만들고, Lambda의 환경 변수 `GUARDRAIL_VERSION`을 새 버전으로 바꾸고, 그다음에 옛 버전을 지운다(`replace_triggered_by`와 `create_before_destroy`). 그래서 Lambda가 지워진 버전을 가리키는 때가 없다. 옛 버전을 먼저 지우면, 그 사이에 interceptor가 실패하고 에이전트 게이트웨이는 모든 요청을 거부한다. 규칙을 바꿔 다시 올리는 것은 AWS에서 해 보지 않았다.
 
 ## 기본 제공 가드레일과 나눈 일
 

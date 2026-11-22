@@ -143,7 +143,13 @@ def test_the_interceptor_lambda_runs_the_handler_with_the_guardrail_it_was_made_
     assert read == {"GUARDRAIL_ID", "GUARDRAIL_VERSION"}                             # what the code reads, Terraform sets
     version = block("aws_bedrock_guardrail_version", "company")
     assert "guardrail_arn = aws_bedrock_guardrail.company.guardrail_arn" in version
-    assert re.search(r"replace_triggered_by\s*=\s*\[aws_bedrock_guardrail\.company\]", version)   # new rules, new version
+    lifecycle = re.search(r"lifecycle\s*{(.*?)\n  }", version, re.S)
+    assert lifecycle, "the version has no lifecycle block"
+    # New rules, new version: the new one is made and the Lambda moved to it before the old one is deleted, so the
+    # Lambda never names a deleted version. Terraform deletes every version itself (no skip_destroy), as in the run.
+    assert re.search(r"replace_triggered_by\s*=\s*\[aws_bedrock_guardrail\.company\]", lifecycle.group(1))
+    assert re.search(r"create_before_destroy\s*=\s*true\b", lifecycle.group(1))
+    assert "skip_destroy" not in version
 
 def test_the_interceptor_role_applies_this_guardrail_only_and_writes_its_own_logs():
     role = block("aws_iam_role", "guardrail")

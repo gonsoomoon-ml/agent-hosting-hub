@@ -40,12 +40,18 @@ resource "aws_bedrock_guardrail" "company" {
 }
 
 # The interceptor applies a fixed version, not the working draft. A change of the rules updates the draft, and this
-# makes a new version from it.
+# makes a new version from it. create_before_destroy orders the replacement: the new version, then the Lambda's
+# GUARDRAIL_VERSION, then the old version is deleted. Destroy-first would delete the version the Lambda still names,
+# and while it does every request through the agent gateway is refused (the interceptor fails closed).
+# Not skip_destroy: Terraform deletes each version itself, as `make destroy` did in the run (the version, then the
+# guardrail). Terraform applies create_before_destroy to the guardrail too; no argument of aws_bedrock_guardrail
+# forces a replacement (provider 6.73.0), so it is only ever updated in place.
 resource "aws_bedrock_guardrail_version" "company" {
   guardrail_arn = aws_bedrock_guardrail.company.guardrail_arn
   description   = "The rules the interceptor applies"
   lifecycle {
-    replace_triggered_by = [aws_bedrock_guardrail.company]
+    create_before_destroy = true
+    replace_triggered_by  = [aws_bedrock_guardrail.company]
   }
 }
 
