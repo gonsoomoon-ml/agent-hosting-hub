@@ -197,7 +197,7 @@ data "aws_iam_policy_document" "agent_boundary" {
     resources = ["*"]
   }
   statement {
-    sid       = "OwnMetrics" # the agent's own metrics, into the namespace bedrock-agentcore only (the same example)
+    sid       = "OwnMetrics" # metrics into the namespace bedrock-agentcore only, any metric there (the same example)
     actions   = ["cloudwatch:PutMetricData"]
     resources = ["*"]
     condition {

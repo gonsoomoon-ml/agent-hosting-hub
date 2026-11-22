@@ -21,6 +21,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 - AWS 자격 증명. 허브는 IAM 역할, 정책 엔진, 게이트웨이, Lambda, CodeBuild, Step Functions, S3 bucket 등을 만든다. 이 문서의 시간은 관리자 권한의 자격 증명으로 잰 것이다.
 - 리전 `us-west-2`. 셸의 기본 리전이 다르면 `AWS_REGION=us-west-2`(도구에 따라 `AWS_DEFAULT_REGION`도)를 준다. 리전, 접두어, 모델은 `.env`로도 정할 수 있다(아래 "`.env`").
 - Amazon Bedrock 모델 사용 권한. 에이전트가 부르는 모델은 `MODEL_ID`(기본값은 추론 프로파일 `us.anthropic.claude-haiku-4-5-20251001-v1:0`)다.
+- 에이전트와 게이트웨이의 trace를 보려면 계정의 CloudWatch Transaction Search가 켜져 있어야 한다. AgentCore 개발자 안내서("Add observability to your Amazon Bedrock AgentCore resources"의 "Enabling CloudWatch Transaction Search", 2026-11-22에 읽었다)는 이것을 계정에서 한 번 하는 설정으로 적는다. 계정의 설정이라 허브는 켜지도 끄지도 않는다. 2026-11-22의 실행에서는 켜져 있었다. 꺼진 계정에서는 해 보지 않았다. [모니터링](platform_team/agent_monitoring/README.md#무엇이-어디에-남는가)
 
 ### `.env`
 
@@ -97,7 +98,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 마지막에 `e2e_checks/check_cleanup.py`가 접두어로 시작하는 자원이 남았는지 종류마다 찾아보고 `still present: nothing`(또는 남은 종류)을 찍는다. 읽기만 한다.
 
-에이전트와 게이트웨이의 span은 계정의 로그 그룹 `aws/spans`(Transaction Search)에 들어간다. 그 로그 그룹은 계정의 것이라 `make destroy`가 지우지 않고, span은 계정의 보관 기간(2026-11-22에 30일)까지 남는다. [모니터링](platform_team/agent_monitoring/README.md#무엇이-어디에-남는가)
+span은 계정의 CloudWatch Transaction Search가 받는다. 2026-11-22의 실행(계정의 Transaction Search가 켜져 있었다)에서는 에이전트와 에이전트 게이트웨이의 span이 계정의 로그 그룹 `aws/spans`에 들어갔다. 그 로그 그룹은 계정의 것이라 `make destroy`가 지우지 않으므로, 그곳에 들어간 span은 계정의 보관 기간(그날 30일)까지 남는다. Runtime의 로그 그룹(안내서가 span이 갈 수 있다고 적는 다른 곳)은 `make destroy`가 에이전트와 함께 지운다. Transaction Search가 꺼진 계정에서는 해 보지 않았다. [모니터링](platform_team/agent_monitoring/README.md#무엇이-어디에-남는가)
 
 허브는 CDK를 쓰지 않으므로 계정의 CDK bootstrap(스택 `CDKToolkit`과 그 bucket)에 손대지 않는다. CLI로 배포하던 때의 실행은 그 bucket에 에이전트 코드의 사본(에이전트마다 31 MB 남짓의 zip 하나)과 CDK template을 남겼다. 허브는 이 사본을 지우지 않는다.
 
@@ -115,5 +116,5 @@ CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `
 - 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. `requirements.txt`에 적은 줄은 검사와 배포가 같은 파일을 쓴다. [호스팅 심사, requirements.txt 규칙](platform_team/hosting_review/README.md#requirementstxt-규칙)
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)
 - 커스텀 가드레일: interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부한다(알람이 알린다). 스트리밍 응답과, 에이전트를 둔 게이트웨이 너머의 호출은 이 리포의 코드로 확인하지 않았다. [커스텀 가드레일](platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
-- 에이전트의 trace와 메트릭: 실행 역할은 X-Ray에 trace를 `"*"`로 쓸 수 있고(이 action들에는 자원 종류가 없다), namespace `bedrock-agentcore`에 메트릭을 쓸 수 있다. 그 namespace는 계정의 다른 에이전트도 쓴다. span은 계정의 로그 그룹 `aws/spans`에 들어가고, 2026-11-22의 실행에서 그 span에는 모델의 토큰 수와 호출에 쓴 access key ID가 있었다. [호스팅 심사, 에이전트 실행 역할의 상한](platform_team/hosting_review/README.md#에이전트-실행-역할의-상한권한-경계), [모니터링, 에이전트의 trace](platform_team/agent_monitoring/README.md#에이전트의-trace)
+- 에이전트의 trace와 메트릭: 실행 역할은 X-Ray에 trace를 `"*"`로 쓸 수 있고(이 action들에는 자원 종류가 없다. 조건 키는 찾아보지 않았다), 메트릭은 namespace `bedrock-agentcore`에만 쓸 수 있다(그 namespace의 메트릭이면 어느 것이든). 그 namespace는 계정의 다른 에이전트도 쓴다. 2026-11-22의 실행(계정의 Transaction Search가 켜져 있었다)에서는 span이 계정의 로그 그룹 `aws/spans`에 들어갔고, 그 span에는 모델의 토큰 수와 호출에 쓴 access key ID가 있었다. [호스팅 심사, 에이전트 실행 역할의 상한](platform_team/hosting_review/README.md#에이전트-실행-역할의-상한권한-경계), [모니터링, 에이전트의 trace](platform_team/agent_monitoring/README.md#에이전트의-trace)
 - 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남는다(2026-11-21의 확인 실행에서 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었다). harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다. `stop.sh`와 `resume.sh`는 아직 AWS에서 돌려 보지 않았다. [에이전트 멈추기와 재개, 한계](platform_team/agent_stop/README.md#한계)

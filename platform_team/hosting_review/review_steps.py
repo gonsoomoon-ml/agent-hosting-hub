@@ -157,7 +157,7 @@ def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
     It may call the hub's model (MODEL_ID) and no other, and get tokens for the workload identity of its own Runtime
     only: AgentCore names that identity after the Runtime's ID, <Runtime name>-<10 characters>, so the resource is
     <Runtime name>-* (the shape of the AWS example of a Runtime execution role). It may send traces to X-Ray and
-    its own metrics to CloudWatch (namespace bedrock-agentcore), as that example does."""
+    put metrics into the CloudWatch namespace bedrock-agentcore only (any metric there), as that example does."""
     region, account = env["HUB_REGION"], env["ACCOUNT"]
     trust = {"Version": "2012-10-17", "Statement": [{
         "Effect": "Allow", "Principal": {"Service": "bedrock-agentcore.amazonaws.com"}, "Action": "sts:AssumeRole",
@@ -170,9 +170,10 @@ def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
         {"Effect": "Allow", "Action": ["logs:DescribeLogGroups"], "Resource": [logs + ":*"]},
         {"Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
          "Resource": [logs + ":/aws/bedrock-agentcore/runtimes/*:log-stream:*"]},
-        # Traces and the agent's own metrics, copied from the AWS example of a Runtime execution role ("IAM
-        # Permissions for AgentCore Runtime", read on 2026-11-22). The Service Authorization Reference gives the four
-        # X-Ray actions no resource type, so only "*" matches them. PutMetricData is on "*" as in the example, held
+        # Traces, and metrics into the namespace bedrock-agentcore only, copied from the AWS example of a Runtime
+        # execution role ("IAM Permissions for AgentCore Runtime", read on 2026-11-22). The Service Authorization
+        # Reference gives the four X-Ray actions no resource type, so only "*" matches them; a condition key was not
+        # looked into. PutMetricData is on "*" as in the example, held
         # to the namespace bedrock-agentcore by the condition. The example also grants logs:PutResourcePolicy on the
         # agent's log group (for spans delivered there); it is left out: it is a permissions-management action, and
         # the reference gives it no resource type either, so a log-group resource may not narrow it.

@@ -151,16 +151,16 @@ def test_session_summary_counts_each_sessions_spans_most_first(aws, monkeypatch)
             **window})
         logs.add_response("get_query_results", {"status": "Running", "results": []}, {"queryId": "q-1"})
         logs.add_response("get_query_results", _rows(
-            {"attributes.session.id": "3c31731a-7fbc-4771-ab89-ebe5bdaecec0", "spans": "3",
+            {"attributes.session.id": "abcdefghij-session-of-the-test-call-01", "spans": "3",
              "first": "2026-11-22 19:10:18.864", "last": "2026-11-22 19:10:18.866"},
-            {"attributes.session.id": "usage-report-check-2e076d51aa1b4db793fb087cff1f0ff5", "spans": "9",
+            {"attributes.session.id": "usage-report-check-abcdefghij0123456789abcdefghij01", "spans": "9",
              "first": "2026-11-22 19:11:12.312", "last": "2026-11-22 19:11:14.175"}), {"queryId": "q-1"})
         out = usage_report.session_summary(c, S, "quality_agent", minutes=30)
         logs.assert_no_pending_responses()
     assert out == [
-        {"session": "usage-report-check-2e076d51aa1b4db793fb087cff1f0ff5", "spans": 9,
+        {"session": "usage-report-check-abcdefghij0123456789abcdefghij01", "spans": 9,
          "first": "2026-11-22 19:11:12.312", "last": "2026-11-22 19:11:14.175"},
-        {"session": "3c31731a-7fbc-4771-ab89-ebe5bdaecec0", "spans": 3,
+        {"session": "abcdefghij-session-of-the-test-call-01", "spans": 3,
          "first": "2026-11-22 19:10:18.864", "last": "2026-11-22 19:10:18.866"}]
 
 
