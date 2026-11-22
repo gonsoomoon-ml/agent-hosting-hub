@@ -49,7 +49,7 @@ from platform_team.company_policy.policy_names import policy_names
 from platform_team.hosting_review.agent_cleanup import remove_agent
 from platform_team.sample_tools.tool_data import INSPECTIONS, PARTS, TEST_RESULTS
 from platform_team.sample_tools.tool_schema import SHARED_READ, TARGETS
-from platform_team.shared_code.aws_helpers import Clients, mask, retry, signed_post
+from platform_team.shared_code.aws_helpers import Clients, all_items, mask, retry, signed_post
 from platform_team.shared_code.config import Settings, env_file_updates
 from platform_team.shared_code.hub_state import Platform, load
 
@@ -493,8 +493,8 @@ def nothing_made(c: Clients, s: Settings, p: Platform, agent: str) -> dict[str, 
     tools = [f"{t}___{x['name']}" for t, xs in TARGETS.items() for x in xs]
     found["policies"] = sorted(set(policy_names(agent, tools)) & set(list_policies(c, p.engine_id)))
     found["target"] = [n for n in targets(c, p.agent_gw["id"]) if n == s.target_name(agent)]
-    found["Runtime"] = [r["agentRuntimeName"] for page in [c.ctl.list_agent_runtimes(maxResults=100)]
-                        for r in page["agentRuntimes"] if r["agentRuntimeName"] == s.runtime_name(agent)]
+    found["Runtime"] = [r["agentRuntimeName"] for r in all_items(c.ctl.list_agent_runtimes, maxResults=100)
+                        if r["agentRuntimeName"] == s.runtime_name(agent)]          # every page: it asserts absence
     try:
         st = c.cfn.describe_stacks(StackName=s.stack_name(agent))["Stacks"][0]
         found["stack"] = [f"{st['StackName']} {st['StackStatus']}"]

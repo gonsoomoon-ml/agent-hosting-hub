@@ -76,3 +76,14 @@ def test_check_4_measures_the_start_from_the_request():
     assert e2e.started_in_time(requested, requested + 8)          # the final run: 8 s after the request
     assert e2e.started_in_time(requested, requested + 120)
     assert not e2e.started_in_time(requested, requested + 125)
+
+
+# ------------------------------------------------------------------ final review M-6: a check that asserts absence reads every page
+
+def test_check_9_finds_a_runtime_on_a_later_page():
+    from tests.fakes import PLATFORM, FakeClients
+    c = FakeClients()
+    pages = {None: {"agentRuntimes": [{"agentRuntimeName": f"other_{i}"} for i in range(100)], "nextToken": "p2"},
+             "p2": {"agentRuntimes": [{"agentRuntimeName": "hubQualityAgent_default_agent"}]}}
+    c.ctl.list_agent_runtimes = lambda **kw: pages[kw.get("nextToken")]
+    assert e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent") == {"Runtime": ["hubQualityAgent_default_agent"]}
