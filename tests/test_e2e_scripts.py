@@ -42,8 +42,8 @@ def test_the_advisory_line_is_a_row_of_pip_audit_not_the_requirement_itself():
 
 
 def test_printed_lines_hold_no_account_id_and_no_other_long_number(monkeypatch):
-    monkeypatch.setattr(e2e, "ACCOUNT", "111122223333")
-    assert e2e.clean("arn:aws:iam::111122223333:role/x 1763791200123") == "arn:aws:iam::<ACCOUNT>:role/x <NUMBER>"
+    monkeypatch.setattr(e2e, "ACCOUNT", "123456789012")
+    assert e2e.clean("arn:aws:iam::123456789012:role/x 1763791200123") == "arn:aws:iam::<ACCOUNT>:role/x <NUMBER>"
 
 
 def test_cleanup_check_knows_the_hubs_names_and_no_others():

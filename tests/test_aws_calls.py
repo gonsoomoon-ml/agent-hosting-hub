@@ -15,7 +15,7 @@ from platform_team.shared_code.config import Settings
 from platform_team.shared_code.hub_state import Platform
 from tests.fakes import ENV
 
-ACCOUNT, REGION, NOW = "111122223333", "us-west-2", datetime.datetime(2026, 11, 22)
+ACCOUNT, REGION, NOW = "123456789012", "us-west-2", datetime.datetime(2026, 11, 22)
 ENGINE, GW, REG, REC, TID = "hub_pe-abcdefghij", "hub-agents-abcdefghij", "abcdef123456", "rec123456789", "Tgt1234567"
 S, AGENT = Settings(), "quality_agent"
 ROLE, STACK, RUNTIME = S.agent_role(AGENT), S.stack_name(AGENT), S.runtime_name(AGENT)
@@ -32,7 +32,7 @@ def aws(monkeypatch, tmp_path):
     monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-config"))
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-credentials"))
     monkeypatch.setattr("time.sleep", lambda seconds: None)                 # a poll answered DELETE_IN_PROGRESS
-    c = Clients(boto3.Session(region_name=REGION, aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
+    c = Clients(boto3.Session(region_name=REGION, aws_access_key_id="test-access-key",
                               aws_secret_access_key="example"))
     stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "cfn", "logs", "iam", "ssm", "reg", "sfn")}
     for st in stubs.values():

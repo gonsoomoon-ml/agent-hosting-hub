@@ -1,13 +1,13 @@
 import json, re, tomllib, pytest, yaml
 from platform_team.hosting_review import deploy_build as d
 
-ROLE = "arn:aws:iam::111122223333:role/hub-agent-quality_agent-role"
-GW = "https://hub-tools-abc.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp"
+ROLE = "arn:aws:iam::123456789012:role/hub-agent-quality_agent-role"
+GW = "https://hub-tools-abcdefghij.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp"
 MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 ENV = {"AGENT": "quality_agent", "PREFIX": "hub", "AWS_REGION": "us-west-2", "ROLE_ARN": ROLE, "TOOL_GW_URL": GW,
-       "MODEL_ID": MODEL, "BUCKET": "hub-111122223333-us-west-2", "CODE_KEY": "submissions/quality_agent/agent.zip",
+       "MODEL_ID": MODEL, "BUCKET": "hub-123456789012-us-west-2", "CODE_KEY": "submissions/quality_agent/agent.zip",
        "CODE_VERSION": "v1"}
-ARN = "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-AbCdEf1234"
+ARN = "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubQualityAgent_default_agent-AbCdEf1234"
 
 def test_agentcore_json_comes_from_the_platform_template():
     config = json.loads(d.render_config(d.TEMPLATE.read_text(), d.template_values(ENV)))

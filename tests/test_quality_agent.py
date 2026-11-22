@@ -143,9 +143,9 @@ def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkey
     agent = load_agent("quality_agent")
 
     def denied():
-        raise RuntimeError("User: arn:aws:sts::111122223333:assumed-role/hub-agent-quality_agent-role/s is not "
+        raise RuntimeError("User: arn:aws:sts::123456789012:assumed-role/hub-agent-quality_agent-role/s is not "
                            "authorized to perform: bedrock:InvokeModel " + "x" * 1000)
     monkeypatch.setattr(agent, "new_agent", denied)
     answer, used = agent.run("Did Q-1001 pass?")
     assert answer.startswith("ERROR: RuntimeError: User: arn:aws:sts::<ACCOUNT>:assumed-role/") and used == []
-    assert "111122223333" not in answer and len(answer) < 400
+    assert "123456789012" not in answer and len(answer) < 400

@@ -1,6 +1,6 @@
 import fnmatch, pathlib, re, subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-ALLOWED = {"111122223333", "123456789012"}
+ALLOWED = {"123456789012", "234567890123"}                  # stand-ins for "this account" and "another account"
 SKIP_DIRS = {".venv", ".terraform", "build", "node_modules", ".git", "__pycache__"}
 HASHES = {"uv.lock", ".terraform.lock.hcl"}                 # package and provider hashes, long digit runs by nature
 IGNORED = ("*.tfstate*", "*.log", ".env")                   # as .gitignore: local files that never get published
@@ -33,9 +33,19 @@ def test_no_account_values_in_repo():
         for m in re.findall(r"(?<![0-9])[0-9]{12}(?![0-9])", text):
             if m not in ALLOWED:
                 bad.append((str(f.relative_to(ROOT)), m))
-        if re.search(r"AKIA(?!IOSFODNN7EXAMPLE)[0-9A-Z]{16}", text):
-            bad.append((str(f.relative_to(ROOT)), "access key"))
+        if re.search(r"AKIA[0-9A-Z]{16}", text):            # no key-shaped string, not even a documented example:
+            bad.append((str(f.relative_to(ROOT)), "access key"))   # a secret scan of this repo needs no exception
     assert bad == []
+
+
+def test_the_one_key_shaped_value_is_put_together_where_it_is_used():
+    """The review's test call sends the AWS documentation's example access key and expects the guardrail to refuse it.
+    That value must have the shape of a key at run time, so Terraform joins it from two parts."""
+    tf = (ROOT / "platform_team/hosting_review/terraform/main.tf").read_text()
+    parts = re.search(r'EXAMPLE_KEY\s*=\s*join\("", \["([A-Z]+)", "([0-9A-Z]+)"\]\)', tf)
+    assert parts, "EXAMPLE_KEY is not joined from two parts"
+    value = "".join(parts.groups())
+    assert re.fullmatch(r"AKIA[0-9A-Z]{16}", value) and value.endswith("EXAMPLE")
 
 
 def test_the_local_files_the_scan_skips_are_the_ones_git_ignores():

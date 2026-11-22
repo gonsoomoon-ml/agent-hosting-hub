@@ -11,7 +11,7 @@
 `deploy_build.py`가 아래 순서로 한다.
 
 1. 제출물을 카탈로그 기록에 적힌 object version으로 S3에서 받아 푼다. 위험한 경로가 있거나, `main.py`나 `requirements.txt`가 없거나, `requirements.txt`가 아래 규칙에 맞지 않으면 멈춘다.
-2. 고정한 CLI(`@aws/agentcore@1.0.3`)로 프로젝트를 만든다: `agentcore create --name <프로젝트> --template agent-python-minimal --skip-install --skip-git`. 프로젝트 이름은 접두어와 에이전트 이름을 이은 것이다(예: `hubQualityAgent`). 이 프로젝트에서 쓰는 것은 CDK 앱(`agentcore/cdk/`)이다.
+2. 고정한 CLI(`@aws/agentcore` 1.0.3)로 프로젝트를 만든다: `agentcore create --name <프로젝트> --template agent-python-minimal --skip-install --skip-git`. 프로젝트 이름은 접두어와 에이전트 이름을 이은 것이다(예: `hubQualityAgent`). 이 프로젝트에서 쓰는 것은 CDK 앱(`agentcore/cdk/`)이다.
 3. 프로젝트의 `app/agent/`를 비우고 제출물로 채운다. 제출물에 있던 `pyproject.toml`, `uv.lock`, `uv.toml`, `.python-version`은 거부하지 않고 지운다. 무엇을 어디서 설치할지는 플랫폼이 정한다. buildspec도 `UV_NO_CONFIG=1`을 두어 uv가 설정 파일을 하나도 읽지 않게 한다.
 4. `requirements.txt`로 `app/agent/pyproject.toml`을 쓴다. CLI의 CodeZip 패키징은 코드 위치에 있는 `pyproject.toml`의 의존성을 설치하기 때문이다.
 5. `agentcore.json.tmpl`을 채워 `agentcore/agentcore.json`을 쓴다. 들어가는 값은 프로젝트 이름, 허가 단계가 만든 실행 역할(`ROLE_ARN`), 환경 변수 `HUB_REGION`, `TOOL_GATEWAY_URL`, `MODEL_ID`, `AGENT_NAME`이다.

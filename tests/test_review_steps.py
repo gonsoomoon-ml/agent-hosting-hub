@@ -6,7 +6,7 @@ from platform_team.shared_code.aws_helpers import Deadline, OutOfTime
 from tests.fakes import FakeClients, ENV, CTX, SPEC
 
 # The ARN the deploy build writes for quality_agent: runtime/<Settings.runtime_name>-<10 letters or digits>
-RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef"
+RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef"
 
 @pytest.fixture(autouse=True)
 def patched_post(monkeypatch):
@@ -169,12 +169,12 @@ def test_entry_run_again_keeps_the_target_and_its_policies():              # Rev
 # ------------------------------------------------------------------ final review M-2: Entry trusts no Runtime ARN but this agent's
 
 @pytest.mark.parametrize("arn", [
-    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubReleaseReview_default_agent-Ab12Cd34Ef",  # another agent
-    "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef",  # another account
-    "arn:aws:bedrock-agentcore:us-east-1:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef",  # another Region
-    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34",    # no Runtime ID
-    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef/x",
-    "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hub_quality_agent-x",
+    "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubReleaseReview_default_agent-Ab12Cd34Ef",  # another agent
+    "arn:aws:bedrock-agentcore:us-west-2:234567890123:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef",  # another account
+    "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef",  # another Region
+    "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubQualityAgent_default_agent-Ab12Cd34",    # no Runtime ID
+    "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef/x",
+    "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hub_quality_agent-x",
     "",
 ])
 def test_entry_refuses_a_runtime_arn_that_is_not_this_agents(arn):

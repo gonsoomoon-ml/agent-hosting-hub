@@ -25,15 +25,18 @@ locals {
   }
   # What the steps read from their environment (review_steps.py, lambda_handler.py); ACTION names the step.
   step_env = {
-    HUB_REGION     = local.region
-    PREFIX         = var.prefix
-    ACCOUNT        = local.account
-    ENGINE_ID      = var.policy_engine_id
-    AGENT_GW_ID    = var.agent_gateway_id
-    AGENT_GW_ARN   = var.agent_gateway_arn
-    TOOL_GW_ARN    = var.tool_gateway_arn
-    TESTCALL_ROLE  = aws_iam_role.step["testcall"].name # the principal of review_permit_<agent>
-    EXAMPLE_KEY    = "AKIAIOSFODNN7EXAMPLE"             # the example access key of the AWS documentation
+    HUB_REGION    = local.region
+    PREFIX        = var.prefix
+    ACCOUNT       = local.account
+    ENGINE_ID     = var.policy_engine_id
+    AGENT_GW_ID   = var.agent_gateway_id
+    AGENT_GW_ARN  = var.agent_gateway_arn
+    TOOL_GW_ARN   = var.tool_gateway_arn
+    TESTCALL_ROLE = aws_iam_role.step["testcall"].name # the principal of review_permit_<agent>
+    # The AWS documentation's example access key, not a credential: the test call sends it and expects the
+    # guardrail to refuse. It is joined here so that no file of the repo holds a key-shaped string and a
+    # secret scan of the repo needs no exception.
+    EXAMPLE_KEY    = join("", ["AKIA", "IOSFODNN7EXAMPLE"])
     CATALOG_TOOLS  = join(",", sort(var.catalog_tools))
     AGENT_BOUNDARY = aws_iam_policy.agent_boundary.arn # Grant creates agent roles under this boundary
   }

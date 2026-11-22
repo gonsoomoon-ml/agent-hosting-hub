@@ -20,7 +20,7 @@ phases:
     commands:
       - python3 -m pip install --quiet uv
       - ln -sf "$(python3 -c 'import uv; print(uv.find_uv_bin())')" /usr/local/bin/uv
-      - npm install --no-audit --no-fund --loglevel=error --prefix /tmp/cli @aws/agentcore@1.0.3
+      - npm install --no-audit --no-fund --loglevel=error --prefix /tmp/cli @aws/agentcore@1.0.3  # mask-ok: an npm package version, not an email address
       - echo "node $(node --version), $(uv --version), agentcore $($AGENTCORE_CLI --version)"
   build:
     commands:

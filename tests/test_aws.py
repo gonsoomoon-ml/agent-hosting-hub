@@ -4,7 +4,7 @@ from botocore.exceptions import ClientError
 from platform_team.shared_code.aws_helpers import mask, already_exists, wait_status, signed_post
 import pytest
 
-CREDS = Credentials("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")   # AWS documentation's example keys
+CREDS = Credentials("test-access-key", "test-secret-key")                  # stand-ins: the request is signed, never sent
 URL = "https://gateway.invalid/mcp"                                                    # never reached: urlopen is patched
 
 class Answer(io.BytesIO):
@@ -27,7 +27,7 @@ def test_signed_post_returns_an_http_error_status_instead_of_raising(monkeypatch
     assert signed_post(URL, {}, "us-west-2", creds=CREDS) == (403, '{"error": "denied"}')
 
 def test_mask_hides_the_account():
-    assert mask("arn:aws:iam::111122223333:role/x", "111122223333") == "arn:aws:iam::<ACCOUNT>:role/x"
+    assert mask("arn:aws:iam::123456789012:role/x", "123456789012") == "arn:aws:iam::<ACCOUNT>:role/x"
 
 def test_already_exists_reads_code_and_message():
     err = lambda code, msg: ClientError({"Error": {"Code": code, "Message": msg}}, "Op")

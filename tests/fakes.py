@@ -7,15 +7,15 @@ from botocore.exceptions import ClientError
 from platform_team.hosting_review.review_steps import application_digest
 from platform_team.shared_code.hub_state import Platform
 
-ACCOUNT = "111122223333"
+ACCOUNT = "123456789012"
 TOOLS = ["Parts___get_part_spec", "Parts___get_test_result", "Quality___get_inspection_data",
          "Release___file_review_request"]
 
 ENV = {
     "HUB_REGION": "us-west-2", "PREFIX": "hub", "ACCOUNT": ACCOUNT, "ENGINE_ID": "engine-1",
-    "AGENT_GW_ID": "agentgw1", "AGENT_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/agentgw1",
-    "TOOL_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/toolgw1",
-    "TESTCALL_ROLE": "hub-review-testcall-role", "EXAMPLE_KEY": "AKIAIOSFODNN7EXAMPLE",
+    "AGENT_GW_ID": "hub-agents-abcdefghij", "AGENT_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/hub-agents-abcdefghij",
+    "TOOL_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/hub-tools-abcdefghij",
+    "TESTCALL_ROLE": "hub-review-testcall-role", "EXAMPLE_KEY": "EXAMPLE-ACCESS-KEY",
     "CATALOG_TOOLS": ",".join(TOOLS), "AGENT_BOUNDARY": f"arn:aws:iam::{ACCOUNT}:policy/hub-agent-boundary",
 }
 
@@ -28,10 +28,10 @@ CTX = {"registryId": "reg-1", "recordId": "rec-1", "record": "quality_agent", "s
 
 PLATFORM = Platform(
     account=ACCOUNT,
-    agent_gw={"id": "agentgw1", "arn": ENV["AGENT_GW_ARN"],
-              "url": "https://agentgw1.gateway.bedrock-agentcore.us-west-2.amazonaws.com"},
-    tool_gw={"id": "toolgw1", "arn": ENV["TOOL_GW_ARN"],
-             "url": "https://toolgw1.gateway.bedrock-agentcore.us-west-2.amazonaws.com"},
+    agent_gw={"id": "hub-agents-abcdefghij", "arn": ENV["AGENT_GW_ARN"],
+              "url": "https://hub-agents-abcdefghij.gateway.bedrock-agentcore.us-west-2.amazonaws.com"},
+    tool_gw={"id": "hub-tools-abcdefghij", "arn": ENV["TOOL_GW_ARN"],
+             "url": "https://hub-tools-abcdefghij.gateway.bedrock-agentcore.us-west-2.amazonaws.com"},
     engine_id="engine-1", engine_arn=f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:policy-engine/engine-1",
     registry_id="reg-1", topic_arn=f"arn:aws:sns:us-west-2:{ACCOUNT}:hub-alerts",
     tool_lambda_arn=f"arn:aws:lambda:us-west-2:{ACCOUNT}:function:hub-tools",

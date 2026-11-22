@@ -14,7 +14,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PUBLISH, REJECT = "dev_team/agent_template/publish.sh", "platform_team/hosting_review/reject.sh"
 RULE = "platform_team/shared_code/hub_env.sh"                  # both commands source it
 SHOWN = "prefix=$DEMO_PREFIX region=$AWS_REGION model=$MODEL_ID loaded=${HUB_ENV_LOADED:-no} key=${AWS_ACCESS_KEY_ID:-none} token=${SOME_TOKEN:-none}"
-DOTENV = ("DEMO_PREFIX=fromdotenv\nMODEL_ID=model-from-dotenv\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n"
+DOTENV = ("DEMO_PREFIX=fromdotenv\nMODEL_ID=model-from-dotenv\nAWS_ACCESS_KEY_ID=key-of-the-dotenv\n"
           "SOME_TOKEN=do-not-export\n")
 
 
