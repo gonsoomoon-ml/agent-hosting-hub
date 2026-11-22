@@ -149,7 +149,7 @@ def entry(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     target_id = ensure_runtime_target(c, env["AGENT_GW_ID"], target, runtime_arn,
                                       wait=deadline.wait(TARGET_WAIT, f"target {target}"))
     review = _policy(c, env, deadline, review_permit_name(agent),
-                     cedar.entry_permit(target, env["AGENT_GW_ARN"], env["ACCOUNT"], env["TESTCALL_ROLE"]))
+                     cedar.review_permit(target, env["AGENT_GW_ARN"], env["ACCOUNT"], env["TESTCALL_ROLE"]))
     guard = _policy(c, env, deadline, guard_secret_name(agent), cedar.guard_secret(target, env["AGENT_GW_ARN"]),
                     guardrail=True)
     return {**ctx, "runtimeArn": runtime_arn, "target": target, "targetId": target_id,
