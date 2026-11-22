@@ -33,7 +33,7 @@ from tests.fakes import ACCOUNT, CTX, ENV, SPEC
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME_ID = "Ab12Cd34Ef"          # the 10 characters AgentCore adds to a Runtime's name
-FOREIGN_LOG = "/aws/bedrock-agentcore/runtimes/deep_insight_runtime_vpc-Zz98Yy76Xx-DEFAULT"
+FOREIGN_LOG = "/aws/bedrock-agentcore/runtimes/other_team_runtime-Zz98Yy76Xx-DEFAULT"
 ROLE, STACK = "hub-agent-quality_agent-role", "AgentCore-hubQualityAgent-default"
 RUNTIME_TYPE = "AWS::BedrockAgentCore::Runtime"
 
@@ -158,7 +158,7 @@ def test_reject_refuses_and_changes_nothing(agent, status, reason, message):
 
 # ------------------------------------------------------------------ clean_agents: every agent, before terraform destroy
 
-FOREIGN_ROLES = {"deep_insight_runtime_vpc-role", "hub-agents-role", "hub-review-grant-role", "hub-agent-Not-An-Agent-role",
+FOREIGN_ROLES = {"other_team_runtime-role", "hub-agents-role", "hub-review-grant-role", "hub-agent-Not-An-Agent-role",
                  "demo-agent-quality_agent-role"}       # the last: an agent role of a hub with another prefix
 
 
@@ -168,11 +168,11 @@ def test_clean_agents_finds_every_agent_and_leaves_what_the_hub_did_not_make(mon
     c.parameters["/hub/agents/part_inspector/runtime_arn"] = "arn"       # only an SSM value is left
     c.parameters["/hub/platform/registry_id"] = "reg-1"
     c.other_records = [{"name": "parts-tools", "recordId": "rec-tools", "recordType": "MCP", "status": "APPROVED"}]
-    c.stacks["AgentCore-deepInsight-default"] = {"status": "CREATE_COMPLETE"}
+    c.stacks["AgentCore-otherTeam-default"] = {"status": "CREATE_COMPLETE"}
     c.log_groups.add(FOREIGN_LOG)
     monkeypatch.setattr(agent_cleanup, "load", lambda s, c=None: PLATFORM)
     foreign = {"policy shared_tool_read", "parameter /hub/platform/registry_id", "record parts-tools",
-               "stack AgentCore-deepInsight-default", f"log group {FOREIGN_LOG}", *(f"role {r}" for r in FOREIGN_ROLES)}
+               "stack AgentCore-otherTeam-default", f"log group {FOREIGN_LOG}", *(f"role {r}" for r in FOREIGN_ROLES)}
     removed = clean_agents(Settings(), c)
     assert _state(c) == foreign
     assert {"parameter /hub/agents/part_inspector/runtime_arn", "role hub-agent-release_review-role",

@@ -51,8 +51,8 @@ def test_cleanup_check_knows_the_hubs_names_and_no_others():
     for name in ("hub-agents", "hub_pe", "hubQualityAgent_default_agent-eHcqNQ7n5v", "AgentCore-hubQualityAgent-default",
                  "/hub/platform/bucket", "hub-e2e-alerts"):
         assert check_cleanup.hub_name(s, name), name
-    for name in ("hubwhole-agents", "hubspot", "github-runner", "deep_insight_runtime_vpc", "CDKToolkit",
-                 "AgentCore-deepInsight-default", "/hubwhole/x"):
+    for name in ("hubwhole-agents", "hubspot", "github-runner", "other_team_runtime", "CDKToolkit",
+                 "AgentCore-otherTeam-default", "/hubwhole/x"):
         assert not check_cleanup.hub_name(s, name), name
 
 
