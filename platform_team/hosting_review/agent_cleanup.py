@@ -7,7 +7,11 @@ What the review makes for an agent: Grant makes the execution role (with its inl
 tool; Deploy puts the code package in the inbox (packages/<agent>/<code version>.zip), creates or updates the Runtime
 <prefix>_<agent> (CreateAgentRuntime, UpdateAgentRuntime) and writes the Runtime ARN to SSM; the Runtime writes its
 own log groups; Entry makes the gateway target, the test call's entry permit and the guard; Approve makes the users'
-entry permit.
+entry permit. For an agent the platform team hosts as a managed harness (preload_agents.host_harness), the same role and
+tool permits, the harness <prefix>_<agent> (Settings.harness_name) and its ARN in SSM; no Runtime, target or package.
+AgentCore runs the harness on a Runtime of its own, harness_<prefix>_<agent> (Settings.harness_runtime_name), which
+writes a log group as any Runtime does. DeleteHarness removed that Runtime and its workload identity (seen on
+2026-11-22); the log group is removed here.
 
 remove_agent removes one agent's things (reject_agent calls it). clean_agents removes every agent's things and its
 catalog record, approved agents too (make destroy calls it): an agent role keeps Terraform from deleting the
@@ -16,9 +20,10 @@ make destroy only, after the agents and the seed) deletes whatever record is sti
 each one: a record of another type, or with a name the rules refuse, is not an agent the steps above find.
 
 Every name comes from Settings and company_policy.policy_names for that one agent, never from a pattern wider
-than it. A name is not proof enough for the role and the Runtime, so before anything is deleted check_agent reads
-them: the role must carry the hub's agent boundary (Grant can make no other agent role) and have no managed policy
-or instance profile, and the Runtime of the agent's name must run under the agent's role in its own account.
+than it. A name is not proof enough for the role, the Runtime and the harness, so before anything is deleted
+check_agent reads them: the role must carry the hub's agent boundary (Grant can make no other agent role) and have no
+managed policy or instance profile, and the Runtime and the harness of the agent's name must run under the agent's
+role in their own account.
 Anything else is not this hub's, and nothing of that agent is deleted. A thing that is not there is already gone,
 so running again is safe; any other error stops the run and says which step failed.
 
@@ -50,10 +55,12 @@ RUNTIME_LOGS = "/aws/bedrock-agentcore/runtimes/"
 RUNTIME_LOG_TAIL = RUNTIME_ID_TAIL + r"(-.*)?"
 _ROLE_ARN = re.compile(r"arn:aws:iam::([0-9]{12}):role/(.+)")
 _RUNTIME_ARN = re.compile(r"arn:aws:bedrock-agentcore:[a-z0-9-]+:([0-9]{12}):runtime/.+")
+_HARNESS_ARN = re.compile(r"arn:aws:bedrock-agentcore:[a-z0-9-]+:([0-9]{12}):harness/.+")
 
 
 class NotOwned(ValueError):
-    """A role or Runtime has the agent's name but is not this hub's as it stands. Nothing of the agent is deleted."""
+    """A role, Runtime or harness has the agent's name but is not this hub's as it stands. Nothing of the agent is
+    deleted."""
 
 
 class CleanupFailed(RuntimeError):
@@ -147,28 +154,60 @@ def _find_runtime(c, name: str) -> dict | None:
         raise
 
 
+def _check_owner(what: str, role_arn: str, own_arn, role: str) -> None:
+    """Raise NotOwned unless `what` (a Runtime or a harness, whose ARN matched as own_arn) runs under `role` of its own
+    account (role_arn)."""
+    arn = _ROLE_ARN.fullmatch(role_arn or "")
+    if not arn:
+        raise NotOwned(f"{what} is not this hub's: its execution role is not an IAM role ARN")
+    if arn.group(2) != role:
+        raise NotOwned(f"{what} is not this hub's: it runs under role {arn.group(2)}, not {role}")
+    if not own_arn or arn.group(1) != own_arn.group(1):
+        raise NotOwned(f"{what} is not this hub's: it runs under role {role} of another account")
+
+
 def _check_runtime(c, s: Settings, agent: str) -> dict | None:
     """The agent's Runtime, if there is one, after checking it is this hub's: the Runtime named Settings.runtime_name
     runs under Settings.agent_role(agent) of the Runtime's own account. Raises NotOwned otherwise. Reads only."""
-    name, role = s.runtime_name(agent), s.agent_role(agent)
+    name = s.runtime_name(agent)
     runtime = _find_runtime(c, name)
-    if runtime is None:
-        return None
-    arn, own = _ROLE_ARN.fullmatch(runtime.get("roleArn") or ""), _RUNTIME_ARN.fullmatch(runtime["agentRuntimeArn"])
-    if not arn:
-        raise NotOwned(f"Runtime {name} is not this hub's: its execution role is not an IAM role ARN")
-    if arn.group(2) != role:
-        raise NotOwned(f"Runtime {name} is not this hub's: it runs under role {arn.group(2)}, not {role}")
-    if not own or arn.group(1) != own.group(1):
-        raise NotOwned(f"Runtime {name} is not this hub's: it runs under role {role} of another account")
+    if runtime is not None:
+        _check_owner(f"Runtime {name}", runtime.get("roleArn"), _RUNTIME_ARN.fullmatch(runtime["agentRuntimeArn"]),
+                     s.agent_role(agent))
     return runtime
 
 
+def _find_harness(c, name: str) -> dict | None:
+    """The harness of this name as GetHarness gives it (with its executionRoleArn), or None. Every page is read."""
+    found = next((h for h in all_items(c.ctl.list_harnesses, maxResults=100) if h["harnessName"] == name), None)
+    if found is None:
+        return None
+    try:
+        return c.ctl.get_harness(harnessId=found["harnessId"])["harness"]
+    except ClientError as e:
+        if _code(e) == "ResourceNotFoundException":
+            return None                                 # deleted between the two calls
+        raise
+
+
+def check_harness(c, s: Settings, agent: str) -> dict | None:
+    """The agent's harness, if there is one, after checking it is this hub's: the harness named Settings.harness_name
+    runs under Settings.agent_role(agent) of the harness's own account. Raises NotOwned otherwise. Reads only."""
+    name = s.harness_name(agent)
+    harness = _find_harness(c, name)
+    if harness is not None:
+        _check_owner(f"harness {name}", harness.get("executionRoleArn"), _HARNESS_ARN.fullmatch(harness["arn"]),
+                     s.agent_role(agent))
+    return harness
+
+
 def check_agent(c, s: Settings, agent: str) -> None:
-    """Raise NotOwned when the agent's role or Runtime exists but is not this hub's as it stands. Reads only."""
+    """Raise NotOwned when the agent's role, Runtime or harness exists but is not this hub's as it stands. Reads
+    only."""
     check_name(agent)
     _check_role(c, s, agent)
     _check_runtime(c, s, agent)
+    check_harness(c, s, agent)
 
 
 # ================================================================== one agent
@@ -212,12 +251,12 @@ def _remove_target(c, s: Settings, p: Platform, agent: str) -> list[str]:
     return [f"target {name}"]
 
 
-def _runtime_status(c, rid: str) -> dict:
-    """The deleted Runtime's status as the wait reads it: GONE when it is not found. Only DELETE_FAILED means the
-    delete failed; a Runtime a failed deploy left CREATE_FAILED or UPDATE_FAILED may still show that status, which
-    reads as still deleting."""
+def _status_after_delete(read) -> dict:
+    """A deleted Runtime's or harness's status as the wait reads it (read() gives it with its failureReason): GONE when
+    it is not found. Only DELETE_FAILED means the delete failed; one a failed create or update left CREATE_FAILED or
+    UPDATE_FAILED may still show that status, which reads as still deleting."""
     try:
-        r = c.ctl.get_agent_runtime(agentRuntimeId=rid)
+        r = read()
     except ClientError as e:
         if _code(e) == "ResourceNotFoundException":
             return {"status": "GONE"}
@@ -226,6 +265,25 @@ def _runtime_status(c, rid: str) -> dict:
     if status.endswith("FAILED") and status != "DELETE_FAILED":
         status = f"{status}, deleting"
     return {"status": status, "statusReason": r.get("failureReason")}
+
+
+def _runtime_status(c, rid: str) -> dict:
+    return _status_after_delete(lambda: c.ctl.get_agent_runtime(agentRuntimeId=rid))
+
+
+def _remove_harness(c, s: Settings, agent: str) -> list[str]:
+    """Delete the agent's harness (checked again: check_harness) and wait until it is gone. A harness has no managed
+    memory of the hub's (host_harness disables it); DeleteHarness deletes one by default (the AgentCore guide)."""
+    harness = check_harness(c, s, agent)
+    if harness is None:
+        return []
+    name, hid = harness["harnessName"], harness["harnessId"]
+    if harness["status"] != "DELETING" and not _delete(lambda: c.ctl.delete_harness(harnessId=hid),
+                                                       "ResourceNotFoundException"):
+        return []
+    wait_status(lambda: _status_after_delete(lambda: c.ctl.get_harness(harnessId=hid)["harness"]), ("GONE",),
+                f"harness {name}", timeout=RUNTIME_WAIT, step=RUNTIME_STEP)
+    return [f"harness {name}"]
 
 
 def _remove_runtime(c, s: Settings, agent: str) -> list[str]:
@@ -293,20 +351,23 @@ def _remove_parameters(c, s: Settings, agent: str) -> list[str]:
 
 
 def remove_agent(c, s: Settings, p: Platform, agent: str) -> list[str]:
-    """Remove what the hosting review made for this agent, in this order: its policies, its gateway target (waits
-    until it is gone), its Runtime (waits until it is gone), the Runtime's log groups, its code packages, its
-    execution role, and its SSM values. Returns what was removed, as "<kind> <name>"; what was not there is not
-    listed. check_agent runs first: a role or Runtime that is not this hub's stops it before anything is deleted. A
-    step that fails raises CleanupFailed, and the steps after it do not run."""
+    """Remove what the hosting review (or host_harness) made for this agent, in this order: its policies, its gateway
+    target (waits until it is gone), its harness and its Runtime (each waits until it is gone), the log groups of the
+    Runtime and of the harness's Runtime, its code packages, its execution role, and its SSM values. Returns what was
+    removed, as "<kind> <name>"; what was not there is not listed. check_agent runs first: a role, Runtime or harness
+    that is not this hub's stops it before anything is deleted. A step that fails raises CleanupFailed, and the steps
+    after it do not run."""
     check_name(agent)
     try:
         check_agent(c, s, agent)
     except Exception as e:
-        raise CleanupFailed(f"{agent}: checking that its role and Runtime are this hub's", e, []) from e
+        raise CleanupFailed(f"{agent}: checking that its role, Runtime and harness are this hub's", e, []) from e
     plan = [("policies", lambda: _remove_policies(c, p, agent)),
             ("gateway target", lambda: _remove_target(c, s, p, agent)),
+            ("harness", lambda: _remove_harness(c, s, agent)),
             ("Runtime", lambda: _remove_runtime(c, s, agent)),
-            ("Runtime log groups", lambda: _remove_log_groups(c, s.runtime_name(agent))),
+            ("Runtime log groups", lambda: _remove_log_groups(c, s.runtime_name(agent))
+             + _remove_log_groups(c, s.harness_runtime_name(agent))),        # the harness's Runtime's, too
             ("code packages", lambda: _remove_packages(c, p, agent)),
             ("execution role", lambda: _remove_role(c, s.agent_role(agent))),
             ("SSM values", lambda: _remove_parameters(c, s, agent))]

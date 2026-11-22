@@ -80,8 +80,8 @@ def test_valid_agent_names_give_one_to_one_runtime_and_target_names():
 
 
 def test_every_example_application_passes_the_form_check():
-    forms = sorted((ROOT / "dev_team").glob("*/agent.json"))
-    assert len(forms) >= 3
+    forms = sorted([*(ROOT / "dev_team").glob("*/agent.json"), *(ROOT / "dev_team").glob("preloaded_agents/*/agent.json")])
+    assert len(forms) >= 5
     for form in forms:
         app = json.loads(form.read_text())
         assert validate(app, CATALOG) == [], form.parent.name

@@ -87,6 +87,31 @@ def _runtime(status="READY", version="1", role_arn=f"arn:aws:iam::{ACCOUNT}:role
             "roleArn": role_arn, "lifecycleConfiguration": {"idleRuntimeSessionTimeout": 900, "maxLifetime": 28800}}
 
 
+HARNESS, HARNESS_AGENT = S.harness_name("spec_assistant"), "spec_assistant"
+HARNESS_ID = f"{HARNESS}-Ab12Cd34Ef"
+HARNESS_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:harness/{HARNESS_ID}"
+HARNESS_ROLE = S.agent_role(HARNESS_AGENT)
+
+
+def _listed_harness(name=HARNESS, status="READY"):
+    """One item of ListHarnesses' answer."""
+    hid = f"{name}-Ab12Cd34Ef"
+    return {"harnessId": hid, "harnessName": name, "arn": f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:harness/{hid}",
+            "status": status, "createdAt": NOW, "updatedAt": NOW}
+
+
+def _harness(status="READY", role=HARNESS_ROLE):
+    """GetHarness's (and CreateHarness's) answer for spec_assistant's harness."""
+    return {"harness": {**_listed_harness(status=status), "executionRoleArn": f"arn:aws:iam::{ACCOUNT}:role/{role}",
+                        "model": {"bedrockModelConfig": {"modelId": S.model_id}}, "systemPrompt": [{"text": "x"}],
+                        "tools": [], "skills": [], "allowedTools": ["@hub_tools/Parts___get_part_spec"],
+                        "truncation": {"strategy": "sliding_window"}, "environment": {"agentCoreRuntimeEnvironment": {
+                            "agentRuntimeArn": f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/harness_abcdefghij-Ab12Cd34Ef",
+                            "agentRuntimeName": "harness_abcdefghij", "agentRuntimeId": "harness_abcdefghij-Ab12Cd34Ef",
+                            "lifecycleConfiguration": {"idleRuntimeSessionTimeout": 900, "maxLifetime": 28800},
+                            "networkConfiguration": {"networkMode": "PUBLIC"}}}}}
+
+
 def _find_runtime(stubs, status="READY"):
     """Find this agent's Runtime by name (every page of ListAgentRuntimes) and read it (its roleArn)."""
     other = {**_listed_runtime(), "agentRuntimeName": "other_team_runtime", "agentRuntimeId": "other_team_runtime-Zz98Yy76Xx",
@@ -97,8 +122,13 @@ def _find_runtime(stubs, status="READY"):
     stubs["ctl"].add_response("get_agent_runtime", _runtime(status), {"agentRuntimeId": RUNTIME_ID})
 
 
+def _no_harness(stubs):
+    """No harness of the agent's name: ListHarnesses (every page) does not list one."""
+    stubs["ctl"].add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")]}, {"maxResults": 100})
+
+
 def _ownership_checks(stubs, role=True):
-    """check_agent: the role's boundary, managed policies and instance profiles; the Runtime's role."""
+    """check_agent: the role's boundary, managed policies and instance profiles; the Runtime's role; the harness's."""
     iam = stubs["iam"]
     if role:
         iam.add_response("get_role", {"Role": _role()}, {"RoleName": ROLE})
@@ -107,6 +137,7 @@ def _ownership_checks(stubs, role=True):
     else:
         iam.add_client_error("get_role", "NoSuchEntity", http_status_code=404, expected_params={"RoleName": ROLE})
     _find_runtime(stubs)
+    _no_harness(stubs)
 
 
 def _removal(stubs, role=True, policy="entry_permit_quality_agent"):
@@ -125,6 +156,7 @@ def _removal(stubs, role=True, policy="entry_permit_quality_agent"):
                      {"gatewayIdentifier": GW, "targetId": TID})
     ctl.add_client_error("get_gateway_target", "ResourceNotFoundException", http_status_code=404,
                          expected_params={"gatewayIdentifier": GW, "targetId": TID})
+    _no_harness(stubs)                                                        # no harness of its name to delete
     _find_runtime(stubs)                                                      # found and checked again
     ctl.add_response("delete_agent_runtime", {"status": "DELETING", "agentRuntimeId": RUNTIME_ID}, {"agentRuntimeId": RUNTIME_ID})
     ctl.add_response("get_agent_runtime", _runtime("DELETING"), {"agentRuntimeId": RUNTIME_ID})
@@ -133,6 +165,8 @@ def _removal(stubs, role=True, policy="entry_permit_quality_agent"):
     logs.add_response("describe_log_groups", {"logGroups": [{"logGroupName": LOG}]},
                       {"logGroupNamePrefix": f"/aws/bedrock-agentcore/runtimes/{RUNTIME}-"})
     logs.add_response("delete_log_group", {}, {"logGroupName": LOG})
+    logs.add_response("describe_log_groups", {"logGroups": []},                   # the harness's Runtime's: none
+                      {"logGroupNamePrefix": f"/aws/bedrock-agentcore/runtimes/{S.harness_runtime_name(AGENT)}-"})
     s3.add_response("list_object_versions", {
         "Versions": [{"Key": PACKAGE, "VersionId": "version-1", "IsLatest": False, "Size": 3, "LastModified": NOW}],
         "DeleteMarkers": [{"Key": PACKAGE, "VersionId": "marker-1", "IsLatest": True, "LastModified": NOW}],
@@ -712,3 +746,78 @@ def test_the_cleanup_check_lists_the_bedrock_guardrails_on_every_page(aws, monke
     assert [n for n in names if check_cleanup.hub_name(S, n)] == ["hub-company-guardrail"]
     st.assert_no_pending_responses()
     st.deactivate()
+
+
+# ------------------------------------------------------------------ a managed harness (preload_agents, the cleanup)
+
+TOOL_GW_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/hub-tools-abcdefghij"
+
+
+def _harness_found(ctl, role=HARNESS_ROLE):
+    """The cleanup finds the agent's harness by name (every page of ListHarnesses) and reads it (its role)."""
+    ctl.add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")], "nextToken": "page-2"},
+                     {"maxResults": 100})
+    ctl.add_response("list_harnesses", {"harnesses": [_listed_harness()]}, {"maxResults": 100, "nextToken": "page-2"})
+    ctl.add_response("get_harness", _harness(role=role), {"harnessId": HARNESS_ID})
+
+
+def test_a_harness_is_made_and_waited_on_with_calls_the_model_accepts(aws):
+    from platform_team.hosting_review import preload_agents
+    c, stubs = aws
+    ctl, role_arn = stubs["ctl"], f"arn:aws:iam::{ACCOUNT}:role/{HARNESS_ROLE}"
+    ctl.add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")]}, {"maxResults": 100})
+    ctl.add_response("create_harness", _harness("CREATING"), {
+        "harnessName": HARNESS, "executionRoleArn": role_arn, "model": {"bedrockModelConfig": {"modelId": S.model_id}},
+        "systemPrompt": [{"text": "Answer from the tools."}],
+        "tools": [{"type": "agentcore_gateway", "name": "hub_tools", "config": {"agentCoreGateway": {
+            "gatewayArn": TOOL_GW_ARN, "outboundAuth": {"awsIam": {}}}}}],
+        "allowedTools": ["@hub_tools/Parts___get_part_spec"], "memory": {"disabled": {}}})
+    ctl.add_response("get_harness", _harness("CREATING"), {"harnessId": HARNESS_ID})
+    ctl.add_response("get_harness", _harness("READY"), {"harnessId": HARNESS_ID})
+    app = {"name": HARNESS_AGENT, "tools": ["Parts___get_part_spec"], "system_prompt": "Answer from the tools."}
+    platform = Platform(**{**P.__dict__, "tool_gw": {"id": "hub-tools-abcdefghij", "arn": TOOL_GW_ARN, "url": "u"}})
+    assert preload_agents.ensure_harness(c, S, platform, app, role_arn) == HARNESS_ARN
+
+
+def test_a_harness_is_checked_and_deleted_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    ctl = stubs["ctl"]
+    _harness_found(ctl)
+    assert agent_cleanup.check_harness(c, S, HARNESS_AGENT)["harnessId"] == HARNESS_ID
+    _harness_found(ctl)                                                       # checked again right before the delete
+    ctl.add_response("delete_harness", _harness("DELETING"), {"harnessId": HARNESS_ID})
+    ctl.add_response("get_harness", _harness("DELETING"), {"harnessId": HARNESS_ID})
+    ctl.add_client_error("get_harness", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"harnessId": HARNESS_ID})
+    assert agent_cleanup._remove_harness(c, S, HARNESS_AGENT) == [f"harness {HARNESS}"]
+
+
+def test_a_harness_under_another_role_is_refused_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    _harness_found(stubs["ctl"], role="hub-agent-release_review-role")
+    with pytest.raises(agent_cleanup.NotOwned, match=f"harness {HARNESS} is not this hub's: it runs under role "
+                                                     f"hub-agent-release_review-role, not {HARNESS_ROLE}"):
+        agent_cleanup.check_harness(c, S, HARNESS_AGENT)
+
+
+def test_ask_harness_sends_a_request_the_service_model_accepts():
+    """InvokeHarness answers an event stream, which a Stubber cannot give; the request is checked against the model."""
+    import botocore.session
+    from botocore.validate import validate_parameters
+    from platform_team.hosting_review.preload_agents import ask_harness
+    from tests.fakes import FakeClients
+    c = FakeClients()
+    ask_harness(c, HARNESS_ARN, "What is the spec of part P-100?")
+    model = botocore.session.get_session().get_service_model("bedrock-agentcore").operation_model("InvokeHarness")
+    validate_parameters(c.harness_calls[0], model.input_shape)              # raises ParamValidationError otherwise
+    assert model.has_event_stream_output
+
+
+def test_the_cleanup_check_lists_the_harnesses_on_every_page(aws):
+    from e2e_checks import check_cleanup
+    c, stubs = aws
+    stubs["ctl"].add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")],
+                                                 "nextToken": "page-2"}, {"maxResults": 100})
+    stubs["ctl"].add_response("list_harnesses", {"harnesses": [_listed_harness()]}, {"maxResults": 100, "nextToken": "page-2"})
+    names = check_cleanup.kinds(S, c)["harnesses"]()
+    assert [n for n in names if check_cleanup.hub_name(S, n)] == [HARNESS]

@@ -10,8 +10,12 @@ def test_unknown_tool_is_reported():          # Review Focus 3
     assert problems == ["tool not in the catalog: Parts___delete_everything"]
 
 def test_missing_keys_and_bad_name_are_reported():
-    assert validate({"name": "Bad Name", "tools": []}, CATALOG) == [
-        "missing: team", "missing: framework", "name must match ^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$", "tools must not be empty"]
+    assert validate({"name": "Bad Name"}, CATALOG) == [
+        "missing: team", "missing: framework", "missing: tools", "name must match ^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$"]
+
+def test_an_application_may_name_no_hub_tool():
+    """An agent whose tools run in its own process calls no tool through the hub: its list of hub tools is empty."""
+    assert validate({"name": "docs_adk", "team": "common", "framework": "google-adk", "tools": []}, CATALOG) == []
 
 # final review I-1: publish refuses the same shapes as the review's Read
 

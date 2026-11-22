@@ -11,7 +11,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | 폴더 | 누가 쓰나 | 내용 |
 |---|---|---|
 | `platform_team/` | 플랫폼팀 | 허브의 틀과 운영 명령. 기능마다 폴더 하나이고, AWS에 틀을 두는 기능은 그 안에 Terraform 모듈이 있다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md), [커스텀 가드레일](platform_team/custom_guardrail/README.md), [에이전트 멈추기와 재개](platform_team/agent_stop/README.md)(Terraform 없음) |
-| `dev_team/` | 개발팀 | [에이전트 템플릿](dev_team/agent_template/README.md)과 올리는 명령(`publish.sh`), 예시 에이전트 둘: [release_review](dev_team/release_review/README.md)(LangGraph), [quality_agent](dev_team/quality_agent/README.md)(Strands) |
+| `dev_team/` | 개발팀 | [에이전트 템플릿](dev_team/agent_template/README.md)과 올리는 명령(`publish.sh`), 예시 에이전트 둘: [release_review](dev_team/release_review/README.md)(LangGraph), [quality_agent](dev_team/quality_agent/README.md)(Strands). `preloaded_agents/`에는 처음부터 올라와 있는 에이전트 둘이 있다(플랫폼팀이 `make preload`로 올린다): [docs_adk](dev_team/preloaded_agents/docs_adk/README.md)(Google ADK), [spec_assistant](dev_team/preloaded_agents/spec_assistant/README.md)(코드가 없는 managed harness). 아래 "처음부터 올라와 있는 에이전트 둘" |
 | `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트. `e2e_hosting.py`(흐름 1의 끝에서 끝까지), `check_platform.py`(허브의 틀), `check_cleanup.py`(지운 뒤 남은 것). `spikes/`는 제품의 일부가 아니라 만들면서 가정을 확인한 스크립트다([확인 시험](e2e_checks/spikes/README.md)) |
 | `tests/` | 누구나 | 단위 시험(`make test`). AWS를 부르지 않는다. |
 
@@ -34,7 +34,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 `.env`를 읽는 규칙과 `Settings`의 접두어 거절은 단위 시험(`tests/test_hub_env.py`)이 확인한다. Terraform의 거절은 Terraform의 `validation`이 하는 것이고, 2026-11-22에 `terraform plan -var prefix=…`로 `my-hub`, `Hub`, `hub_1`이 `Invalid value for variable`로 거절되는 것을 봤다. AWS에서는 `.env` 없이 셸의 `AWS_REGION`과 기본값으로만 돌렸으므로, `.env`를 읽는 길은 AWS에서 확인하지 않았다.
 
-## 다섯 명령
+## 여섯 명령
 
 시간은 2026-11-22의 실행(`us-west-2`, 접두어 `hub`)에서 잰 것이다. "고친 뒤의 실행"은 같은 날 최종 검토의 지적을 고친 코드로 `make deploy`, `make seed`, `make e2e`, `make destroy`를 한 번씩 돌린 것이다. `make deploy`와 `make destroy`는 `AUTO_APPROVE=1`로 돌렸으므로 `yes`를 묻는 대화는 확인하지 않았다.
 
@@ -44,9 +44,10 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 |---|---|---|---|---|
 | 1 | `make deploy` | 코드 묶음(`build/`)을 만들고 `terraform apply`로 허브의 틀을 올린다. 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). `AUTO_APPROVE=1`이면 묻지 않는다. | 빈 계정에서 226초(3분 46초, `AUTO_APPROVE=1`). 이미 올린 허브에 다시 올린 두 번은 11~12초였다(무엇이 바뀌었느냐에 따라 다르다). 고친 뒤의 실행에서는 빈 계정에서 227초 | 빈 계정에서 234초(3분 54초). 배포 역할의 정책만 바꿔 다시 올린 두 번은 11초와 10초. 심사를 다진 뒤의 실행에서는 빈 계정에서 235초(3분 55초), 바뀐 것 없이 다시 올릴 때 10초 |
 | 2 | `make seed` | 공유 도구 record(`parts-tools`)를 카탈로그에 넣고 승인한다. 개발자의 첫 검색이 이것을 찾는다. 승인 요청이 호스팅 심사를 시작하지만, 심사는 AGENT가 아닌 record를 건너뛰고 알림 없이 끝난다(`Skipped`). | 6초 | record를 처음 만들 때 6초. 승인된 record가 이미 있으면 그대로 두고 1초. 심사를 다진 뒤의 실행에서는 6초와 2초. 처음 만들 때 시작한 심사는 1.7초 만에 `Skipped`로 끝났다 |
-| 3 | `dev_team/agent_template/publish.sh dev_team/<에이전트> [변형]` (같은 일을 하는 `make publish AGENT=<에이전트>`는 확인하지 않았다) | 개발팀이 코드를 제출함에 올리고 신청서를 카탈로그에 쓰고 승인을 요청한다. 요청하면 호스팅 심사가 저절로 시작한다. 셸의 자격 증명으로 돌고, 개발팀 역할(`<prefix>-dev-role`)의 권한이면 된다(`make e2e`가 이 역할로 돌린다). | 명령은 6초. 심사는 통과할 때 409~490초(그 가운데 Deploy 단계가 310~363초), Scan에서 떨어질 때 30~33초. 세 번의 실행에서 잰 범위다. 고친 뒤의 실행에서는 통과 440초와 453초(Deploy 316초, 315초), Scan에서 떨어질 때 29초 | 명령은 6초. 심사는 통과할 때 356초와 385초(Deploy 254초, 255초), Scan에서 떨어질 때 31초. Deploy 단계의 대부분은 새 Runtime이 `READY`가 되기를 기다리는 시간이다(231~232초, 세 번). 코드 묶음은 `release_review` 31,584,418바이트, `quality_agent` 30,815,269바이트다. 승인된 에이전트의 새 버전(Runtime을 고친다)은 심사 308초와 296초(Deploy 266초, 244초)였고, 새 버전이 `READY`가 되기까지 241초와 221초였다. 심사를 다진 뒤의 실행에서는 명령 6초, 통과 370초와 387초(Scan 33초, 36초. Deploy 264초, 257초. 새 Runtime이 `READY`가 되기까지 242초, 231초), Scan에서 떨어질 때 32초 |
-| 4 | `make e2e` | 흐름 1을 끝에서 끝까지 확인한다(아래). 두 에이전트를 제출하고, 심사, 승인, 반려, 재신청, 호출까지 본다. 기록은 `e2e_checks/last-run.log`에 남는다. | 고치기 전의 마지막 실행(`make e2e`, 12개 통과)에서 1555초(26분). 그 가운데 497초는 그 앞의 실행이 남긴 승인된 에이전트 둘을 먼저 지운 시간이다. 에이전트가 없는 허브라면 약 1058초로 본다(잰 값이 아니라 1555에서 497을 뺀 값). 그때까지 에이전트가 없는 허브에서 잰 것은 첫 실행의 966초뿐이었는데, 그 실행은 고치기 전의 스크립트를 `make e2e` 없이 돌렸고 12개 가운데 11개가 통과했다. 고친 뒤의 실행(`make e2e`, 12개 통과)은 에이전트가 없는 허브에서 996초(16분 36초)였다 | 857초(14분 17초, 12개 통과). 첫 시도가 남긴 두 에이전트의 역할, 정책, record를 먼저 지운 17초가 들어 있다(그때 남은 Runtime은 없었다). 심사를 다진 뒤의 실행에서는 에이전트가 없는 허브에서 853초(14분 13초, 12개 통과) |
-| 5 | `make destroy` | 허브가 만든 것을 모두 지운다(아래). 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). | 승인된 에이전트 둘이 있는 허브에서 675초(11분 15초, `AUTO_APPROVE=1`). 대부분은 에이전트의 Runtime 스택을 지우는 시간(스택마다 4분 남짓)이다. 고친 뒤의 실행에서는 같은 허브에서 654초(10분 54초) | 승인된 에이전트 둘이 있는 허브에서 566초(9분 26초). 그 가운데 Runtime 둘을 지우는 시간이 약 195초씩이다(`DeleteAgentRuntime` 뒤 `DELETING`에서 사라지기까지). 심사를 다진 뒤의 실행에서는 같은 허브에서 576초(9분 36초). 그 가운데 에이전트 둘의 정리가 약 480초, `terraform destroy`가 85초 |
+| 3 | `make preload` | 처음부터 올라와 있는 에이전트 둘을 올린다(아래 "처음부터 올라와 있는 에이전트 둘"). 플랫폼팀의 자격 증명으로 돈다. harness 에이전트 `spec_assistant`의 실행 역할, 도구 정책, harness, 승인된 record를 만들고, `docs_adk`를 다른 팀의 에이전트처럼 제출하고 그 심사가 끝나기를 기다린다. 이미 있는 것은 그대로 둔다. | (그때는 없었다) | 2026-11-22에 빈 계정의 `make deploy seed` 뒤에서 660초. 그 가운데 harness가 `READY`가 되고 record가 승인되기까지 288초, `docs_adk`의 심사가 364초(Scan 44초, Deploy 258초. 새 Runtime이 `READY`가 되기까지 231초). `docs_adk`의 코드 묶음은 46,294,955바이트. 다시 돌리면 4초였고 바뀐 것이 없었다 |
+| 4 | `dev_team/agent_template/publish.sh dev_team/<에이전트> [변형]` (같은 일을 하는 `make publish AGENT=<에이전트>`는 확인하지 않았다) | 개발팀이 코드를 제출함에 올리고 신청서를 카탈로그에 쓰고 승인을 요청한다. 요청하면 호스팅 심사가 저절로 시작한다. 셸의 자격 증명으로 돌고, 개발팀 역할(`<prefix>-dev-role`)의 권한이면 된다(`make e2e`가 이 역할로 돌린다). | 명령은 6초. 심사는 통과할 때 409~490초(그 가운데 Deploy 단계가 310~363초), Scan에서 떨어질 때 30~33초. 세 번의 실행에서 잰 범위다. 고친 뒤의 실행에서는 통과 440초와 453초(Deploy 316초, 315초), Scan에서 떨어질 때 29초 | 명령은 6초. 심사는 통과할 때 356초와 385초(Deploy 254초, 255초), Scan에서 떨어질 때 31초. Deploy 단계의 대부분은 새 Runtime이 `READY`가 되기를 기다리는 시간이다(231~232초, 세 번). 코드 묶음은 `release_review` 31,584,418바이트, `quality_agent` 30,815,269바이트다. 승인된 에이전트의 새 버전(Runtime을 고친다)은 심사 308초와 296초(Deploy 266초, 244초)였고, 새 버전이 `READY`가 되기까지 241초와 221초였다. 심사를 다진 뒤의 실행에서는 명령 6초, 통과 370초와 387초(Scan 33초, 36초. Deploy 264초, 257초. 새 Runtime이 `READY`가 되기까지 242초, 231초), Scan에서 떨어질 때 32초 |
+| 5 | `make e2e` | 흐름 1을 끝에서 끝까지 확인한다(아래). 두 에이전트를 제출하고, 심사, 승인, 반려, 재신청, 호출까지 본다. 기록은 `e2e_checks/last-run.log`에 남는다. | 고치기 전의 마지막 실행(`make e2e`, 12개 통과)에서 1555초(26분). 그 가운데 497초는 그 앞의 실행이 남긴 승인된 에이전트 둘을 먼저 지운 시간이다. 에이전트가 없는 허브라면 약 1058초로 본다(잰 값이 아니라 1555에서 497을 뺀 값). 그때까지 에이전트가 없는 허브에서 잰 것은 첫 실행의 966초뿐이었는데, 그 실행은 고치기 전의 스크립트를 `make e2e` 없이 돌렸고 12개 가운데 11개가 통과했다. 고친 뒤의 실행(`make e2e`, 12개 통과)은 에이전트가 없는 허브에서 996초(16분 36초)였다 | 857초(14분 17초, 12개 통과). 첫 시도가 남긴 두 에이전트의 역할, 정책, record를 먼저 지운 17초가 들어 있다(그때 남은 Runtime은 없었다). 심사를 다진 뒤의 실행에서는 에이전트가 없는 허브에서 853초(14분 13초, 12개 통과) |
+| 6 | `make destroy` | 허브가 만든 것을 모두 지운다(아래). 계획을 보여 주고 `yes`를 묻는다(확인하지 않았다). | 승인된 에이전트 둘이 있는 허브에서 675초(11분 15초, `AUTO_APPROVE=1`). 대부분은 에이전트의 Runtime 스택을 지우는 시간(스택마다 4분 남짓)이다. 고친 뒤의 실행에서는 같은 허브에서 654초(10분 54초) | 승인된 에이전트 둘이 있는 허브에서 566초(9분 26초). 그 가운데 Runtime 둘을 지우는 시간이 약 195초씩이다(`DeleteAgentRuntime` 뒤 `DELETING`에서 사라지기까지). 심사를 다진 뒤의 실행에서는 같은 허브에서 576초(9분 36초). 그 가운데 에이전트 둘의 정리가 약 480초, `terraform destroy`가 85초. 처음부터 올라와 있는 에이전트 둘(harness 하나와 `docs_adk`)만 있는 허브에서 595초(그 가운데 두 에이전트의 정리가 450초, `terraform destroy`가 132초) |
 
 `make test`는 단위 시험이다(AWS를 부르지 않는다).
 
@@ -69,6 +70,20 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 스크립트는 시작할 때 두 에이전트를 리포의 정리 코드로 처음 상태로 돌려놓으므로(무엇을 지웠는지 찍는다) 실패한 뒤 다시 돌려도 된다(앞의 실행이 남긴 승인된 에이전트 둘을 지우고 다시 돈 것을 두 번 확인했다. 한 번은 실패한 실행 뒤였다). 심사가 돌고 있으면 바로 시작하지 않는다. 2026-11-22에 빈 계정에서 `make deploy seed e2e`를 돌렸을 때 이 거부가 나왔다. `make seed`가 공유 도구 record를 승인 요청 상태로 바꿔 시작한 심사(1.7초 만에 `Skipped`로 끝났다)가 `make e2e`가 시작한 순간에 아직 돌고 있었기 때문이다(`[FAIL] 0 no review is running`). 그 심사가 끝난 뒤 같은 명령을 다시 돌리면 `make seed`는 승인된 record를 그대로 두므로 심사가 시작하지 않고, `make e2e`가 돈다. 지금의 스크립트는 바로 거부하지 않는다. 도는 심사가 있으면 5초마다 다시 보며 60초까지 끝나기를 기다리고, 끝나면 기다린 시간과 실행 이름을 한 줄 찍고 시작한다. 60초가 지나도 돌고 있으면 위와 같이 거부한다. 스크립트가 본 뒤에야 시작하는 심사(그 이벤트가 아직 오지 않은 것)는 기다리지 못한다. seed의 심사라면 Read, `Reviewable`, `Skipped`를 지나며 공유 도구 record를 읽기만 하므로 정리나 확인과 부딪히지 않는다. 이 기다림은 AWS에서는 아직 돌려 보지 않았다(단위 시험 `tests/test_e2e_scripts.py`가 확인한다). 알림은 임시 SQS 큐(`<prefix>-e2e-alerts`)로 받고, 끝나면 큐와 구독을 지운다. 계정 ID는 `<ACCOUNT>`로 가려서 찍는다.
 
+### 처음부터 올라와 있는 에이전트 둘
+
+`make preload`가 올린다(`make deploy`와 `make seed` 뒤에). 둘 다 `dev_team/preloaded_agents/`에 있다. 허브에서 받는 대우가 다르다.
+
+| | [docs_adk](dev_team/preloaded_agents/docs_adk/README.md) | [spec_assistant](dev_team/preloaded_agents/spec_assistant/README.md) |
+|---|---|---|
+| 무엇 | Google ADK로 만든, 사내 설계 표준을 묻는 질문에 답하는 에이전트. 코드가 있다. | 부품의 사양과 시험 결과를 묻는 질문에 답하는 AgentCore managed harness. 모델, 지시문, 쓸 도구로만 정의되고 코드가 없다. |
+| 올라가는 길 | 다른 팀의 에이전트와 같이 제출되고 같은 심사(읽기, 검사, 권한, 배포, 등록, 시험 호출, 승인)를 거친다. | 심사가 건너뛴다(코드가 없다). `make preload`가 플랫폼팀의 자격 증명으로 실행 역할(Grant와 같은 함수, 같은 권한 경계), 도구 정책, harness, 승인된 record를 만든다. |
+| 부르는 곳 | 에이전트 게이트웨이(target `DocsAdk`) | AgentCore의 `InvokeHarness`. 에이전트 게이트웨이 뒤에 없다. |
+| 진입의 통제 | 받는다. 진입 정책, 비밀값 검사, 전사 정책, 커스텀 가드레일을 지나고, 멈춤 명령(`stop.sh`)이 닿는다. | 받지 않는다. 진입 target이 없어 전사 정책과 커스텀 가드레일이 닿지 않고, 멈춤 명령도 이 에이전트를 거부한다. |
+| 도구 | 에이전트 안에서 도는 함수 하나(`find_standard`). 허브를 지나지 않으므로 신청서의 도구 목록이 비어 있고 도구 정책이 없다. | 도구 게이트웨이의 공유 도구 둘. 호출은 도구 게이트웨이의 정책을 지나므로 실행 역할에 걸린 permit 둘만큼만 부를 수 있다. |
+
+2026-11-22의 실행에서 `docs_adk`의 심사는 `SUCCEEDED`(364초)였고, 에이전트 게이트웨이로 부르자 200과 함께 API 버전 표준의 글이 왔다(4.2초, `tools_used`는 `find_standard`). `spec_assistant`는 harness가 `READY`, record가 `APPROVED`였고, 그 record로 시작한 심사는 `Skipped`로 끝났다. `What is the spec of part P-100?`에 `M4 x 12 mm`가 든 답이 왔다. 허락하지 않은 도구가 필요한 질문에는 도구를 부르지 않고 그 도구가 없다고 답했다. 자세한 것은 두 에이전트의 문서에 있다.
+
 ## 허브가 떠 있는 동안 요금이 드는 것
 
 허브가 올리는 자원과, 각 서비스의 요금 방식으로 보아 요금이 드는 때다. 이 실행은 요금을 재지 않았으니 금액은 각 서비스의 요금 페이지를 본다. 허브는 켜 두는 서버가 없고, 대부분은 쓰는 만큼(호출 수, 실행 시간, 저장량) 요금이 붙는다.
@@ -76,9 +91,9 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | 자원 | 언제 요금이 드나 |
 |---|---|
 | Amazon Bedrock 모델(`MODEL_ID`) | 에이전트가 답할 때마다. 심사의 시험 호출과 `make e2e`의 호출도 포함된다. |
-| AgentCore Runtime(승인된 에이전트마다 하나) | 에이전트가 호출을 처리하는 동안 |
+| AgentCore Runtime(승인된 에이전트마다 하나. harness 에이전트는 AgentCore가 만든 Runtime 하나 위에서 돈다) | 에이전트가 호출을 처리하는 동안. AgentCore 개발자 안내서("AgentCore harness", 2026-11-22에 읽었다)는 harness에 따로 매기는 요금이 없고 쓰는 AgentCore 기능만큼 낸다고 적는다. 여기서는 확인하지 않았다. |
 | AgentCore Gateway 둘, Policy(policy engine과 가드레일 검사) | 호출과 권한 판단마다 |
-| CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "다섯 명령"). 지금의 배포 단계에서는 Deploy 단계가 244~266초였고, 그 가운데 221~241초는 build가 Runtime이 `READY`가 되기를 기다린 시간이다. 심사를 다진 뒤의 실행에서는 Scan 31~36초, Deploy 257초와 264초(그 가운데 `READY`를 기다린 시간 231초와 242초)였다. |
+| CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "여섯 명령"). 지금의 배포 단계에서는 Deploy 단계가 244~266초였고, 그 가운데 221~241초는 build가 Runtime이 `READY`가 되기를 기다린 시간이다. 심사를 다진 뒤의 실행에서는 Scan 31~36초, Deploy 257초와 264초(그 가운데 `READY`를 기다린 시간 231초와 242초)였다. |
 | Lambda 일곱(심사 다섯, 샘플 도구 하나, 커스텀 가드레일의 interceptor 하나), Step Functions, EventBridge, SNS, SQS | 실행과 메시지마다. interceptor는 에이전트 게이트웨이에 붙어 있는 동안 호출마다 두 번(요청과 답) 돈다. |
 | Amazon Bedrock Guardrails(커스텀 가드레일의 guardrail 하나) | interceptor가 붙어 있는 동안 호출마다 두 번(요청과 답) 검사한다. Amazon Bedrock 요금 페이지(2026-11-22에 읽었다)는 검사한 글의 양(text unit, 1,000자까지가 하나)을 필터마다 매기고, 이 guardrail이 쓰는 두 필터(낱말 필터, 정규식의 민감 정보 필터)는 무료라고 적는다. 여기서는 요금을 확인하지 않았다. |
 | S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 열둘(Lambda 일곱, CodeBuild 둘, state machine 하나, 게이트웨이 둘)은 14일 보관한다. 에이전트와 게이트웨이의 span은 계정의 Transaction Search가 받는다(2026-11-22의 실행에서는 로그 그룹 `aws/spans`에 들어갔다). 그 설정은 계정의 것이라 허브가 바꾸지 않는다. span의 요금은 확인하지 않았다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
@@ -91,7 +106,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 1. 에이전트 게이트웨이에 붙은 커스텀 가드레일의 interceptor(Terraform 밖. `guardrail.sh attach`가 붙인다). 가장 먼저 떼므로, 게이트웨이가 지워진 Lambda를 가리키는 일이 없다. 허브가 올라와 있지 않거나 게이트웨이가 없으면 아무것도 하지 않는다. [커스텀 가드레일](platform_team/custom_guardrail/README.md#붙이고-떼는-명령)
 2. 전사 정책의 모드(SSM `/<prefix>/policies/` 아래의 값. `rollout.sh`가 적는다). 에이전트보다 먼저 지우므로, 정리하는 동안 승인되는 에이전트에는 전사 정책이 걸리지 않는다. 정책 자체는 다음 단계가 에이전트와 함께 지운다. 이 단계는 아직 AWS에서 돌려 보지 않았다. [전사 정책](platform_team/company_policy/README.md#make-destroy)
-3. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`, 운영 중에 더하면 `guard_prompt_`, `stop_agent_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다.
+3. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`, 운영 중에 더하면 `guard_prompt_`, `stop_agent_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, `make preload`가 만든 harness `<prefix>_<에이전트>`와 그 harness가 도는 Runtime(`harness_<prefix>_<에이전트>`)의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다. harness가 도는 Runtime(`harness_<prefix>_<에이전트>`)과 그 workload identity는 허브가 따로 지우지 않는다. 2026-11-22의 `make destroy`에서는 harness를 지우자 둘 다 함께 사라졌다(목록으로 확인했다). 그 Runtime의 로그 그룹은 정리가 지운다.
 4. `make seed`가 넣은 공유 도구 record.
 5. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 3에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
 6. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, 커스텀 가드레일의 guardrail과 그 버전, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, 알람, 게이트웨이 둘의 로그와 trace 전달(source, destination, delivery), SSM 값, 로그 그룹.
@@ -102,7 +117,7 @@ span은 계정의 CloudWatch Transaction Search가 받는다. 2026-11-22의 실�
 
 허브는 CDK를 쓰지 않으므로 계정의 CDK bootstrap(스택 `CDKToolkit`과 그 bucket)에 손대지 않는다. CLI로 배포하던 때의 실행은 그 bucket에 에이전트 코드의 사본(에이전트마다 31 MB 남짓의 zip 하나)과 CDK template을 남겼다. 허브는 이 사본을 지우지 않는다.
 
-CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `check_cleanup.py`가 `still present: nothing`을 찍었고, 게이트웨이, 카탈로그, Runtime마다 서비스가 만든 workload identity도 그 주인과 함께 사라졌다(목록으로 확인했다). 지금의 배포로 만든 허브를 2026-11-22에 `make destroy`로 지웠을 때도(승인된 에이전트 둘, 그 가운데 하나는 Runtime 버전 3) `check_cleanup.py`가 `still present: nothing`을 찍었다. 이름이 `AgentCore-`로 시작하는 스택, `hub_`로 시작하는 Runtime과 workload identity, 제출함 bucket(그래서 `packages/` 아래의 묶음)도 남지 않았고, 계정의 `CDKToolkit` 스택은 그대로 있었다(목록으로 확인했다). 심사를 다진 뒤의 실행(제출함에 bucket 정책이 있다)에서도 `make destroy`가 `still present: nothing`을 찍었고, `hub_`로 시작하는 Runtime과 workload identity가 남지 않았고, `CDKToolkit` 스택은 그대로 있었다(목록으로 확인했다).
+CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `check_cleanup.py`가 `still present: nothing`을 찍었고, 게이트웨이, 카탈로그, Runtime마다 서비스가 만든 workload identity도 그 주인과 함께 사라졌다(목록으로 확인했다). 지금의 배포로 만든 허브를 2026-11-22에 `make destroy`로 지웠을 때도(승인된 에이전트 둘, 그 가운데 하나는 Runtime 버전 3) `check_cleanup.py`가 `still present: nothing`을 찍었다. 이름이 `AgentCore-`로 시작하는 스택, `hub_`로 시작하는 Runtime과 workload identity, 제출함 bucket(그래서 `packages/` 아래의 묶음)도 남지 않았고, 계정의 `CDKToolkit` 스택은 그대로 있었다(목록으로 확인했다). 심사를 다진 뒤의 실행(제출함에 bucket 정책이 있다)에서도 `make destroy`가 `still present: nothing`을 찍었고, `hub_`로 시작하는 Runtime과 workload identity가 남지 않았고, `CDKToolkit` 스택은 그대로 있었다(목록으로 확인했다). 처음부터 올라와 있는 에이전트 둘을 올린 허브를 지운 실행에서도 `still present: nothing`이었고(`check_cleanup.py`는 harness와 `harness_<prefix>_` 모양의 이름도 찾는다), harness, `hub_`나 `harness_`로 시작하는 Runtime과 workload identity가 남지 않았고, 계정의 Runtime과 `CDKToolkit` 스택은 그대로 있었다(목록으로 확인했다).
 
 ## 알려진 한계
 
@@ -117,4 +132,5 @@ CLI로 배포하던 때의 실행에서는 그 밖에 남은 것이 없었다. `
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)
 - 커스텀 가드레일: interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부한다(알람이 알린다). 스트리밍 응답과, 에이전트를 둔 게이트웨이 너머의 호출은 이 리포의 코드로 확인하지 않았다. [커스텀 가드레일](platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
 - 에이전트의 trace와 메트릭: 실행 역할은 X-Ray에 trace를 `"*"`로 쓸 수 있고(이 action들에는 자원 종류가 없다. 조건 키는 찾아보지 않았다), 메트릭은 namespace `bedrock-agentcore`에만 쓸 수 있다(그 namespace의 메트릭이면 어느 것이든). 그 namespace는 계정의 다른 에이전트도 쓴다. 2026-11-22의 실행(계정의 Transaction Search가 켜져 있었다)에서는 span이 계정의 로그 그룹 `aws/spans`에 들어갔고, 그 span에는 모델의 토큰 수와 호출에 쓴 access key ID가 있었다. [호스팅 심사, 에이전트 실행 역할의 상한](platform_team/hosting_review/README.md#에이전트-실행-역할의-상한권한-경계), [모니터링, 에이전트의 trace](platform_team/agent_monitoring/README.md#에이전트의-trace)
+- harness 에이전트(`spec_assistant`): 진입 target이 없어 진입의 통제(진입 정책, 비밀값 검사, 전사 정책, 커스텀 가드레일, 멈춤 명령)를 받지 않는다. 도구 호출만 도구 게이트웨이의 정책을 지난다. 서비스 모델의 `InvokeHarness`는 호출마다 도구, 쓸 수 있는 도구의 목록, 모델, 지시문을 받으므로, `InvokeHarness`를 부를 수 있는 사람은 그것들을 바꿔 보낼 수 있다(해 보지 않았다). 허브의 역할 가운데 `InvokeHarness`를 가진 것은 없다. [spec_assistant, 허브에서 받는 통제](dev_team/preloaded_agents/spec_assistant/README.md#허브에서-받는-통제)
 - 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남는다(2026-11-21의 확인 실행에서 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었다). harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다. `stop.sh`와 `resume.sh`는 아직 AWS에서 돌려 보지 않았다. [에이전트 멈추기와 재개, 한계](platform_team/agent_stop/README.md#한계)

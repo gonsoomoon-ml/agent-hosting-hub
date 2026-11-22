@@ -18,6 +18,7 @@ export TF_VAR_prefix = $(DEMO_PREFIX)
 export TF_VAR_model_id = $(MODEL_ID)
 TF = terraform -chdir=platform_team/terraform
 SEED = uv run python -m platform_team.agent_catalog.seed_catalog
+PRELOAD = uv run python -m platform_team.hosting_review.preload_agents
 CLEAN = uv run python -m platform_team.hosting_review.agent_cleanup
 FORGET = uv run python -m platform_team.company_policy.policy_rollout --forget
 DETACH = uv run python -m platform_team.custom_guardrail.guardrail_attach detach
@@ -25,7 +26,7 @@ DETACH = uv run python -m platform_team.custom_guardrail.guardrail_attach detach
 # (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
 APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
 
-.PHONY: test package deploy seed destroy publish e2e
+.PHONY: test package deploy seed preload destroy publish e2e
 
 test:
 	uv run pytest tests -q
@@ -41,9 +42,15 @@ deploy: package
 seed:
 	$(SEED)
 
+# The two agents there from the start (dev_team/preloaded_agents), with the platform team's credentials: the managed
+# harness spec_assistant (role, tool permits, harness, approved record) and docs_adk, published like a team's agent;
+# it waits for docs_adk's review to end. What is there already is kept, so running it again makes nothing new.
+preload:
+	$(PRELOAD)
+
 # Outside Terraform's state: the custom guardrail's interceptor on the agent gateway (guardrail.sh attaches it), the
 # modes of the company policies (SSM /<prefix>/policies/, rollout.sh writes them), what the hosting review made for
-# each agent (policies, gateway target, Runtime and its logs, code packages, execution role, SSM values), the agents'
+# each agent (policies, gateway target, harness, Runtime and its logs, code packages, execution role, SSM values), the agents'
 # catalog records and the seeded record. The interceptor is detached first, so the gateway never points at a deleted
 # Lambda; on a hub that is not deployed, or without its agent gateway, that step does nothing. The modes go next, so
 # a review that still approves an agent while the cleanup runs gives it no company policy. An agent role keeps the

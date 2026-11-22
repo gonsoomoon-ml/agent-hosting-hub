@@ -210,6 +210,42 @@ class _Ctl(_Client):
     def list_workload_identities(self, **kw):
         return {"workloadIdentities": [{"name": n} for n in self.o.workload_identities]}
 
+    # Harnesses: harnesses {name: the create call's arguments, with harnessId, arn and status}. A new harness is READY
+    # at the first look; a deleted one is gone at the first look.
+    def _harness_by_id(self, harnessId, op):
+        name = next((n for n, h in self.o.harnesses.items() if h["harnessId"] == harnessId), None)
+        if name is None:
+            raise _client_error("ResourceNotFoundException", f"no harness {harnessId}", op)
+        return name, self.o.harnesses[name]
+
+    def create_harness(self, harnessName, executionRoleArn, **config):
+        if harnessName in self.o.harnesses:
+            raise _client_error("ConflictException", f"harness {harnessName} already exists", "CreateHarness")
+        hid = f"{harnessName}-Ab12Cd34Ef"
+        h = {"harnessId": hid, "harnessName": harnessName, "status": "CREATING", "executionRoleArn": executionRoleArn,
+             "arn": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:harness/{hid}", **config}
+        self.o.harnesses[harnessName] = h
+        return {"harness": dict(h)}
+
+    def get_harness(self, harnessId):
+        name, h = self._harness_by_id(harnessId, "GetHarness")
+        if h["status"] == "DELETING":
+            del self.o.harnesses[name]
+            raise _client_error("ResourceNotFoundException", f"no harness {harnessId}", "GetHarness")
+        if h["status"] == "CREATING":
+            h["status"] = "READY"
+        return {"harness": dict(h)}
+
+    def list_harnesses(self, **kw):
+        return {"harnesses": [{k: h[k] for k in ("harnessId", "harnessName", "arn", "status")}
+                              for _, h in sorted(self.o.harnesses.items())]}
+
+    def delete_harness(self, harnessId, **kw):
+        _, h = self._harness_by_id(harnessId, "DeleteHarness")
+        h["status"] = "DELETING"
+        self.o.deleted_harnesses.append(harnessId)
+        return {"harness": dict(h)}
+
 
 class _Iam(_Client):
     """Roles: existing_roles (made before, each with the inline policy "agent") and roles (made by the test). A role's
@@ -361,15 +397,40 @@ class _Data(_Client):
         self.o.stopped_sessions.append((agentRuntimeArn, runtimeSessionId))
         return {"runtimeSessionId": runtimeSessionId, "statusCode": 200}
 
+    def invoke_harness(self, harnessArn, runtimeSessionId, messages, **kw):
+        """The events of harness_stream, as the answer's event stream; each call is written to harness_calls."""
+        if not 33 <= len(runtimeSessionId) <= 100:
+            raise ParamValidationError(report=f"Invalid length for parameter runtimeSessionId, value: {len(runtimeSessionId)}")
+        self.o.harness_calls.append({"harnessArn": harnessArn, "runtimeSessionId": runtimeSessionId,
+                                     "messages": messages, **kw})
+        return {"stream": iter(self.o.harness_stream)}
+
 
 class _Reg(_Client):
-    """The catalog: the record quality_agent (rec-1, status record_status; None means no record) and other_records."""
+    """The catalog: the record quality_agent (rec-1, status record_status; None means no record) and other_records.
+    A record the code creates goes to other_records as a DRAFT (rec-<name>, with its descriptors); asking for its
+    approval and changing its status change that record."""
     service = "reg"
 
+    def _other(self, recordId):
+        return next((r for r in self.o.other_records if r["recordId"] == recordId), None)
 
     def list_registry_records(self, registryId, **kw):
         main = [{"name": "quality_agent", "recordId": "rec-1", "recordType": "AGENT", "status": self.o.record_status}]
         return {"registryRecords": (main if self.o.record_status else []) + list(self.o.other_records)}
+
+    def create_registry_record(self, registryId, name, description, recordType, recordVersion, descriptors):
+        rid = f"rec-{name}"
+        self.o.other_records.append({"name": name, "recordId": rid, "recordType": recordType, "status": "DRAFT",
+                                     "description": description, "descriptors": descriptors})
+        return {"recordArn": f"arn:aws:agent-registry:us-west-2:{ACCOUNT}:registry/{registryId}/record/{rid}"}
+
+    def submit_registry_record_for_approval(self, registryId, recordId):
+        rec = self._other(recordId)
+        if rec is None:
+            raise _client_error("ResourceNotFoundException", "no record", "SubmitRegistryRecordForApproval")
+        rec["status"] = "PENDING_APPROVAL"
+        return {"status": "PENDING_APPROVAL"}
 
     def delete_registry_record(self, registryId, recordId):
         if recordId == "rec-1" and self.o.record_status:
@@ -381,14 +442,20 @@ class _Reg(_Client):
         return {}
 
     def get_registry_record(self, registryId, recordId):
-        """The record's name is record_name, or else the name its application gives (quality_agent by default)."""
+        """A record the code created, as it is; else the record quality_agent: its name is record_name, or else the
+        name its application gives (quality_agent by default)."""
+        if self._other(recordId) and "descriptors" in self._other(recordId):
+            return dict(self._other(recordId))
         spec = self.o.record_spec
         name = self.o.record_name or (spec.get("name") if isinstance(spec, dict) else None) or "quality_agent"
         return {"name": name, "recordType": self.o.record_type, "status": self.o.record_status,
                 "descriptors": {"custom": {"data": json.dumps(spec)}}}
 
     def update_registry_record_status(self, registryId, recordId, status, statusReason):
-        self.o.record_status, self.o.status_reason = status, statusReason
+        if self._other(recordId):
+            self._other(recordId).update(status=status, statusReason=statusReason)
+        else:
+            self.o.record_status, self.o.status_reason = status, statusReason
         return {"status": status}
 
 
@@ -426,8 +493,10 @@ class FakeClients:
     calls ((service, method) of every fake call, in order), deleted_policies, policies, roles, inline (role -> inline
     policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
     "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects, stopped_sessions
-    ((Runtime ARN, session ID) of each StopRuntimeSession). Tests may also fill log_groups, log_streams, parameters,
-    objects, other_records, runtime_create_errors, session_errors and running (the reviews still running)."""
+    ((Runtime ARN, session ID) of each StopRuntimeSession), harnesses, deleted_harnesses (harness IDs), harness_calls
+    (the arguments of each InvokeHarness). Tests may also fill log_groups, log_streams, parameters, objects,
+    other_records, runtime_create_errors, session_errors, running (the reviews still running), harnesses and
+    harness_stream (the events InvokeHarness answers)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
 
@@ -459,6 +528,7 @@ class FakeClients:
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
         self.running = list(running)
         self.log_streams, self.stopped_sessions, self.session_errors = {}, [], {}
+        self.harnesses, self.deleted_harnesses, self.harness_calls, self.harness_stream = {}, [], [], []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
         FakeClients.latest = self

@@ -183,7 +183,13 @@ def test_main_names_the_step_that_failed_and_what_succeeded(tmp_path, monkeypatc
     assert "record not written" in out and "run again" in out
 
 
-@pytest.mark.parametrize("folder", sorted(p.parent.name for p in pathlib.Path("dev_team").glob("*/agent.json")))
+# every application with code: the team agents and the one there from the start (a harness has no code to publish)
+WITH_CODE = sorted(str(p.parent.relative_to("dev_team")) for p in [*pathlib.Path("dev_team").glob("*/agent.json"),
+                   *pathlib.Path("dev_team").glob("preloaded_agents/*/agent.json")]
+                   if json.loads(p.read_text())["framework"] != "harness")
+
+
+@pytest.mark.parametrize("folder", WITH_CODE)
 def test_the_record_publish_writes_passes_the_reviews_read(monkeypatch, folder):
     """final review I-1: Read checks more than the form does (the record's name and type, code_key, code_version).
     The record publish writes for each example application must still pass it."""

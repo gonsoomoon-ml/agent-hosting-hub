@@ -7,7 +7,9 @@ One line per kind of resource, with the names of the hub's that are still there,
 A name is the hub's when it has the hub's prefix the way the hub writes it: <prefix>-..., <prefix>_... (the Runtimes
 <prefix>_<agent>), /<prefix>/.... Two more shapes are the names an AgentCore CLI deploy gives: <prefix> followed by
 an upper-case letter (its projects and Runtimes) and AgentCore-<prefix>... (its CloudFormation stacks). The hub
-makes no such names now; they are still looked for, so what an earlier version of the hub left is listed too.
+makes no such names now; they are still looked for, so what an earlier version of the hub left is listed too. One
+more shape is AgentCore's for a harness of the hub: harness_<prefix>_<agent> (the Runtime the harness runs on, and its
+workload identity and log group, named after it).
 Nothing is changed.
 Not seen: the workload identity the registry service makes for itself. It is named registry-<registry ID>, without
 the hub's prefix, so hub_name cannot tell it from another registry's; it goes with the registry (in the recorded run
@@ -28,7 +30,7 @@ from platform_team.shared_code.config import Settings, env_file_updates
 def hub_name(s: Settings, name: str) -> bool:
     """Whether a name is written the way the hub writes its names."""
     p = re.escape(s.prefix)
-    return bool(re.match(rf"({p}[-_]|{p}[A-Z]|AgentCore-{p}[A-Z]|/{p}/)", name or ""))
+    return bool(re.match(rf"({p}[-_]|{p}[A-Z]|AgentCore-{p}[A-Z]|/{p}/|harness_{p}_)", name or ""))
 
 
 def _pages(client, op: str, key: str, **kwargs) -> list:
@@ -43,6 +45,7 @@ def kinds(s: Settings, c: Clients) -> dict:
         "gateways": lambda: [g["name"] for g in all_items(c.ctl.list_gateways, maxResults=100)],
         "policy engines": lambda: [e["name"] for e in all_items(c.ctl.list_policy_engines, maxResults=100)],
         "Runtimes": lambda: [r["agentRuntimeName"] for r in all_items(c.ctl.list_agent_runtimes, maxResults=100)],
+        "harnesses": lambda: [h["harnessName"] for h in all_items(c.ctl.list_harnesses, maxResults=100)],
         "workload identities": lambda: [w["name"] for w in all_items(c.ctl.list_workload_identities, maxResults=20)],
         "registries": lambda: [r["name"] for r in all_items(c.reg.list_registries, maxResults=100)],
         "Lambda functions": lambda: [f["FunctionName"] for f in _pages(c.lam, "list_functions", "Functions")],

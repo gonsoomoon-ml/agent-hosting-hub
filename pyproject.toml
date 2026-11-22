@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = ["boto3>=1.44.9"]
 
 [dependency-groups]
-dev = ["pytest", "pyyaml>=6.0.4", "langgraph", "strands-agents"]   # pyyaml: the tests read the buildspecs; langgraph, strands-agents: the example agents' tests
+dev = ["pytest", "pyyaml>=6.0.4", "langgraph", "strands-agents", "google-adk==2.14.1"]   # pyyaml: the tests read the buildspecs; langgraph, strands-agents, google-adk: the example agents' tests (google-adk at the version docs_adk pins)
 
 [build-system]
 requires = ["setuptools>=68"]

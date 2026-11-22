@@ -47,11 +47,11 @@ def validate(app: dict, catalog_tools: set[str]) -> list[str]:
                  if k in app and not (isinstance(app[k], str) and low <= len(app[k]) <= high)]
     tools = app.get("tools")
     if "tools" in app:
+        # the hub's tools the agent calls through the tool gateway; an empty list is an agent whose tools, if any, run
+        # in its own process
         if not isinstance(tools, list):
             problems.append("tools must be a list of tool names")
             tools = []
-        elif not tools:
-            problems.append("tools must not be empty")
         for t in tools or []:
             if not isinstance(t, str) or not re.fullmatch(TOOL_PATTERN, t):
                 problems.append(f"tool must look like <Target>___<tool>: {t}")

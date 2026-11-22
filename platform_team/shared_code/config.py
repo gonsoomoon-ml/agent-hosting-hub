@@ -105,6 +105,17 @@ class Settings:
         at most 10 characters and an agent name 31 (application_form), so every name fits."""
         return f"{self.prefix}_{agent}"
 
+    def harness_name(self, agent: str) -> str:
+        """The agent's managed harness, for an agent the platform team hosts as one (hosting_review/preload_agents):
+        <prefix>_<agent>, the shape of runtime_name. CreateHarness takes [a-zA-Z][a-zA-Z0-9_]{0,39} (botocore 1.44.9),
+        40 characters, fewer than a Runtime's 48: a long agent name does not fit, and host_harness refuses it."""
+        return f"{self.prefix}_{agent}"
+
+    def harness_runtime_name(self, agent: str) -> str:
+        """The Runtime AgentCore runs the agent's harness on: harness_<harness name>. AgentCore makes and names it (seen
+        on 2026-11-22), and names its ID, its workload identity and its log group after it as for any Runtime."""
+        return f"harness_{self.harness_name(agent)}"
+
     def package_key(self, agent: str, code_version: str) -> str:
         """The agent's code package in the inbox, one per submitted object version (the deploy build writes it)."""
         return f"{PACKAGES}{agent}/{code_version}.zip"

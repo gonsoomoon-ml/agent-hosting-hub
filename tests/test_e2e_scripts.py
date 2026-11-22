@@ -53,10 +53,14 @@ def test_cleanup_check_knows_the_hubs_names_and_no_others():
     s = Settings()
     for name in ("hub-agents", "hub_pe", "hub_quality_agent", "hub_quality_agent-eHcqNQ7n5v-DEFAULT",
                  "/hub/platform/bucket", "hub-e2e-alerts",
-                 "hubQualityAgent_default_agent-eHcqNQ7n5v", "AgentCore-hubQualityAgent-default"):     # the CLI's names
+                 "hubQualityAgent_default_agent-eHcqNQ7n5v", "AgentCore-hubQualityAgent-default",   # the CLI's names
+                 # the Runtime behind a harness, its workload identity and log group (AgentCore names them)
+                 "harness_hub_spec_assistant", "harness_hub_spec_assistant-Ab12Cd34Ef",
+                 "harness_hub_spec_assistant-Ab12Cd34Ef-DEFAULT"):
         assert check_cleanup.hub_name(s, name), name
     for name in ("hubwhole-agents", "hubspot", "github-runner", "other_team_runtime", "CDKToolkit",
-                 "AgentCore-otherTeam-default", "/hubwhole/x"):
+                 "AgentCore-otherTeam-default", "/hubwhole/x", "harness_hubwhole_x", "harness_other_team",
+                 "harness_my_agent-Ab12Cd34Ef"):
         assert not check_cleanup.hub_name(s, name), name
 
 

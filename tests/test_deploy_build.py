@@ -121,6 +121,7 @@ def test_the_runtime_is_started_with_tracing_on():
     # the package comes from requirements.txt: the template and every agent folder hold the pin (a variant only adds lines)
     dev = Path(d.__file__).resolve().parents[2] / "dev_team"
     for req in [dev / "agent_template" / "requirements.txt", *sorted(dev.glob("*/requirements.txt")),
+                *sorted(dev.glob("preloaded_agents/*/requirements.txt")),
                 *sorted(dev.glob("*/variants/*/requirements.txt"))]:
         assert ADOT in req.read_text().splitlines(), req
 

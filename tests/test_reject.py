@@ -34,6 +34,7 @@ def test_an_approved_agent_is_not_rejected():
 
 # ------------------------------------------------------------------ every kind the review makes, and only the agent's own
 
+import json
 import os
 import pathlib
 import re
@@ -538,3 +539,69 @@ def test_a_draft_whose_cleanup_fails_is_said_to_be_a_draft(monkeypatch, capsys):
     [line] = capsys.readouterr().out.splitlines()
     assert line.startswith("record quality_agent is DRAFT (prefix hub, region us-west-2), but not everything was removed")
     assert c.record_status == "DRAFT" and c.status_reason is None
+
+
+# ------------------------------------------------------------------ a managed harness (hosting_review/preload_agents)
+
+from platform_team.hosting_review.preload_agents import host_harness  # noqa: E402
+
+SPEC_ASSISTANT = json.loads((ROOT / "dev_team/preloaded_agents/spec_assistant/agent.json").read_text())
+HARNESS_ROLE = "hub-agent-spec_assistant-role"
+
+
+def _harness_of(c, name, role):
+    """A harness of this name under `role`, made outside the hub's code (another team, or by hand)."""
+    c.ctl.create_harness(harnessName=name, executionRoleArn=f"arn:aws:iam::{ACCOUNT}:role/{role}")
+
+
+HARNESS_LOG = "/aws/bedrock-agentcore/runtimes/harness_hub_spec_assistant-Xy12Ab34Cd-DEFAULT"   # its Runtime's group
+
+
+def test_cleanup_removes_a_harness_the_hub_made_and_no_other():
+    c = FakeClients(record_status=None)
+    host_harness(c, Settings(), PLATFORM, SPEC_ASSISTANT)
+    host_harness(c, Settings(), PLATFORM, {**SPEC_ASSISTANT, "name": "spec"})     # a name that only starts the same
+    _harness_of(c, "other_team_harness", "other_team_role")                        # not the hub's name
+    c.log_groups |= {HARNESS_LOG, "/aws/bedrock-agentcore/runtimes/harness_hub_spec-Xy12Ab34Cd-DEFAULT",
+                     "/aws/bedrock-agentcore/runtimes/harness_other_team_harness-Xy12Ab34Cd-DEFAULT"}
+    removed = remove_agent(c, Settings(), PLATFORM, "spec_assistant")
+    assert removed == ["policy tool_spec_assistant_Parts_get_part_spec", "policy tool_spec_assistant_Parts_get_test_result",
+                       "harness hub_spec_assistant", f"log group {HARNESS_LOG}", f"role {HARNESS_ROLE}",
+                       "parameter /hub/agents/spec_assistant/harness_arn"]
+    assert sorted(c.log_groups) == ["/aws/bedrock-agentcore/runtimes/harness_hub_spec-Xy12Ab34Cd-DEFAULT",
+                                    "/aws/bedrock-agentcore/runtimes/harness_other_team_harness-Xy12Ab34Cd-DEFAULT"]
+    assert sorted(c.harnesses) == ["hub_spec", "other_team_harness"]
+    assert c.deleted_harnesses == ["hub_spec_assistant-Ab12Cd34Ef"]
+    assert "parameter /hub/agents/spec/harness_arn" in _state(c) and "role hub-agent-spec-role" in _state(c)
+    assert remove_agent(c, Settings(), PLATFORM, "spec_assistant") == []
+
+
+@pytest.mark.parametrize("role", ["hub-agent-release_review-role", "other_team_role"])   # another agent's, or not the hub's
+def test_cleanup_refuses_a_harness_of_this_name_under_another_role_before_anything_is_deleted(role):
+    c = FakeClients(record_status=None)
+    _review(c, SPEC)                                                   # quality_agent, everything the review makes
+    _harness_of(c, "hub_quality_agent", role)
+    before = _state(c)
+    with pytest.raises(CleanupFailed, match=f"harness hub_quality_agent is not this hub's: it runs under role {role}, "
+                                            f"not {ROLE}") as e:
+        remove_agent(c, Settings(), PLATFORM, "quality_agent")
+    assert e.value.removed == [] and _state(c) == before and "hub_quality_agent" in c.harnesses
+
+
+def test_cleanup_refuses_a_harness_whose_role_is_in_another_account():
+    c = FakeClients(record_status=None)
+    host_harness(c, Settings(), PLATFORM, SPEC_ASSISTANT)
+    c.harnesses["hub_spec_assistant"]["executionRoleArn"] = f"arn:aws:iam::234567890123:role/{HARNESS_ROLE}"
+    with pytest.raises(CleanupFailed, match=f"harness hub_spec_assistant is not this hub's: it runs under role "
+                                            f"{HARNESS_ROLE} of another account"):
+        remove_agent(c, Settings(), PLATFORM, "spec_assistant")
+    assert "hub_spec_assistant" in c.harnesses and c.deleted_harnesses == []
+
+
+def test_make_destroy_finds_a_harness_agent_and_removes_it_with_its_record(monkeypatch):
+    c = FakeClients(record_status=None)
+    host_harness(c, Settings(), PLATFORM, SPEC_ASSISTANT)
+    monkeypatch.setattr(agent_cleanup, "load", lambda s, c=None: PLATFORM)
+    removed = clean_agents(Settings(), c)
+    assert "harness hub_spec_assistant" in removed and removed[-1] == "record spec_assistant"
+    assert c.harnesses == {} and c.other_records == [] and HARNESS_ROLE not in c.roles
