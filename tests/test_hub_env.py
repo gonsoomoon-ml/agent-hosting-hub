@@ -1,6 +1,6 @@
 """The hub's settings outside Python: one rule for .env (make, publish.sh, reject.sh, rollout.sh, guardrail.sh, stop.sh,
-resume.sh, usage.sh, e2e_hosting.py), the prefix rule, the model ID default, and the Makefile's destroy. Each test runs on a copy
-of the files in a temporary folder, so it never reads or writes a real .env."""
+resume.sh, usage.sh, e2e_hosting.py), the prefix rule, the model ID default, and the Makefile's destroy and test. Each
+test runs on a copy of the files in a temporary folder, so it never reads or writes a real .env."""
 import os
 import pathlib
 import re
@@ -137,7 +137,7 @@ def test_the_e2e_script_applies_the_rule_before_it_reads_its_settings():
     assert main.index("env_file_updates(") < main.index("Settings.from_env()")
 
 
-# ------------------------------------------------------------------ the prefix, the model ID, make destroy
+# ------------------------------------------------------------------ the prefix, the model ID, make destroy, make test
 
 @pytest.mark.parametrize("prefix", ["my-hub", "hub_1", "Hub", "h", "abcdefghijk", "1hub", "", "hub "])
 def test_a_prefix_the_names_cannot_carry_is_refused(prefix):
@@ -204,6 +204,12 @@ def test_make_destroy_forgets_the_company_policy_modes_before_it_cleans_the_agen
 
 def test_make_destroy_asks_about_the_company_policy_modes_too():
     assert "the modes of the company policies" in "\n".join(_destroy_lines("0"))
+
+
+def test_make_test_runs_the_unit_tests_with_every_warning_an_error():
+    r = subprocess.run(["make", "-n", "test"], cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
+    assert r.stdout.splitlines() == ["uv run pytest tests -q -W error"]
 
 
 @pytest.mark.parametrize("approve", ["1", "0"])

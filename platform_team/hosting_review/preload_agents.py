@@ -12,8 +12,8 @@ credentials, not with a role of the review.
 docs_adk (dev_team/preloaded_agents/docs_adk) is a Google ADK agent with code. It is published like any team's agent
 (publish_agent.publish) and goes through the same review; preload waits until that review ends.
 
-What is there already is left as it is: an approved record, a harness of the agent's name. So a second run makes nothing
-new. Nothing calls AWS at import time.
+What is there already is left as it is: an approved record, a harness of the agent's name with its role and tool
+permits (also when agent.json or MODEL_ID changed). So a second run makes nothing new. Nothing calls AWS at import time.
 """
 import json
 import sys
@@ -126,20 +126,29 @@ def host_harness(c, s: Settings, p: Platform, app: dict) -> dict:
     the execution role under the hub's agent boundary, made as Grant makes it (review_steps.ensure_agent_role); a tool
     permit on the tool gateway for each tool it names; the
     harness (ensure_harness); its ARN in SSM /<prefix>/agents/<agent>/harness_arn; an APPROVED catalog record.
-    Returns {"agent", "harness_arn", "record_status"}. Raises ValueError for an application it cannot host."""
+
+    A harness of the agent's name that is there already is kept exactly as it is, and so are its role and its tool
+    permits: the role is not written again and no permit is added or dropped, also when MODEL_ID or the application's
+    tools changed. So the role keeps allowing the model the harness runs; a changed MODEL_ID or tool list reaches the
+    harness only when it is made again, after the agent is removed. Returns {"agent", "harness_arn",
+    "record_status", "kept"} (kept: the harness was there). Raises ValueError for an application it cannot host."""
     problems = harness_problems(s, app)
     if problems:
         raise ValueError("; ".join(problems))
     agent = app["name"]
     check_agent(c, s, agent)
-    role_arn = review_steps.ensure_agent_role(c, _env(s, p), agent, "platform team: harness execution role")
-    for tool in app["tools"]:
-        ensure_policy(c, p.engine_id, tool_policy_name(agent, tool),
-                      cedar.tool_permit(p.account, s.agent_role(agent), tool, p.tool_gw["arn"]), wait=POLICY_WAIT)
+    found = check_harness(c, s, agent)
+    if found is None:
+        role_arn = review_steps.ensure_agent_role(c, _env(s, p), agent, "platform team: harness execution role")
+        for tool in app["tools"]:
+            ensure_policy(c, p.engine_id, tool_policy_name(agent, tool),
+                          cedar.tool_permit(p.account, s.agent_role(agent), tool, p.tool_gw["arn"]), wait=POLICY_WAIT)
+    else:
+        role_arn = found["executionRoleArn"]           # check_harness: the agent's role, of this account
     arn = ensure_harness(c, s, p, app, role_arn)
     c.ssm.put_parameter(Name=s.ssm("agents", agent, "harness_arn"), Value=arn, Type="String", Overwrite=True)
     status, _ = _approved_record(c, p, app)
-    return {"agent": agent, "harness_arn": arn, "record_status": status}
+    return {"agent": agent, "harness_arn": arn, "record_status": status, "kept": found is not None}
 
 
 def ask_harness(c, harness_arn: str, question: str) -> str:
@@ -210,11 +219,9 @@ def preload(s: Settings, c=None, say=print) -> dict:
     c = c or Clients.for_settings(s)
     p = load(s, c)
     app = application(HARNESS_AGENT)
-    kept = (records(c, p.registry_id).get(app["name"]) or {}).get("status") == "APPROVED" and \
-        check_harness(c, s, app["name"]) is not None
     harness = host_harness(c, s, p, app)
     say(f"{harness['agent']}: harness {s.harness_name(app['name'])} READY, record {harness['record_status']}"
-        + (" (kept)" if kept else ""))
+        + (" (kept as it is, with its role and tool permits)" if harness["kept"] else ""))
     code = _reviewed(c, s, p, CODE_AGENT)
     review = code["review"]
     say(f"{code['agent']}: record {code['record_status']}" + (

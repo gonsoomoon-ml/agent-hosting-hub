@@ -29,7 +29,7 @@ APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
 .PHONY: test package deploy seed preload destroy publish e2e e2e-ops
 
 test:
-	uv run pytest tests -q
+	uv run pytest tests -q -W error
 
 # build/platform_team.zip and build/tool_schemas.json; Terraform reads them (even to destroy)
 package:

@@ -54,7 +54,7 @@ def test_a_harness_gets_a_bounded_role_its_permits_and_an_approved_record():
     assert harness["model"] == {"bedrockModelConfig": {"modelId": Settings().model_id}}
     assert harness["systemPrompt"] == [{"text": SPEC_ASSISTANT["system_prompt"]}]
     assert harness["memory"] == {"disabled": {}}          # no managed memory: the service would make one otherwise
-    assert out == {"agent": "spec_assistant", "harness_arn": HARNESS_ARN, "record_status": "APPROVED"}
+    assert out == {"agent": "spec_assistant", "harness_arn": HARNESS_ARN, "record_status": "APPROVED", "kept": False}
     assert c.parameters["/hub/agents/spec_assistant/harness_arn"] == HARNESS_ARN
     record = _record(c, "spec_assistant")
     assert (record["status"], record["statusReason"]) == ("APPROVED", "preloaded by the platform team")
@@ -161,7 +161,8 @@ def test_preload_twice_makes_nothing_new(monkeypatch):
     monkeypatch.setattr(preload_agents, "publish", _fake_publish(c, published))
     monkeypatch.setattr(preload_agents, "wait_review", _fake_review("SUCCEEDED"))
     first = preload(Settings(), c, say=lines.append)
-    assert first == {"spec_assistant": {"agent": "spec_assistant", "harness_arn": HARNESS_ARN, "record_status": "APPROVED"},
+    assert first == {"spec_assistant": {"agent": "spec_assistant", "harness_arn": HARNESS_ARN, "record_status": "APPROVED",
+                                        "kept": False},
                      "docs_adk": {"agent": "docs_adk", "record_status": "APPROVED",
                                   "review": {"execution": "review-1", "status": "SUCCEEDED", "seconds": 371}}}
     assert published == ["docs_adk"]
@@ -170,8 +171,42 @@ def test_preload_twice_makes_nothing_new(monkeypatch):
     assert [m for _, m in c.calls[n:] if m.startswith(MAKES)] == []           # nothing made, asked for or changed
     assert published == ["docs_adk"] and list(c.harnesses) == [HARNESS] and len(c.created_policies) == 2
     assert second["docs_adk"] == {"agent": "docs_adk", "record_status": "APPROVED", "review": None}
-    assert second["spec_assistant"] == first["spec_assistant"]
+    assert second["spec_assistant"] == {**first["spec_assistant"], "kept": True}
     assert all("kept" in line for line in lines[said:]), lines[said:]
+
+
+OTHER_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+CHANGED_TOOLS = ["Parts___get_part_spec", "Quality___get_inspection_data"]      # one tool dropped, one added
+
+
+def test_a_kept_harness_keeps_its_role_and_permits_when_the_model_or_the_tools_changed(monkeypatch):
+    """A second host_harness under another MODEL_ID and with a changed tool list leaves the harness, its role's inline
+    policy and its tool permits exactly as the first run made them: the role still allows only the model the harness
+    runs, no permit is added or dropped. The preload's line for the agent says that the harness was kept with them."""
+    c, lines = FakeClients(record_status=None), []
+    monkeypatch.setattr(preload_agents, "load", lambda s, c=None: PLATFORM)
+    monkeypatch.setattr(preload_agents, "publish", _fake_publish(c, []))
+    monkeypatch.setattr(preload_agents, "wait_review", _fake_review("SUCCEEDED"))
+    first = preload(Settings(), c, say=lines.append)["spec_assistant"]
+    policy, harness = c.roles[ROLE]["permissions"], dict(c.harnesses[HARNESS])
+    permits = sorted(p["name"] for p in c.created_policies)
+    n, said = len(c.calls), len(lines)
+    changed = {**SPEC_ASSISTANT, "tools": CHANGED_TOOLS}
+    real = preload_agents.application
+    monkeypatch.setattr(preload_agents, "application",
+                        lambda folder: changed if folder == preload_agents.HARNESS_AGENT else real(folder))
+    second = preload(Settings(model_id=OTHER_MODEL), c, say=lines.append)["spec_assistant"]
+    assert [m for _, m in c.calls[n:] if m in ("create_role", "put_role_policy", "create_policy", "delete_policy",
+                                                "create_harness", "update_harness")] == []
+    assert c.roles[ROLE]["permissions"] == policy == review_steps._execution_role(_env(), "spec_assistant")[1]
+    assert OTHER_MODEL not in json.dumps(policy) and Settings().model_id in json.dumps(policy)
+    assert sorted(p["name"] for p in c.created_policies) == permits and c.deleted_policies == []
+    assert c.harnesses[HARNESS] == harness and harness["model"] == {"bedrockModelConfig": {"modelId": Settings().model_id}}
+    assert first["kept"] is False and second == {**first, "kept": True}
+    line = lines[said]
+    assert line.startswith("spec_assistant: harness hub_spec_assistant READY") and \
+        "kept as it is, with its role and tool permits" in line, line
+    assert "kept" not in lines[0], lines[0]                                 # the first run made the harness
 
 
 def test_preload_stops_when_the_review_of_the_agent_with_code_does_not_approve_it(monkeypatch):
