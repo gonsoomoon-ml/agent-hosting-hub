@@ -8,7 +8,7 @@
 
 ## 카탈로그 권한의 범위
 
-개발팀 역할은 카탈로그에서 다섯 가지를 할 수 있다. 검색, record 읽기, record 만들기, record 고치기, 승인 요청이다. 에이전트를 올리는 흐름과 반려 뒤의 재신청이 이 역할로 돌아서 record를 고치는 권한이 필요하다. record의 ARN에는 무작위 ID가 들어가므로 IAM으로는 record를 만든 팀별로 권한을 나눌 수 없고, 이 권한은 Registry의 모든 record에 걸린다. 그래서 이 역할로 다른 팀의 record나 플랫폼팀의 공유 도구 record(`parts-tools`)도 고칠 수 있다. 승인된 record를 고치면 새 DRAFT가 되고, 다시 승인될 때까지 검색에 나오지 않는다. 운영 환경이라면 record에 주인 태그를 달고 IAM 조건으로 막거나, record를 고치는 일을 플랫폼 쪽의 게시 함수가 맡게 해서 이 틈을 닫는다.
+개발팀 역할은 카탈로그에서 다섯 가지를 할 수 있다. 검색, record 읽기, record 만들기, record 고치기, 승인 요청이다. 에이전트를 올리는 흐름과 반려 뒤의 재신청이 이 역할로 돌아서 record를 고치는 권한이 필요하다. record의 ARN에는 무작위 ID가 들어가므로 IAM으로는 record를 만든 팀별로 권한을 나눌 수 없고, 이 권한은 Registry의 모든 record에 걸린다. 그래서 이 역할로 다른 팀의 record나 플랫폼팀의 공유 도구 record(`parts-tools`)도 고칠 수 있다. 승인된 record를 고치면 새 DRAFT revision이 된다. AWS 문서([Record lifecycle](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/registry-record-lifecycle.html))에 따르면 새 revision이 승인될 때까지 승인된 revision이 계속 검색된다. 이 리포의 실행은 승인된 record를 고치는 경우를 확인하지 않았다. 이 역할은 다른 팀의 DRAFT, REJECTED record도 읽을 수 있다. 운영 환경이라면 record에 주인 태그를 달고 IAM 조건으로 막거나, record를 고치는 일을 플랫폼 쪽의 게시 함수가 맡게 해서 이 틈을 닫는다.
 
 ## 파일
 
