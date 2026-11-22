@@ -188,7 +188,7 @@ def test_the_record_publish_writes_passes_the_reviews_read(monkeypatch, folder):
     """final review I-1: Read checks more than the form does (the record's name and type, code_key, code_version).
     The record publish writes for each example application must still pass it."""
     from platform_team.hosting_review import review_steps
-    from tests.fakes import ENV
+    from tests.fakes import ENV, read_input
     app = json.loads((pathlib.Path("dev_team") / folder / "agent.json").read_text())
     fake, _ = _wire(monkeypatch)
     monkeypatch.setattr(publish_agent, "records", lambda c, reg: {app["name"]: {"recordId": "rec-9", "status": "DRAFT"}})
@@ -197,7 +197,7 @@ def test_the_record_publish_writes_passes_the_reviews_read(monkeypatch, folder):
                         written.update(name=name, kind=kind, payload=payload) or "rec-9")
     out = publish_agent.publish(pathlib.Path("dev_team") / folder, Settings(), c=fake)
     record = FakeClients(record_spec=written["payload"], record_name=written["name"], record_type=written["kind"])
-    read = review_steps.read({"detail": {"registryId": "reg-1", "registryRecordId": "rec-9"}}, record, ENV)
+    read = review_steps.read(read_input({"detail": {"registryId": "reg-1", "registryRecordId": "rec-9"}}), record, ENV)
     assert read["spec"] == {**{k: app[k] for k in ("name", "team", "framework", "tools")},
                             "code_key": out["code_key"], "code_version": out["code_version"]}
 

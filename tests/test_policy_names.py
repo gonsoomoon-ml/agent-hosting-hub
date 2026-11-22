@@ -13,7 +13,7 @@ from platform_team.company_policy import policy_names as names
 from platform_team.hosting_review import review_steps as steps
 from platform_team.sample_tools.tool_schema import TARGETS
 from platform_team.shared_code.config import Settings
-from tests.fakes import ENV, SPEC, FakeClients
+from tests.fakes import ENV, SPEC, FakeClients, read_input
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CATALOG = {f"{target}___{t['name']}" for target, tools in TARGETS.items() for t in tools}
@@ -101,7 +101,7 @@ def test_a_name_the_cli_refused_as_too_long_is_valid_now():
 def test_read_refuses_a_name_that_does_not_fit_before_grant_makes_anything():
     c = FakeClients(record_spec={**SPEC, "name": "inspection_helper"})
     with pytest.raises(ValueError, match="policy name tool_inspection_helper_Quality_get_inspection_data has 50"):
-        steps.read({"detail": {"registryId": "r", "registryRecordId": "x"}}, c, ENV)
+        steps.read(read_input({"detail": {"registryId": "r", "registryRecordId": "x"}}), c, ENV)
     assert c.created_policies == [] and c.roles == {}
 
 

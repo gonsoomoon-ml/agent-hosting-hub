@@ -5,7 +5,8 @@
     "Read": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": { "FunctionName": "${fn_read}", "Payload.$": "$" },
+      "Comment": "Read gets the Registry's event, this execution and the state machine: it stops a review of a record whose earlier review still runs",
+      "Parameters": { "FunctionName": "${fn_read}", "Payload": { "event.$": "$", "execution.$": "$$.Execution.Id", "machine.$": "$$.StateMachine.Id" } },
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],

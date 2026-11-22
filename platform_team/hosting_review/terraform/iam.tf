@@ -14,9 +14,11 @@
 # role, or write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy
 # leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
 # cleanup would not find (hosting_review/README.md, the known limit).
-# The steps that grant (Lambda) never open the submitted code. Approve reads one SSM path, /<prefix>/policies (the
-# modes of the company policies, GetParametersByPath), and makes those policies and the entry permit; it cannot
-# switch a policy's mode (no UpdatePolicy).
+# The steps that grant (Lambda) never open the submitted code. Read reads the catalog record (GetRegistryRecord)
+# and, to find an earlier review of the same record, lists this state machine's executions and reads their input
+# (states:ListExecutions, states:DescribeExecution); it changes nothing. Approve reads one SSM path,
+# /<prefix>/policies (the modes of the company policies, GetParametersByPath), and makes those policies and the
+# entry permit; it cannot switch a policy's mode (no UpdatePolicy).
 
 locals {
   agentcore  = "arn:aws:bedrock-agentcore:${local.region}:${local.account}"
@@ -102,6 +104,16 @@ data "aws_iam_policy_document" "read" {
     actions   = ["agent-registry:GetRegistryRecord"]
     resources = ["${var.registry_arn}/record/*"]
   }
+  statement {
+    sid       = "ListTheReviews" # reject_agent.running_reviews: the RUNNING executions of this state machine. An ARN built from the name (main.tf names the machine ${var.prefix}-review): the machine refers to this step's function, so a reference back would be a cycle. Not tried on AWS
+    actions   = ["states:ListExecutions"]
+    resources = ["arn:aws:states:${local.region}:${local.account}:stateMachine:${var.prefix}-review"]
+  }
+  statement {
+    sid       = "ReadTheReviews" # describe_execution: the record each running review was started for (its input). Built from the name like ListTheReviews. Not tried on AWS
+    actions   = ["states:DescribeExecution"]
+    resources = ["arn:aws:states:${local.region}:${local.account}:execution:${var.prefix}-review:*"]
+  }
 }
 
 # ------------------------------------------------------------------ 2 Scan (CodeBuild, handles submitted code)
@@ -148,7 +160,7 @@ data "aws_iam_policy_document" "grant" {
     }
   }
   statement {
-    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed
+    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed; delete the agent's permits of tools the application no longer names
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }
@@ -333,7 +345,7 @@ data "aws_iam_policy_document" "approve" {
     resources = ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
   }
   statement {
-    sid       = "CompanyPoliciesAndEntryPermit" # ensure_policy: the deployed company policies (guard_prompt_<agent>), entry_permit_<agent>
+    sid       = "CompanyPoliciesAndEntryPermit" # ensure_policy: the deployed company policies (guard_prompt_<agent>), entry_permit_<agent>; delete the entry permit this run made when the second record check stops the approval
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }

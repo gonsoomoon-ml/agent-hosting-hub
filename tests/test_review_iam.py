@@ -170,3 +170,23 @@ def test_approve_reads_the_company_policy_modes_and_no_other_parameter():
     assert _resources(read) == ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
     assert [s for s in statements(approve) if "ssm:" in s] == [read]
     assert _resources(read)[0].replace("${var.prefix}", "hub").endswith(":parameter" + Settings().ssm("policies"))
+
+
+# ------------------------------------------------------------------ Read looks for an earlier review of the same record
+
+def test_read_may_list_and_read_the_executions_of_the_review_machine_and_nothing_more():
+    from platform_team.shared_code.config import Settings
+    read = document("read")
+    assert sorted(actions(read)) == sorted(["logs:CreateLogStream", "logs:PutLogEvents", "agent-registry:GetRegistryRecord",
+                                            "states:ListExecutions", "states:DescribeExecution"])
+    machine = "arn:aws:states:${local.region}:${local.account}:stateMachine:${var.prefix}-review"
+    [listing] = [s for s in statements(read) if "states:ListExecutions" in s]
+    assert actions(listing) == ["states:ListExecutions"] and _resources(listing) == [machine]
+    [reading] = [s for s in statements(read) if "states:DescribeExecution" in s]
+    assert actions(reading) == ["states:DescribeExecution"]
+    assert _resources(reading) == ["arn:aws:states:${local.region}:${local.account}:execution:${var.prefix}-review:*"]
+    # names, not a reference: the state machine refers to Read's function, whose role policy would refer back
+    assert "aws_sfn_state_machine" not in read
+    main = pathlib.Path("platform_team/hosting_review/terraform/main.tf").read_text()
+    assert re.search(r'resource\s+"aws_sfn_state_machine"\s+"review"\s*{\s*name\s*=\s*"\$\{var\.prefix\}-review"\n', main)
+    assert Settings().machine == "hub-review"

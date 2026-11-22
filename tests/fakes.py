@@ -1,4 +1,5 @@
 """Fake AWS clients for unit tests of the hub's steps. They record what the steps do; nothing calls AWS."""
+import datetime
 import json
 import types
 
@@ -39,6 +40,16 @@ PLATFORM = Platform(
     dev_role_arn=f"arn:aws:iam::{ACCOUNT}:role/hub-dev-role",
     bucket=f"hub-{ACCOUNT}-us-west-2",
     machine_arn=f"arn:aws:states:us-west-2:{ACCOUNT}:stateMachine:hub-review")
+
+EVENT = {"detail": {"registryId": "reg-1", "registryRecordId": "rec-1"}}    # the Registry's event for the record SPEC
+STARTED = datetime.datetime(2026, 11, 22, 9, 0, tzinfo=datetime.timezone.utc)   # when the first running review started
+
+
+def read_input(event=EVENT, execution="this-one") -> dict:
+    """Read's input as the state machine passes it: the Registry's event, the ARN of this review's execution (named
+    `execution`) and the state machine's ARN."""
+    executions = PLATFORM.machine_arn.replace(":stateMachine:", ":execution:")
+    return {"event": event, "execution": f"{executions}:{execution}", "machine": PLATFORM.machine_arn}
 
 
 def _client_error(code: str, message: str, op: str) -> ClientError:
@@ -354,18 +365,26 @@ class _Reg(_Client):
 
 
 class _Sfn(_Client):
-    """Step Functions: `running` holds (execution name, record ID) for each review still RUNNING."""
+    """Step Functions: `running` holds (execution name, record ID) for each review still RUNNING, in the order they
+    started. list_executions gives them most recent first, as the service documents it, each with its startDate (one
+    second after the one before); an execution's input is the Registry's event for its record."""
     service = "sfn"
 
 
+    def _execution(self, stateMachineArn, n, i):
+        return {"executionArn": f"{stateMachineArn.replace(':stateMachine:', ':execution:', 1)}:{n}",
+                "stateMachineArn": stateMachineArn, "name": n, "status": "RUNNING",
+                "startDate": STARTED + datetime.timedelta(seconds=i)}
+
     def list_executions(self, stateMachineArn, statusFilter=None, **kw):
-        return {"executions": [{"executionArn": f"{stateMachineArn}:{n}", "name": n, "status": "RUNNING"}
-                               for n, _ in self.o.running if statusFilter in (None, "RUNNING")]}
+        return {"executions": [self._execution(stateMachineArn, n, i) for i, (n, _) in enumerate(self.o.running)
+                               if statusFilter in (None, "RUNNING")][::-1]}
 
     def describe_execution(self, executionArn):
-        name = executionArn.rsplit(":", 1)[-1]
-        return {"executionArn": executionArn, "name": name, "status": "RUNNING",
-                "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": dict(self.o.running)[name]}})}
+        machine, name = executionArn.replace(":execution:", ":stateMachine:", 1).rsplit(":", 1)
+        i = [n for n, _ in self.o.running].index(name)
+        return {**self._execution(machine, name, i),
+                "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": self.o.running[i][1]}})}
 
 
 class FakeClients:
@@ -373,7 +392,8 @@ class FakeClients:
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     policy_mode: the enforcement mode of the existing_policies; parameters: the SSM values at the start; targets: the
-    names of the targets the agent gateway already has.
+    names of the targets the agent gateway already has; running: (execution name, record ID) of each review still
+    RUNNING, in the order they started.
     Recorded: created_policies (id, name, statement, kind, mode), mode_changes ((name, mode) of each update_policy),
     calls ((service, method) of every fake call, in order), deleted_policies, policies, roles, inline (role -> inline
     policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
@@ -386,7 +406,7 @@ class FakeClients:
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, record_name=None,
                  record_type="AGENT", runtime_status="READY", runtime_failure=None, runtime_ready_after=0,
                  runtime_delete_failure=None, runtime_delete_polls=0, runtime_delete_keeps_status=False,
-                 policy_mode="ACTIVE", parameters=None, targets=()):
+                 policy_mode="ACTIVE", parameters=None, targets=(), running=()):
         self.record_spec = SPEC if record_spec is None else record_spec
         self.record_name, self.record_type = record_name, record_type
         self.record_status, self.status_reason = record_status, None
@@ -408,7 +428,7 @@ class FakeClients:
         self.runtime_delete_keeps_status, self.runtime_create_errors, self.workload_identities = \
             runtime_delete_keeps_status, [], []
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
-        self.running = []
+        self.running = list(running)
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3 = _Logs(self), _Sfn(self), _S3(self)
         FakeClients.latest = self

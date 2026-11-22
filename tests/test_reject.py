@@ -14,12 +14,18 @@ def test_reject_removes_what_the_review_made():
     assert "tool_release_review_Release_file_review_request" in c.policies      # another agent's permit stays
 
 def test_reject_removes_the_prompt_guard_and_the_stop_policy_too_and_leaves_another_agents():
-    mine = ["entry_permit_quality_agent", "guard_secret_quality_agent", "guard_prompt_quality_agent",
-            "stop_agent_quality_agent"]
-    c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={*mine, "stop_agent_quality", "guard_prompt_release"})
+    # An entry permit means an approved version runs, and then reject removes nothing (the new-version tests below).
+    # The cleanup reject calls removes it first all the same, when make destroy removes the agent.
+    mine = ["guard_secret_quality_agent", "guard_prompt_quality_agent", "stop_agent_quality_agent"]
+    others = {"stop_agent_quality", "guard_prompt_release"}
+    c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={*mine, *others})
     out = reject(c, Settings(), PLATFORM, "quality_agent", "why")
-    assert out["removed"] == [f"policy {n}" for n in mine]                    # the entry permit first, the stop policy last
-    assert set(c.policies) == {"stop_agent_quality", "guard_prompt_release"}
+    assert out["removed"] == [f"policy {n}" for n in mine]                    # the stop policy last
+    assert set(c.policies) == others
+    c = FakeClients(existing_policies={"entry_permit_quality_agent", *mine, *others})
+    assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == [    # the entry permit first, the stop policy last
+        f"policy {n}" for n in ["entry_permit_quality_agent", *mine]]
+    assert set(c.policies) == others
 
 def test_an_approved_agent_is_not_rejected():
     with pytest.raises(ValueError, match="approved agents are stopped, not rejected"):
@@ -37,7 +43,7 @@ from botocore.exceptions import ClientError
 
 from platform_team.hosting_review import agent_cleanup, deploy_build, reject_agent, review_steps as steps
 from platform_team.hosting_review.agent_cleanup import CleanupFailed, clean_agents, remove_agent
-from tests.fakes import ACCOUNT, CTX, ENV, SPEC
+from tests.fakes import ACCOUNT, ENV, SPEC, read_input
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME_ID = "Ab12Cd34Ef"          # the 10 characters AgentCore adds to a Runtime's name (the fake adds these)
@@ -63,8 +69,7 @@ def _review(c, spec):
     s, agent = Settings(), spec["name"]
     c.record_spec = spec                                       # Read reads the record, Approve reads it again
     c.record_status = "PENDING_APPROVAL"                       # as publish leaves it (the fake has one record status)
-    ctx = steps.grant(steps.read({"detail": {"registryId": CTX["registryId"], "registryRecordId": CTX["recordId"]}},
-                                 c, ENV), c, ENV)
+    ctx = steps.grant(steps.read(read_input(), c, ENV), c, ENV)
     _deploy(c, agent)
     c.log_groups.add(f"/aws/bedrock-agentcore/runtimes/{s.runtime_name(agent)}-{RUNTIME_ID}-DEFAULT")
     steps.approve(steps.entry(ctx, c, ENV), c, ENV)
@@ -157,7 +162,7 @@ def test_reject_again_cleans_again_and_keeps_the_record_as_it_is():
 @pytest.mark.parametrize("agent, status, reason, message", [
     ("quality_agent", "PENDING_APPROVAL", "  ", "a reason is required"),
     ("quality_agent", "PENDING_APPROVAL", "x" * 256, "at most 255"),
-    ("quality_agent", "DRAFT", "x", "record quality_agent is DRAFT: only a record pending approval"),
+    ("quality_agent", "DEPRECATED", "x", "record quality_agent is DEPRECATED: reject takes a record pending approval"),
     ("quality_agent", None, "x", "no agent record named quality_agent"),
     ("Bad-Name", "PENDING_APPROVAL", "x", "agent name 'Bad-Name': name must match"),
 ])
@@ -455,3 +460,76 @@ def test_make_destroy_removes_the_records_last_after_the_agents_and_the_seed():
     agents, seed = at("platform_team.hosting_review.agent_cleanup ||"), at("seed_catalog --remove")
     records, destroy = at("agent_cleanup --records"), at("destroy -auto-approve")
     assert agents < seed < records < destroy
+
+
+# ------------------------------------------------------------------ the review of a new version
+
+def test_rejecting_a_new_version_leaves_the_running_agent():
+    c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={"entry_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec"},
+                    existing_roles={"hub-agent-quality_agent-role"})
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "the new version fails its test call")
+    assert out["removed"] == [] and "approved version is running" in out["note"] and c.deleted_policies == []
+    assert out == {"status": "REJECTED", "removed": [], "note": "an approved version is running and was left as it is"}
+    assert c.record_status == "REJECTED" and c.status_reason == "the new version fails its test call"
+    assert set(c.policies) == {"entry_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec"}
+    assert c.existing_roles == {ROLE}
+
+
+def test_rejecting_a_rejected_new_version_again_changes_nothing():
+    c = FakeClients(record_status="REJECTED", existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE})
+    before = _state(c)
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "another reason")
+    assert out["removed"] == [] and "approved version is running" in out["note"]
+    assert c.record_status == "REJECTED" and c.status_reason is None and _state(c) == before
+
+
+def test_a_draft_left_by_a_stopped_review_can_be_cleaned():
+    # Approve stopped at its second record check because the team changed its record (a changed record is a DRAFT),
+    # and took back the entry permit it had made. Reject keeps the team's draft as it is and removes the rest.
+    c = FakeClients()
+    ctx = steps.grant(steps.read(read_input(), c, ENV), c, ENV)
+    _deploy(c, "quality_agent")
+    ctx = steps.entry(ctx, c, ENV)
+    create = c.ctl.create_policy
+
+    def create_then_edit(**kw):
+        out = create(**kw)
+        c.record_status = "DRAFT"
+        return out
+    c.ctl.create_policy = create_then_edit
+    with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
+        steps.approve(ctx, c, ENV)
+    assert "policy entry_permit_quality_agent" not in _state(c)
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "the review stopped when the record changed")
+    assert out["status"] == "DRAFT" and c.record_status == "DRAFT" and c.status_reason is None
+    assert {"policy review_permit_quality_agent", "policy guard_secret_quality_agent", "target QualityAgent",
+            f"Runtime {RUNTIME}", f"role {ROLE}"} <= set(out["removed"])
+    assert _state(c) == {"record quality_agent"}                     # the team's draft stays
+
+
+def test_a_draft_of_an_agent_whose_approved_version_runs_is_refused():
+    c = FakeClients(record_status="DRAFT", existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE})
+    before = _state(c)
+    with pytest.raises(ValueError, match="record quality_agent is DRAFT and an approved version of it is running"):
+        reject(c, Settings(), PLATFORM, "quality_agent", "why")
+    assert c.record_status == "DRAFT" and c.status_reason is None and _state(c) == before
+
+
+def test_reject_main_says_that_the_running_version_was_left(monkeypatch, capsys):
+    _wire(monkeypatch, reject_agent, FakeClients(existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE}))
+    assert reject_agent.main(["quality_agent", "the new version fails its test call"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["record quality_agent: REJECTED (prefix hub, region us-west-2)",
+                                                    "an approved version is running and was left as it is"]
+
+
+def test_a_draft_whose_cleanup_fails_is_said_to_be_a_draft(monkeypatch, capsys):
+    c = FakeClients(record_status="DRAFT", existing_roles={ROLE})
+
+    def denied(**kw):
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "not allowed"}}, "DeleteRole")
+    c.iam.delete_role = denied
+    _wire(monkeypatch, reject_agent, c)
+    assert reject_agent.main(["quality_agent", "the review stopped when the record changed"]) == 1
+    [line] = capsys.readouterr().out.splitlines()
+    assert line.startswith("record quality_agent is DRAFT (prefix hub, region us-west-2), but not everything was removed")
+    assert c.record_status == "DRAFT" and c.status_reason is None

@@ -106,10 +106,10 @@ def _ownership_checks(stubs, role=True):
     _find_runtime(stubs)
 
 
-def _removal(stubs, role=True):
-    """remove_agent after its checks: one of each kind the review makes."""
+def _removal(stubs, role=True, policy="entry_permit_quality_agent"):
+    """remove_agent after its checks: one of each kind the review makes (the policy `policy`)."""
     ctl, logs, iam, ssm, s3 = (stubs[k] for k in ("ctl", "logs", "iam", "ssm", "s3"))
-    pol = _policy("entry_permit_quality_agent")
+    pol = _policy(policy)
     ctl.add_response("list_policies", {"policies": [pol]}, {"policyEngineId": ENGINE, "maxResults": 100})
     ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
     ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
@@ -166,14 +166,17 @@ def test_reject_calls_match_the_service_models(aws):
         "executionArn": other, "stateMachineArn": MACHINE, "name": "other", "status": "RUNNING", "startDate": NOW,
         "input": json.dumps({"detail": {"registryId": REG, "registryRecordId": "rec999999999"}})}, {"executionArn": other})
     _ownership_checks(stubs)                                                 # reject checks before the status changes
+    stubs["ctl"].add_response("list_policies", {"policies": [_policy("review_permit_quality_agent")]},
+                              {"policyEngineId": ENGINE, "maxResults": 100})          # no entry permit: no version runs
     stubs["reg"].add_response("update_registry_record_status", {
         "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
         "status": "REJECTED", "statusReason": "why", "updatedAt": NOW},
         {"registryId": REG, "recordId": REC, "status": "REJECTED", "statusReason": "why"})
     _ownership_checks(stubs)                                                 # remove_agent checks again
-    _removal(stubs)
+    _removal(stubs, policy="review_permit_quality_agent")
     with_machine = Platform(**{**P.__dict__, "machine_arn": MACHINE})
-    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {"status": "REJECTED", "removed": REMOVED}
+    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
+        "status": "REJECTED", "removed": ["policy review_permit_quality_agent", *REMOVED[1:]]}
 
 
 def test_clean_agents_calls_match_the_service_models(aws, monkeypatch):
@@ -205,12 +208,41 @@ def _full_record(status, app=APPLICATION):
             "descriptors": {"custom": {"data": json.dumps(app)}}}
 
 
+EXECUTIONS = MACHINE.replace(":stateMachine:", ":execution:")
+READ_INPUT = {"event": {"detail": {"registryId": REG, "registryRecordId": REC}}, "execution": f"{EXECUTIONS}:this-one",
+              "machine": MACHINE}
+
+
+def _running(stubs, *reviews):
+    """The RUNNING reviews (name, record ID, start), most recent first as ListExecutions gives them, and each one's input."""
+    def item(name, start):
+        return {"executionArn": f"{EXECUTIONS}:{name}", "stateMachineArn": MACHINE, "name": name, "status": "RUNNING",
+                "startDate": start}
+    stubs["sfn"].add_response("list_executions", {"executions": [item(n, start) for n, _, start in reviews]},
+                              {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
+    for name, record, start in reviews:
+        stubs["sfn"].add_response("describe_execution", {
+            **item(name, start), "input": json.dumps({"detail": {"registryId": REG, "registryRecordId": record}})},
+            {"executionArn": f"{EXECUTIONS}:{name}"})
+
+
 def test_read_calls_match_the_service_model(aws):
-    """final review I-1: Read reads the record's name and type from GetRegistryRecord's answer."""
+    """final review I-1: Read reads the record's name and type from GetRegistryRecord's answer. Then it looks for an
+    earlier review of the record (ListExecutions, DescribeExecution): here only this one runs."""
     c, stubs = aws
     stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
-    out = review_steps.read({"detail": {"registryId": REG, "registryRecordId": REC}}, c, ENV)
+    _running(stubs, ("this-one", REC, NOW))
+    out = review_steps.read(READ_INPUT, c, ENV)
     assert out["spec"] == {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS} and out["record"] == AGENT
+
+
+def test_read_stops_at_an_earlier_review_of_the_record_with_calls_the_model_accepts(aws):
+    c, stubs = aws
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    _running(stubs, ("this-one", REC, NOW + datetime.timedelta(seconds=40)), ("other-record", "rec999999999", NOW),
+             ("older", REC, NOW))
+    with pytest.raises(RuntimeError, match="^a review of this record is already running: older$"):
+        review_steps.read(READ_INPUT, c, ENV)
 
 
 APPROVE_CTX = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
@@ -245,6 +277,7 @@ def test_approve_calls_match_the_service_models(aws):
     env = {**ENV, "ENGINE_ID": ENGINE}
     reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
     stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # made by this run?
     pol = _made_policy(ctl, "entry_permit_quality_agent",
                        {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
     _approval(reg)
@@ -265,6 +298,7 @@ def test_approve_with_a_company_policy_deployed_calls_match_the_service_models(a
     _made_policy(ctl, "guard_prompt_quality_agent",
                  {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", ENV["AGENT_GW_ARN"])}},
                  mode="LOG_ONLY")
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # made by this run?
     _made_policy(ctl, "entry_permit_quality_agent",
                  {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
     _approval(reg)
@@ -466,3 +500,60 @@ def test_a_policy_in_another_mode_is_listed_and_switched_with_calls_the_models_a
                               {"policyEngineId": ENGINE, "policyId": pol["policyId"], "enforcementMode": "ACTIVE"})
     stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
     assert ensure_policy(c, ENGINE, pol["name"], "forbid ...;", guardrail=True, mode="ACTIVE") == pol["policyId"]
+
+
+# ------------------------------------------------------------------ the review of a new version
+
+def test_grant_removes_a_dropped_tools_permit_with_calls_the_models_accept(aws):
+    """The permits of this agent for tools the application no longer names go first; then the named ones are made."""
+    c, stubs = aws
+    iam, ctl = stubs["iam"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    iam.add_response("get_role", {"Role": _role()}, {"RoleName": ROLE})
+    iam.add_response("put_role_policy", {}, {"RoleName": ROLE, "PolicyName": "agent", "PolicyDocument": ANY})
+    kept, dropped, other = (_policy(n) for n in ("tool_quality_agent_Parts_get_part_spec",
+                                                  "tool_quality_agent_Parts_get_test_result", "tool_quality_Parts_get_test_result"))
+    ctl.add_response("list_policies", {"policies": [kept, dropped, other]}, {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("delete_policy", {**dropped, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": dropped["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": dropped["policyId"]})
+    ctl.add_response("list_policies", {"policies": [kept, other]}, {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("get_policy", kept, {"policyEngineId": ENGINE, "policyId": kept["policyId"]})
+    out = review_steps.grant(dict(APPROVE_CTX), c, env)
+    assert out["removedToolPolicies"] == ["tool_quality_agent_Parts_get_test_result"]
+    assert out["toolPolicies"] == [kept["policyId"]] and out["roleArn"] == _role()["Arn"]
+
+
+def test_approve_takes_back_the_entry_permit_it_made_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    reg, ctl = stubs["reg"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # not there before
+    pol = _made_policy(ctl, "entry_permit_quality_agent",
+                       {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
+    reg.add_response("get_registry_record", _full_record("DRAFT"), {"registryId": REG, "recordId": REC})   # the team edited it
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
+        review_steps.approve(dict(APPROVE_CTX), c, env)
+
+
+def test_rejecting_a_new_version_calls_match_the_service_models(aws):
+    c, stubs = aws
+    stubs["reg"].add_response("list_registry_records", {"registryRecords": [_record("PENDING_APPROVAL")]},
+                              {"registryId": REG, "maxResults": 100})
+    stubs["sfn"].add_response("list_executions", {"executions": []}, {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
+    _ownership_checks(stubs)
+    stubs["ctl"].add_response("list_policies", {"policies": [_policy("entry_permit_quality_agent"),
+                                                             _policy("tool_quality_agent_Parts_get_part_spec")]},
+                              {"policyEngineId": ENGINE, "maxResults": 100})
+    stubs["reg"].add_response("update_registry_record_status", {
+        "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
+        "status": "REJECTED", "statusReason": "why", "updatedAt": NOW},
+        {"registryId": REG, "recordId": REC, "status": "REJECTED", "statusReason": "why"})
+    with_machine = Platform(**{**P.__dict__, "machine_arn": MACHINE})
+    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
+        "status": "REJECTED", "removed": [], "note": "an approved version is running and was left as it is"}

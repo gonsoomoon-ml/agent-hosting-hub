@@ -1,6 +1,6 @@
 """The Lambda steps of the hosting review: Read, Grant, Entry, TestCall, Approve.
-Each step is a plain function of (state, clients, environment), so it can be tested with fakes. Task 7's
-Terraform deploys them as five Lambda functions, each with its own role and ACTION set to its step.
+Each step is a plain function of (state, clients, environment), so it can be tested with fakes. The Terraform of
+hosting_review/terraform deploys them as five Lambda functions, each with its own role and ACTION set to its step.
 None of these steps opens or runs the submitted code: that happens in CodeBuild (scan, deploy).
 
 Every wait of a step takes its normal ceiling or the time its Lambda has left (`deadline`, set by
@@ -15,10 +15,11 @@ import urllib.error
 from platform_team.agent_catalog import application_form
 from platform_team.agent_gateway.gateway_targets import ensure_runtime_target
 from platform_team.company_policy import cedar_statements as cedar
-from platform_team.company_policy.policy_engine import ensure_policy
+from platform_team.company_policy.policy_engine import drop_policy, ensure_policy, list_policies
 from platform_team.company_policy.policy_names import (entry_permit_name, guard_secret_name, review_permit_name,
-                                                       tool_policy_name)
+                                                       tool_policy_name, tool_policy_pattern)
 from platform_team.company_policy.policy_rollout import apply_to_agent
+from platform_team.hosting_review.reject_agent import running_reviews
 from platform_team.shared_code.aws_helpers import Deadline, signed_post
 from platform_team.shared_code.config import Settings
 from platform_team.shared_code.hub_state import Platform
@@ -109,15 +110,30 @@ def application(rec: dict, env: dict) -> tuple[dict, str]:
     return {k: app[k] for k in REVIEWED_FIELDS}, application_digest(app)
 
 
-def read(event: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
-    """1 Read the catalog record. A record the review does not host (skip_reason) gives {"skip": <reason>}: the state
-    machine ends the review there (Skipped), with no alert. For any other record, check the application
-    (application) and pass on the checked fields only, among them where the code is; does not open the code."""
-    d = event["detail"]
+def _earlier_reviews(c, review: dict, record_id: str) -> list[str]:
+    """The names of the reviews of this record that started before this one and still run (running_reviews, oldest
+    first). ListExecutions is eventually consistent (its documentation in the service model), so a review that just
+    started may not see itself in the list: then every other running review of the record counts as earlier."""
+    mine = review["execution"].rsplit(":", 1)[-1]
+    running = running_reviews(c, Platform(machine_arn=review["machine"]), record_id)
+    return running[:running.index(mine)] if mine in running else running
+
+
+def read(review: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
+    """1 Read the catalog record. The state machine passes {"event": <the Registry's event>, "execution": <this
+    review's execution ARN>, "machine": <the state machine's ARN>}. In this order: a record the review does not host
+    (skip_reason) gives {"skip": <reason>}, and the state machine ends the review there (Skipped), with no alert; a
+    review of the same record that started before this one and still runs stops this one with RuntimeError (the two
+    would make and remove the same role, Runtime and permits); then the application is checked (application) and
+    only the checked fields are passed on, among them where the code is. Does not open the code."""
+    d = review["event"]["detail"]
     rec = c.reg.get_registry_record(registryId=d["registryId"], recordId=d["registryRecordId"])
     reason = skip_reason(rec)
     if reason:
         return {"skip": reason}
+    earlier = _earlier_reviews(c, review, d["registryRecordId"])
+    if earlier:
+        raise RuntimeError(f"a review of this record is already running: {', '.join(earlier)}"[:MAX_ERROR])
     spec, digest = application(rec, env)
     return {"registryId": d["registryId"], "recordId": d["registryRecordId"], "record": rec["name"], "spec": spec,
             "applicationDigest": digest}
@@ -164,8 +180,20 @@ def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
     return trust, perms
 
 
+def _drop_unnamed_tool_permits(c, env: dict, agent: str, tools) -> list[str]:
+    """Delete this agent's tool permits for tools the application does not name (a version approved before named
+    them) and return their names. They are found by the shape of their names (tool_policy_pattern), which is exact for
+    one agent, so another agent's permits are never touched."""
+    named, own = {tool_policy_name(agent, t) for t in tools}, re.compile(tool_policy_pattern(agent))
+    found = list_policies(c, env["ENGINE_ID"])
+    return [name for name in sorted(n for n in found if own.fullmatch(n) and n not in named)
+            if drop_policy(c, env["ENGINE_ID"], found[name]["policyId"])]
+
+
 def grant(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
-    """3 Create the agent's execution role and permit the tools named in the application (tool gateway)."""
+    """3 Create the agent's execution role and permit the tools named in the application (tool gateway). A permit of
+    this agent for a tool the application no longer names is deleted first (removedToolPolicies): the permits follow
+    the application under review. The deletes come before the policy waits, which take the step's deadline."""
     deadline = deadline or Deadline()
     s, agent = _settings(env), ctx["spec"]["name"]
     role = s.agent_role(agent)
@@ -177,10 +205,11 @@ def grant(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
                                 Description="hosting review: agent execution role",
                                 PermissionsBoundary=env["AGENT_BOUNDARY"])["Role"]["Arn"]
     c.iam.put_role_policy(RoleName=role, PolicyName="agent", PolicyDocument=json.dumps(perms))
+    removed = _drop_unnamed_tool_permits(c, env, agent, ctx["spec"]["tools"])
     made = [_policy(c, env, deadline, tool_policy_name(agent, tool),
                     cedar.tool_permit(env["ACCOUNT"], role, tool, env["TOOL_GW_ARN"]))
             for tool in ctx["spec"]["tools"]]
-    return {**ctx, "roleArn": arn, "toolPolicies": made}
+    return {**ctx, "roleArn": arn, "toolPolicies": made, "removedToolPolicies": removed}
 
 
 def entry(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
@@ -255,18 +284,36 @@ def _platform(env: dict) -> Platform:
                     agent_gw={"id": env["AGENT_GW_ID"], "arn": env["AGENT_GW_ARN"]})
 
 
+def _take_back(c, env: dict, name: str, policy_id: str, why: Exception) -> None:
+    """Delete the entry permit this approval made, because the approval stopped (why). A delete that fails is said
+    together with why the approval stopped."""
+    try:
+        drop_policy(c, env["ENGINE_ID"], policy_id)
+    except Exception as e:
+        raise RuntimeError(f"{why}; taking back {name}, which this approval made, failed too: {e}") from why
+
+
 def approve(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     """7 Give the agent the company policies the platform team has deployed, each in its mode (policy_rollout), let
     users in and mark the record approved, only if the record still holds the reviewed application. In this order:
     record check, company policies, entry permit, record check, APPROVED. When the second check stops the approval,
-    the company policies made in this run stay (a forbid lets nobody in)."""
+    the entry permit is taken back if this run made it, and the error is raised again; an entry permit that was there
+    before (a version approved earlier runs) stays, and so do the company policies made in this run (a forbid lets
+    nobody in)."""
     deadline = deadline or Deadline()
     _record_unchanged(ctx, c, env)
     agent = ctx["spec"]["name"]
     company = apply_to_agent(c, _settings(env), _platform(env), agent,
                              wait=deadline.wait(POLICY_WAIT, "the company policies"))
-    policy = _policy(c, env, deadline, entry_permit_name(agent), cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
-    _record_unchanged(ctx, c, env)                # once more right before approving: the policy waits take a while
+    name = entry_permit_name(agent)
+    there_before = name in list_policies(c, env["ENGINE_ID"])
+    policy = _policy(c, env, deadline, name, cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
+    try:
+        _record_unchanged(ctx, c, env)            # once more right before approving: the policy waits take a while
+    except Exception as e:                        # also a failed read: an entry permit must not outlive a stop
+        if not there_before:
+            _take_back(c, env, name, policy, e)
+        raise
     r = c.reg.update_registry_record_status(registryId=ctx["registryId"], recordId=ctx["recordId"],
                                             status="APPROVED", statusReason="passed the hosting review")
     return {**ctx, "companyPolicies": company, "entryPolicy": policy, "recordStatus": r["status"]}

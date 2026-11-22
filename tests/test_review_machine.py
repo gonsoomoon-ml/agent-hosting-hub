@@ -70,3 +70,12 @@ def test_each_lambda_state_waits_longer_than_its_function_may_run():
     states = {"Read": "read", "Grant": "grant", "Entry": "entry", "TestCall": "testcall", "Approve": "approve"}
     assert [s for s, step in states.items() if D["States"][s]["TimeoutSeconds"] <= timeout[step]] == []
     assert timeout["approve"] == 900                    # the company policies and the entry permit
+
+# ------------------------------------------------------------------ the review of a new version
+
+def test_read_gets_the_event_its_own_execution_and_the_state_machine():
+    # Read stops a review of a record whose earlier review still runs: it needs to know which execution it is
+    assert D["States"]["Read"]["Parameters"] == {"FunctionName": "x-fn_read", "Payload": {
+        "event.$": "$", "execution.$": "$$.Execution.Id", "machine.$": "$$.StateMachine.Id"}}
+    for name in ("Grant", "Entry", "TestCall", "Approve"):              # the later steps get the state as it is
+        assert D["States"][name]["Parameters"]["Payload.$"] == "$"
