@@ -11,4 +11,4 @@ def test_unknown_tool_is_reported():          # Review Focus 3
 
 def test_missing_keys_and_bad_name_are_reported():
     assert validate({"name": "Bad Name", "tools": []}, CATALOG) == [
-        "missing: team", "missing: framework", "name must match ^[a-z][a-z0-9_]{2,30}$", "tools must not be empty"]
+        "missing: team", "missing: framework", "name must match ^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$", "tools must not be empty"]

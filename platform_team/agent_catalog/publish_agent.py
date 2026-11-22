@@ -74,7 +74,7 @@ def publish(agent_dir: Path, s: Settings, variant: str | None = None, c: Clients
     if not form.is_file():
         raise ValueError(f"missing: {form}")
     app = json.loads(form.read_text(encoding="utf-8"))
-    problems = validate(app, _catalog_tools())
+    problems = validate(app, _catalog_tools(), s)
     if problems:
         raise ValueError("; ".join(problems))
     code = bundle(agent_dir, variant)

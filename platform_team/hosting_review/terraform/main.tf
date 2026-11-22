@@ -29,7 +29,7 @@ locals {
     AGENT_GW_ID    = var.agent_gateway_id
     AGENT_GW_ARN   = var.agent_gateway_arn
     TOOL_GW_ARN    = var.tool_gateway_arn
-    TESTCALL_ROLE  = aws_iam_role.step["testcall"].name # the principal of entry_permit_review
+    TESTCALL_ROLE  = aws_iam_role.step["testcall"].name # the principal of review_permit_<agent>
     EXAMPLE_KEY    = "AKIAIOSFODNN7EXAMPLE"             # the example access key of the AWS documentation
     CATALOG_TOOLS  = join(",", sort(var.catalog_tools))
     AGENT_BOUNDARY = aws_iam_policy.agent_boundary.arn # Grant creates agent roles under this boundary

@@ -12,19 +12,36 @@
 
 | # | 단계 | 누가 돌리나(역할) | 할 수 있는 일 | 할 수 없는 일 |
 |---|---|---|---|---|
-| 1 | Read | Lambda `<prefix>-review-read` (`<prefix>-review-read-role`) | 카탈로그의 record를 읽고(`GetRegistryRecord`) 신청서를 확인한다. 코드가 있는 곳(S3 key와 object version)을 다음 단계에 넘긴다. | 제출된 코드 읽기, record 바꾸기, 정책 만들기 |
+| 1 | Read | Lambda `<prefix>-review-read` (`<prefix>-review-read-role`) | 카탈로그의 record를 읽고(`GetRegistryRecord`) 신청서를 확인한다. 이름에서 만드는 정책 이름과 CLI 프로젝트 이름이 한도에 맞는지도 본다(아래 "정책 이름"). 코드가 있는 곳(S3 key와 object version)을 다음 단계에 넘긴다. | 제출된 코드 읽기, record 바꾸기, 정책 만들기 |
 | 2 | Scan | CodeBuild `<prefix>-review-scan` (`<prefix>-review-scan-role`) | 신청서에 적힌 version의 제출물과 허브의 코드 묶음을 읽는다. 압축을 풀어 모양을 확인하고 `requirements.txt`를 `pip-audit`로 검사한다. 자기 build 로그를 쓴다. | 이것 말고는 모두. 역할, 정책, target, record, SSM에 손댈 수 없다. |
-| 3 | Grant | Lambda `<prefix>-review-grant` (`<prefix>-review-grant-role`) | 에이전트의 실행 역할(`<prefix>-agent-<에이전트>-role`)을 권한 경계 `<prefix>-agent-boundary`를 달아서 만들고, 신청서에 적힌 도구마다 도구 게이트웨이에 `tool_permit`을 건다. | 경계 없이 역할 만들기, 경계를 바꾸거나 떼기, 에이전트 게이트웨이에 정책 걸기, 다른 이름의 역할 만들기, 제출된 코드 읽기 |
+| 3 | Grant | Lambda `<prefix>-review-grant` (`<prefix>-review-grant-role`) | 에이전트의 실행 역할(`<prefix>-agent-<에이전트>-role`)을 권한 경계 `<prefix>-agent-boundary`를 달아서 만들고, 신청서에 적힌 도구마다 도구 게이트웨이에 `tool_<에이전트>_<Target>_<도구>`를 건다. | 경계 없이 역할 만들기, 경계를 바꾸거나 떼기, 에이전트 게이트웨이에 정책 걸기, 다른 이름의 역할 만들기, 제출된 코드 읽기 |
 | 4 | Deploy | CodeBuild `<prefix>-review-deploy` (`<prefix>-review-deploy-role`) | 제출물과 허브의 코드 묶음을 읽고, `agentcore deploy`로 Runtime을 올린다(CDK bootstrap 역할을 맡아서). Runtime ARN을 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에 쓴다. | 정책, target, record, IAM 역할을 직접 만들거나 바꾸기(`bedrock-agentcore`의 action도 `iam:PassRole`도 없다). 아래의 한계를 보라. |
-| 5 | Entry | Lambda `<prefix>-review-entry` (`<prefix>-review-entry-role`) | SSM에서 Runtime ARN을 읽고, 에이전트 게이트웨이에 그 에이전트의 target을 만든다. 시험 호출만 들어오게 하는 `entry_permit_review`와 비밀값을 막는 `guard_secret`을 건다. | 도구 게이트웨이에 정책 걸기, record 승인, 제출된 코드 읽기 |
+| 5 | Entry | Lambda `<prefix>-review-entry` (`<prefix>-review-entry-role`) | SSM에서 Runtime ARN을 읽고, 에이전트 게이트웨이에 그 에이전트의 target을 만든다. 시험 호출만 들어오게 하는 `review_permit_<에이전트>`와 비밀값을 막는 `guard_secret_<에이전트>`를 건다. | 도구 게이트웨이에 정책 걸기, record 승인, 제출된 코드 읽기 |
 | 6 | TestCall | Lambda `<prefix>-review-testcall` (`<prefix>-review-testcall-role`) | 에이전트 게이트웨이로 에이전트를 두 번 부른다. 보통 질문에는 답이 와야 하고, 예시 access key가 든 질문은 거부(403)돼야 한다. 승인 전에 들어올 수 있는 것은 이 역할뿐이다. | 에이전트 게이트웨이를 부르는 것 말고는 모두 |
-| 7 | Approve | Lambda `<prefix>-review-approve` (`<prefix>-review-approve-role`) | record를 다시 읽어 심사를 시작할 때의 신청서와 같은지 확인한다. 같으면 사용자가 들어오게 하는 `entry_permit`을 걸고, record를 `APPROVED`로 바꾼다. 그사이에 바뀌었으면 승인하지 않고 알림으로 빠진다. | 바뀐 record 승인하기, 도구 게이트웨이에 정책 걸기, 역할 만들기, 제출된 코드 읽기 |
+| 7 | Approve | Lambda `<prefix>-review-approve` (`<prefix>-review-approve-role`) | record를 다시 읽어 심사를 시작할 때의 신청서와 같은지 확인한다. 같으면 사용자가 들어오게 하는 `entry_permit_<에이전트>`를 걸고, record를 `APPROVED`로 바꾼다. 그사이에 바뀌었으면 승인하지 않고 알림으로 빠진다. | 바뀐 record 승인하기, 도구 게이트웨이에 정책 걸기, 역할 만들기, 제출된 코드 읽기 |
 
 Lambda 단계는 모두 자기 로그만 쓸 수 있다. 정책을 만드는 단계(Grant, Entry, Approve)는 policy engine에서 정책을 만들고 읽고 지울 수 있고, 그 정책이 가리키는 게이트웨이 하나에만 그 게이트웨이를 확인하는 권한(`ManageResourceScopedPolicy`, `GetGateway`, `ListGatewayTargets`, `GetGatewayTarget`, `InvokeGateway`)을 갖는다. 정책이 게이트웨이를 가리키면 정책을 만드는 쪽에 이 권한이 있어야 한다는 것은 실행해서 찾았다.
 
 Lambda 단계는 제한 시간(가장 길어도 900초)에 끊기기 전에 스스로 멈춘다. 처리기가 제한 시간 60초 전을 마감으로 정하고, 단계의 기다림(정책 하나에 300초, target에 300초, 시험 호출의 재시도)은 저마다의 한도와 마감까지 남은 시간 가운데 짧은 쪽만 기다린다. 마감까지 정책이 `ACTIVE`가 되지 않으면 그 정책을 지우고, 알림에는 Lambda의 시간 초과가 아니라 단계가 낸 오류가 간다.
 
 지휘하는 역할도 둘 있다. state machine의 역할 `<prefix>-sfn-role`은 다섯 Lambda를 부르고, 두 CodeBuild 프로젝트를 시작하고 기다리고, 알림 주제에 보내고, 실행 로그를 쓴다. rule의 역할 `<prefix>-events-role`은 이 state machine을 시작하는 것만 한다.
+
+## 정책 이름
+
+심사는 에이전트마다 네 가지 정책을 만든다. 이름은 `platform_team/company_policy/policy_names.py` 한 곳에서 만들고, 신청서 검사, 심사 단계, 반려가 모두 이 파일을 쓴다.
+
+| 이름 | 만드는 단계 | 하는 일 |
+|---|---|---|
+| `tool_<에이전트>_<Target>_<도구>` | Grant | 에이전트가 이 도구를 부를 수 있다(도구 게이트웨이). |
+| `review_permit_<에이전트>` | Entry | 승인 전에는 심사의 시험 호출만 에이전트를 부를 수 있다. |
+| `guard_secret_<에이전트>` | Entry | 비밀값이 든 질문을 거부한다. |
+| `entry_permit_<에이전트>` | Approve | 사용자가 에이전트를 부를 수 있다. |
+
+예를 들면 `tool_quality_agent_Quality_get_inspection_data`(46자), `review_permit_release_review`(28자)다.
+
+한 이름은 한 종류, 한 에이전트, 한 도구의 것이다. 종류의 앞부분(`tool_`, `review_permit_`, `guard_secret_`, `entry_permit_`)은 어느 것도 다른 것의 앞부분이 아니다. 에이전트 이름은 소문자로 시작하는 소문자와 숫자의 마디를 밑줄 하나로 이은 것이다(`quality_agent`, 3~31자). 카탈로그의 target 이름은 대문자로 시작하고 밑줄이 없다(`Quality`). 그래서 도구 정책의 이름에서 에이전트 이름은 첫 대문자 앞에서 끝난다. 같은 규칙 덕분에 에이전트 이름으로 만드는 CamelCase 이름(CLI 프로젝트, Runtime, 스택, target)도 에이전트마다 다르다.
+
+policy engine은 정책 이름을 48자까지 받는다. AgentCore CLI는 프로젝트 이름(접두어와 CamelCase 에이전트 이름, 예: `hubQualityAgent`)을 23자까지 받는다. 신청서 검사는 둘 가운데 하나라도 넘는 신청서를 거부하고, 에이전트 이름이 몇 자까지 될 수 있는지 알려 준다. 검사는 제출할 때(`publish.sh`)와 심사의 Read 단계에서 돌므로, 넘는 이름으로는 아무것도 만들어지지 않는다. 이름을 자르거나 바꾸지 않는다. 이름은 나중에 화면에 그대로 보인다.
 
 ## 제출함
 
@@ -42,7 +59,7 @@ Grant의 역할은 IAM 역할을 만들고 그 inline 정책을 쓸 수 있다. 
 
 ## 반려
 
-심사가 실패하면 state machine은 실패한 단계에서 멈추고 알림을 보낸다. record는 `PENDING_APPROVAL`에 남고, 앞 단계가 만든 것도 남는다. Grant의 실행 역할과 `tool_permit`, Deploy의 Runtime, Entry의 target과 정책이다. 플랫폼팀은 알림을 읽고 사유를 적어 반려한다. 반려는 record를 `REJECTED`로 바꾸고 남은 것을 지운다.
+심사가 실패하면 state machine은 실패한 단계에서 멈추고 알림을 보낸다. record는 `PENDING_APPROVAL`에 남고, 앞 단계가 만든 것도 남는다. Grant의 실행 역할과 도구 정책, Deploy의 Runtime, Entry의 target과 정책이다. 플랫폼팀은 알림을 읽고 사유를 적어 반려한다. 반려는 record를 `REJECTED`로 바꾸고 남은 것을 지운다.
 
 ```
 platform_team/hosting_review/reject.sh <에이전트> "<사유>"
@@ -58,16 +75,16 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 | 순서 | 무엇 | 만든 단계 | 이름 | 지우는 방법 |
 |---|---|---|---|---|
-| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `entry_permit_review_<에이전트>`, 카탈로그의 도구마다 `tool_permit_<에이전트>_<Target>_<도구>`, `guard_secret_<에이전트>` (이 순서) | `DeletePolicy`. 사라질 때까지 기다린다. |
+| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `review_permit_<에이전트>`, 카탈로그의 도구마다 `tool_<에이전트>_<Target>_<도구>`, `guard_secret_<에이전트>` (이 순서) | `DeletePolicy`. 사라질 때까지 기다린다. |
 | 2 | 에이전트 게이트웨이의 target | Entry | 에이전트 이름의 CamelCase(예: `QualityAgent`) | `DeleteGatewayTarget`. 사라질 때까지 기다린다. |
 | 3 | Runtime이 든 CloudFormation 스택 | Deploy(`agentcore deploy`, CDK) | `AgentCore-<프로젝트>-default` | `DeleteStack`. 사라질 때까지 기다린다(15분까지). `DELETE_FAILED`면 스택 이름과 이유를 말하고 멈춘다. |
 | 4 | Runtime의 로그 그룹 | Runtime 자신 | `/aws/bedrock-agentcore/runtimes/<Runtime 이름>-<ID 10자>-<endpoint>` | `DeleteLogGroup` |
 | 5 | 실행 역할 | Grant | `<prefix>-agent-<에이전트>-role` | inline 정책을 먼저 지우고(`DeleteRolePolicy`) 역할을 지운다(`DeleteRole`). 권한 경계는 역할에 달려 있을 뿐이라 그대로 둔다. |
 | 6 | SSM 값 | Deploy | `/<prefix>/agents/<에이전트>/` 아래 | `DeleteParameter` |
 
-순서에는 이유가 있다. 정책은 들여보내는 정책을 먼저 지우고 막는 `guard_secret`을 마지막에 지운다. 그래서 지우는 동안 막는 정책 없이 들어오는 때가 없다. target은 Runtime을 가리키므로 Runtime보다 먼저 지운다. 로그 그룹은 Runtime이 사라진 뒤에 지워야 다시 생기지 않는다. 실행 역할은 Runtime이 쓰므로 Runtime 다음에 지운다. 역할과 SSM 값은 `make destroy`가 에이전트를 찾는 곳이라 맨 뒤에 둔다. 그래서 중간에 멈춰도 다시 돌리면 그 에이전트를 다시 찾는다.
+순서에는 이유가 있다. 정책은 들여보내는 정책을 먼저 지우고 막는 `guard_secret_<에이전트>`를 마지막에 지운다. 그래서 지우는 동안 막는 정책 없이 들어오는 때가 없다. target은 Runtime을 가리키므로 Runtime보다 먼저 지운다. 로그 그룹은 Runtime이 사라진 뒤에 지워야 다시 생기지 않는다. 실행 역할은 Runtime이 쓰므로 Runtime 다음에 지운다. 역할과 SSM 값은 `make destroy`가 에이전트를 찾는 곳이라 맨 뒤에 둔다. 그래서 중간에 멈춰도 다시 돌리면 그 에이전트를 다시 찾는다.
 
-이름은 모두 그 에이전트 하나의 것으로만 만든다. `Settings`와 심사 단계의 이름 함수(`review_steps.tool_permit_name` 등)로 만들고, 접두어로 넓게 찾아 지우지 않는다. 그래서 `quality`를 반려해도 `quality_agent`의 `tool_permit_quality_agent_...`, target `QualityAgent`, 스택, 로그 그룹, 역할, SSM 값은 그대로다. 예외가 하나 있다. `entry_permit_<에이전트>`와 `entry_permit_review_<에이전트>`는 두 에이전트의 이름이 같아질 수 있다. `review_quality`의 사용자 진입 정책과 `quality`의 시험 호출 정책이 둘 다 `entry_permit_review_quality`다. 그래서 이 두 가지는 정책의 statement가 그 에이전트의 target을 가리킬 때만 지운다.
+이름은 모두 그 에이전트 하나의 것으로만 만든다. `Settings`와 `company_policy/policy_names.py`의 이름 함수로 만들고, 접두어로 넓게 찾아 지우지 않는다. 두 에이전트나 두 종류가 같은 이름을 만드는 일은 없다(위의 "정책 이름"). 그래서 `quality`를 반려해도 `quality_agent`의 `tool_quality_agent_...`, target `QualityAgent`, 스택, 로그 그룹, 역할, SSM 값은 그대로다.
 
 없는 것은 이미 지워진 것으로 본다. 그래서 두 번 돌려도 되고, 두 번째에는 지우는 것이 없다. 그 밖의 오류(권한이 없을 때 같은)가 나면 어느 단계에서 멈췄는지와 그 전에 지운 것을 말하고 멈춘다. 뒤의 단계는 돌지 않는다.
 
@@ -75,7 +92,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 - 제출함의 zip. 무엇이 제출됐는지의 기록이다. bucket은 `terraform destroy`가 지운다.
 - CDK가 계정의 CDK bootstrap bucket에 올린 사본. 이 bucket은 다른 스택과 함께 쓰므로 허브가 지우지 않는다.
-- 카탈로그 record. `REJECTED`와 사유가 남아 팀이 읽고 다시 제출한다.
+- 카탈로그 record. `reject`는 record를 지우지 않는다. `REJECTED`와 사유가 남아 팀이 읽고 다시 제출한다. record를 지우는 것은 `make destroy`뿐이다(아래).
 
 ### `make destroy`
 

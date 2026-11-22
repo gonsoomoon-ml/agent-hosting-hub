@@ -1,0 +1,47 @@
+"""The names of the policies the hosting review makes for an agent, in one place. The form check refuses an
+application whose names would not fit, the review's steps make the policies, and the cleanup removes them.
+
+    entry_permit_<agent>             Approve: users may call the agent (agent gateway)
+    review_permit_<agent>            Entry: only the review's test call may call it before approval
+    tool_<agent>_<Target>_<tool>     Grant: the agent may call this tool (tool gateway)
+    guard_secret_<agent>             Entry: a prompt that holds a secret is refused
+
+One name has one kind, one agent and one tool: no kind's prefix is a prefix of another's; an agent name is
+lower-case segments joined by single underscores (application_form); and a catalog target starts with an upper-case
+letter and holds no underscore, so in a tool permit the agent ends where the first upper-case letter begins.
+Nothing here imports the rest of the hub, so every part can import it.
+"""
+
+MAX_POLICY_NAME = 48            # the policy engine's limit on a policy name (CreatePolicy name, max 48)
+
+KINDS = {                       # kind -> the prefix of its names
+    "entry_permit": "entry_permit_",
+    "review_permit": "review_permit_",
+    "tool": "tool_",
+    "guard_secret": "guard_secret_",
+}
+
+
+def entry_permit_name(agent: str) -> str:
+    return f"{KINDS['entry_permit']}{agent}"
+
+
+def review_permit_name(agent: str) -> str:
+    return f"{KINDS['review_permit']}{agent}"
+
+
+def tool_policy_name(agent: str, tool_id: str) -> str:
+    """tool_<agent>_<Target>_<tool> for the tool ID <Target>___<tool>."""
+    target, tool = tool_id.split("___", 1)
+    return f"{KINDS['tool']}{agent}_{target}_{tool}"
+
+
+def guard_secret_name(agent: str) -> str:
+    return f"{KINDS['guard_secret']}{agent}"
+
+
+def policy_names(agent: str, tools) -> list[str]:
+    """Every policy name the review makes for an agent with these tool IDs, in the order the cleanup removes them:
+    the entry permits first, then the tool permits, the guard last (no call gets in unguarded while they go)."""
+    return [entry_permit_name(agent), review_permit_name(agent),
+            *(tool_policy_name(agent, t) for t in sorted(tools)), guard_secret_name(agent)]

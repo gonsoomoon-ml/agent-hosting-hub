@@ -1,5 +1,5 @@
 {
-  "name": "inspection_helper",
+  "name": "part_inspector",
   "team": "example_team",
   "framework": "plain",
   "description": "Answers questions about part specifications and inspection results.",

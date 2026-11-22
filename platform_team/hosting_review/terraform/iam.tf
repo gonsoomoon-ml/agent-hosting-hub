@@ -133,7 +133,7 @@ data "aws_iam_policy_document" "grant" {
     }
   }
   statement {
-    sid       = "ToolPermits" # ensure_policy: list, create, wait until ACTIVE, delete one that failed
+    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }
@@ -251,7 +251,7 @@ data "aws_iam_policy_document" "entry" {
     resources = ["${local.agentcore}:runtime/${var.prefix}*"]
   }
   statement {
-    sid       = "EntryPolicies" # ensure_policy: entry_permit_review_<agent>, guard_secret_<agent>
+    sid       = "EntryPolicies" # ensure_policy: review_permit_<agent>, guard_secret_<agent>
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }
@@ -264,7 +264,7 @@ data "aws_iam_policy_document" "entry" {
 }
 
 # ------------------------------------------------------------------ 6 TestCall (Lambda)
-# The role's name is the principal of entry_permit_review_<agent>: only this role may enter before approval.
+# The role's name is the principal of review_permit_<agent>: only this role may enter before approval.
 
 data "aws_iam_policy_document" "testcall" {
   statement {

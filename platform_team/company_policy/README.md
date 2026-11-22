@@ -13,4 +13,5 @@
 | `terraform/` | policy engine `<prefix>_pe`. 내보내는 값은 `policy_engine_id`, `policy_engine_arn`. |
 | `cedar_statements.py` | 템플릿에 값을 채워 Cedar 문장을 만든다(도구 permit, 요청 permit, 가드레일 정책). |
 | `policy_templates/` | Cedar 문장의 템플릿. `<account>` 같은 자리에 값을 채운다. Python과 Terraform이 같은 파일을 읽는다. |
+| `policy_names.py` | 호스팅 심사가 에이전트마다 만드는 정책의 이름(`tool_...`, `review_permit_...`, `guard_secret_...`, `entry_permit_...`)과 정책 이름의 한도(48자). 신청서 검사, 심사 단계, 반려가 모두 이 파일을 쓴다(`hosting_review/README.md`의 "정책 이름"). |
 | `policy_engine.py` | 정책을 만들고(`ensure_policy`), 지우고(`drop_policy`), 목록을 읽는다(`list_policies`). 같은 이름의 정책이 있으면 그대로 둔다. |

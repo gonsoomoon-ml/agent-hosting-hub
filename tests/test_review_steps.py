@@ -20,14 +20,14 @@ def test_grant_creates_the_role_and_one_permit_per_tool():
     c = FakeClients()
     out = steps.grant(dict(CTX), c, ENV)
     assert out["roleArn"].endswith(":role/hub-agent-quality_agent-role")
-    assert [p["name"] for p in c.created_policies] == ["tool_permit_quality_agent_Parts_get_part_spec",
-                                                        "tool_permit_quality_agent_Quality_get_inspection_data"]
+    assert [p["name"] for p in c.created_policies] == ["tool_quality_agent_Parts_get_part_spec",
+                                                        "tool_quality_agent_Quality_get_inspection_data"]
     assert 'action == AgentCore::Action::"Parts___get_part_spec"' in c.created_policies[0]["statement"]
 
 def test_policy_conflict_is_kept():                                  # Review Focus 1
-    c = FakeClients(existing_policies={"tool_permit_quality_agent_Parts_get_part_spec"})
+    c = FakeClients(existing_policies={"tool_quality_agent_Parts_get_part_spec"})
     steps.grant(dict(CTX), c, ENV)
-    assert "tool_permit_quality_agent_Parts_get_part_spec" not in [p["name"] for p in c.created_policies]
+    assert "tool_quality_agent_Parts_get_part_spec" not in [p["name"] for p in c.created_policies]
 
 def test_failed_policy_is_removed_and_reason_raised():               # Review Focus 2
     c = FakeClients(policy_status="CREATE_FAILED", policy_reasons=["Insufficient permissions to call gateway"])
@@ -39,7 +39,7 @@ def test_entry_lets_only_the_test_call_in_before_approval():
     c = FakeClients(runtime_arn="arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hub_quality_agent-x")
     out = steps.entry({**CTX, "roleArn": "r"}, c, ENV)
     names = [p["name"] for p in c.created_policies]
-    assert names == ["entry_permit_review_quality_agent", "guard_secret_quality_agent"] and out["target"] == "QualityAgent"
+    assert names == ["review_permit_quality_agent", "guard_secret_quality_agent"] and out["target"] == "QualityAgent"
     assert "assumed-role/hub-review-testcall-role" in c.created_policies[0]["statement"]
 
 def test_testcall_fails_the_review_when_a_secret_is_not_refused():
@@ -80,7 +80,7 @@ def test_a_policy_that_would_outlast_the_lambda_is_dropped_with_the_steps_own_er
     c, t0, lambda_left = FakeClients(policy_status="CREATING"), clock.t, 260     # the policy never becomes ACTIVE
     with pytest.raises(TimeoutError, match="deleted"):
         steps.grant(dict(CTX), c, ENV, deadline=lambda_deadline(lambda_left))
-    assert [p["name"] for p in c.created_policies] == ["tool_permit_quality_agent_Parts_get_part_spec"]
+    assert [p["name"] for p in c.created_policies] == ["tool_quality_agent_Parts_get_part_spec"]
     assert c.deleted_policies == [c.created_policies[0]["id"]]                      # ensure_policy's cleanup ran
     assert clock.t - t0 < lambda_left                                               # before Lambda would stop the step
 

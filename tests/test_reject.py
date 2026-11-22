@@ -6,12 +6,12 @@ from tests.fakes import FakeClients, PLATFORM
 
 def test_reject_removes_what_the_review_made():
     c = FakeClients(record_status="PENDING_APPROVAL",
-                    existing_policies={"tool_permit_quality_agent_Parts_get_part_spec", "tool_permit_release_review_Release_file_review_request"},
+                    existing_policies={"tool_quality_agent_Parts_get_part_spec", "tool_release_review_Release_file_review_request"},
                     existing_roles={"hub-agent-quality_agent-role"})
     out = reject(c, Settings(), PLATFORM, "quality_agent", "jinja2 2.11.2 has published advisories")
     assert out["status"] == "REJECTED" and c.status_reason == "jinja2 2.11.2 has published advisories"
-    assert out["removed"] == ["policy tool_permit_quality_agent_Parts_get_part_spec", "role hub-agent-quality_agent-role"]
-    assert "tool_permit_release_review_Release_file_review_request" in c.policies      # another agent's permit stays
+    assert out["removed"] == ["policy tool_quality_agent_Parts_get_part_spec", "role hub-agent-quality_agent-role"]
+    assert "tool_release_review_Release_file_review_request" in c.policies      # another agent's permit stays
 
 def test_an_approved_agent_is_not_rejected():
     with pytest.raises(ValueError, match="approved agents are stopped, not rejected"):
@@ -61,9 +61,9 @@ def test_every_kind_the_review_makes_is_removed_in_order_and_a_second_run_finds_
     _review(c, SPEC)
     removed = remove_agent(c, Settings(), PLATFORM, "quality_agent")
     assert removed == [
-        "policy entry_permit_quality_agent", "policy entry_permit_review_quality_agent",
-        "policy tool_permit_quality_agent_Parts_get_part_spec",
-        "policy tool_permit_quality_agent_Quality_get_inspection_data", "policy guard_secret_quality_agent",
+        "policy entry_permit_quality_agent", "policy review_permit_quality_agent",
+        "policy tool_quality_agent_Parts_get_part_spec",
+        "policy tool_quality_agent_Quality_get_inspection_data", "policy guard_secret_quality_agent",
         "target QualityAgent", "stack AgentCore-hubQualityAgent-default",
         f"log group /aws/bedrock-agentcore/runtimes/hubQualityAgent_default_agent-{RUNTIME_ID}-DEFAULT",
         "role hub-agent-quality_agent-role", "parameter /hub/agents/quality_agent/runtime_arn"]
@@ -76,8 +76,8 @@ def test_removing_quality_leaves_everything_of_quality_agent():
     _review(c, SPEC)
     _review(c, {**SPEC, "name": "quality"})
     before = _state(c)
-    mine = {"policy entry_permit_quality", "policy entry_permit_review_quality",
-            "policy tool_permit_quality_Parts_get_part_spec", "policy tool_permit_quality_Quality_get_inspection_data",
+    mine = {"policy entry_permit_quality", "policy review_permit_quality",
+            "policy tool_quality_Parts_get_part_spec", "policy tool_quality_Quality_get_inspection_data",
             "policy guard_secret_quality", "target Quality", "stack AgentCore-hubQuality-default",
             f"log group /aws/bedrock-agentcore/runtimes/hubQuality_default_agent-{RUNTIME_ID}-DEFAULT",
             "role hub-agent-quality-role", "parameter /hub/agents/quality/runtime_arn"}
@@ -85,12 +85,11 @@ def test_removing_quality_leaves_everything_of_quality_agent():
     assert _state(c) == before - mine
 
 
-def test_an_entry_permit_of_another_agent_with_the_same_name_stays():
+def test_removing_quality_leaves_everything_of_review_quality():
     c = FakeClients()
-    _review(c, {**SPEC, "name": "review_quality"})      # its users' entry permit is named entry_permit_review_quality
-    assert "entry_permit_review_quality" in c.policies
-    assert remove_agent(c, Settings(), PLATFORM, "quality") == []
-    assert "entry_permit_review_quality" in c.policies
+    _review(c, {**SPEC, "name": "review_quality"})      # under the old names, its entry permit had quality's review name
+    before = _state(c)
+    assert remove_agent(c, Settings(), PLATFORM, "quality") == [] and _state(c) == before
 
 
 def test_a_stack_that_does_not_delete_stops_the_run_and_names_the_stack_and_its_reason():
@@ -135,7 +134,7 @@ def test_reject_again_cleans_again_and_keeps_the_record_as_it_is():
     ("quality_agent", "PENDING_APPROVAL", "x" * 256, "at most 255"),
     ("quality_agent", "DRAFT", "x", "record quality_agent is DRAFT: only a record pending approval"),
     ("quality_agent", None, "x", "no agent record named quality_agent"),
-    ("Bad-Name", "PENDING_APPROVAL", "x", "agent name 'Bad-Name' must match"),
+    ("Bad-Name", "PENDING_APPROVAL", "x", "agent name 'Bad-Name': name must match"),
 ])
 def test_reject_refuses_and_changes_nothing(agent, status, reason, message):
     c = FakeClients(record_status=status, existing_roles={"hub-agent-quality_agent-role"})
@@ -153,7 +152,7 @@ FOREIGN_ROLES = {"deep_insight_runtime_vpc-role", "hub-agents-role", "hub-review
 def test_clean_agents_finds_every_agent_and_leaves_what_the_hub_did_not_make(monkeypatch):
     c = FakeClients(existing_policies={"shared_tool_read"}, existing_roles={"hub-agent-release_review-role", *FOREIGN_ROLES})
     _review(c, SPEC)                                                         # approved, with its record
-    c.parameters["/hub/agents/inspection_helper/runtime_arn"] = "arn"       # only an SSM value is left
+    c.parameters["/hub/agents/part_inspector/runtime_arn"] = "arn"       # only an SSM value is left
     c.parameters["/hub/platform/registry_id"] = "reg-1"
     c.other_records = [{"name": "parts-tools", "recordId": "rec-tools", "recordType": "MCP", "status": "APPROVED"}]
     c.stacks["AgentCore-deepInsight-default"] = {"status": "CREATE_COMPLETE"}
@@ -163,7 +162,7 @@ def test_clean_agents_finds_every_agent_and_leaves_what_the_hub_did_not_make(mon
                "stack AgentCore-deepInsight-default", f"log group {FOREIGN_LOG}", *(f"role {r}" for r in FOREIGN_ROLES)}
     removed = clean_agents(Settings(), c)
     assert _state(c) == foreign
-    assert {"parameter /hub/agents/inspection_helper/runtime_arn", "role hub-agent-release_review-role",
+    assert {"parameter /hub/agents/part_inspector/runtime_arn", "role hub-agent-release_review-role",
             "stack AgentCore-hubQualityAgent-default", "record quality_agent"} <= set(removed)
     assert removed.index("parameter /hub/agents/quality_agent/runtime_arn") < removed.index("record quality_agent")
     assert clean_agents(Settings(), c) == []

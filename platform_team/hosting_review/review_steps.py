@@ -14,6 +14,8 @@ from platform_team.agent_catalog import application_form
 from platform_team.agent_gateway.gateway_targets import ensure_runtime_target
 from platform_team.company_policy import cedar_statements as cedar
 from platform_team.company_policy.policy_engine import ensure_policy
+from platform_team.company_policy.policy_names import (entry_permit_name, guard_secret_name, review_permit_name,
+                                                       tool_policy_name)
 from platform_team.shared_code.aws_helpers import Deadline, signed_post
 from platform_team.shared_code.config import Settings
 
@@ -29,23 +31,6 @@ def _settings(env: dict) -> Settings:
     return Settings(region=env["HUB_REGION"], prefix=env["PREFIX"])
 
 
-# The names of the policies the review makes for an agent. agent_cleanup removes them by these same functions.
-def tool_permit_name(agent: str, tool_id: str) -> str:
-    return f"tool_permit_{agent}_{tool_id.replace('___', '_')}"
-
-
-def entry_review_name(agent: str) -> str:
-    return f"entry_permit_review_{agent}"
-
-
-def guard_name(agent: str) -> str:
-    return f"guard_secret_{agent}"
-
-
-def entry_name(agent: str) -> str:
-    return f"entry_permit_{agent}"
-
-
 def _policy(c, env: dict, deadline: Deadline, name: str, statement: str, guardrail: bool = False) -> str:
     """ensure_policy, waiting no longer than the step has left."""
     return ensure_policy(c, env["ENGINE_ID"], name, statement, guardrail=guardrail,
@@ -57,7 +42,7 @@ def read(event: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     d = event["detail"]
     rec = c.reg.get_registry_record(registryId=d["registryId"], recordId=d["registryRecordId"])
     spec = json.loads(rec["descriptors"]["custom"]["data"])
-    problems = application_form.validate(spec, set(filter(None, env["CATALOG_TOOLS"].split(","))))
+    problems = application_form.validate(spec, set(filter(None, env["CATALOG_TOOLS"].split(","))), _settings(env))
     problems += [f"missing: {k}" for k in ("code_key", "code_version") if not spec.get(k)]
     if problems:
         raise ValueError("; ".join(problems))
@@ -102,7 +87,7 @@ def grant(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
                                 Description="hosting review: agent execution role",
                                 PermissionsBoundary=env["AGENT_BOUNDARY"])["Role"]["Arn"]
     c.iam.put_role_policy(RoleName=role, PolicyName="agent", PolicyDocument=json.dumps(perms))
-    made = [_policy(c, env, deadline, tool_permit_name(agent, tool),
+    made = [_policy(c, env, deadline, tool_policy_name(agent, tool),
                     cedar.tool_permit(env["ACCOUNT"], role, tool, env["TOOL_GW_ARN"]))
             for tool in ctx["spec"]["tools"]]
     return {**ctx, "roleArn": arn, "toolPolicies": made}
@@ -116,9 +101,9 @@ def entry(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     target = s.target_name(agent)
     target_id = ensure_runtime_target(c, env["AGENT_GW_ID"], target, runtime_arn,
                                       wait=deadline.wait(TARGET_WAIT, f"target {target}"))
-    review = _policy(c, env, deadline, entry_review_name(agent),
+    review = _policy(c, env, deadline, review_permit_name(agent),
                      cedar.entry_permit(target, env["AGENT_GW_ARN"], env["ACCOUNT"], env["TESTCALL_ROLE"]))
-    guard = _policy(c, env, deadline, guard_name(agent), cedar.guard_secret(target, env["AGENT_GW_ARN"]),
+    guard = _policy(c, env, deadline, guard_secret_name(agent), cedar.guard_secret(target, env["AGENT_GW_ARN"]),
                     guardrail=True)
     return {**ctx, "runtimeArn": runtime_arn, "target": target, "targetId": target_id,
             "reviewPolicy": review, "guardPolicy": guard}
@@ -169,7 +154,7 @@ def approve(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
     """7 Let users in and mark the record approved, only if the record still holds the reviewed application."""
     deadline = deadline or Deadline()
     _record_unchanged(ctx, c)
-    policy = _policy(c, env, deadline, entry_name(ctx["spec"]["name"]),
+    policy = _policy(c, env, deadline, entry_permit_name(ctx["spec"]["name"]),
                      cedar.entry_permit(ctx["target"], env["AGENT_GW_ARN"]))
     _record_unchanged(ctx, c)                     # once more right before approving: the policy wait takes a while
     r = c.reg.update_registry_record_status(registryId=ctx["registryId"], recordId=ctx["recordId"],

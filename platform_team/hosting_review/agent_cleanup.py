@@ -11,8 +11,8 @@ remove_agent removes one agent's things (reject_agent calls it). clean_agents re
 catalog record, approved agents too (make destroy calls it): an agent role keeps Terraform from deleting the
 permissions boundary policy, and a registry that still has records cannot be deleted.
 
-Every name comes from Settings and the review's own naming functions for that one agent, never from a pattern
-wider than it. A thing that is not there is already gone, so running again is safe; any other error stops the
+Every name comes from Settings and company_policy.policy_names for that one agent, never from a pattern wider
+than it. A thing that is not there is already gone, so running again is safe; any other error stops the
 run and says which step failed.
 
 Kept on purpose: the submitted zip in the submission bucket (the record of what was submitted; the bucket goes with
@@ -23,12 +23,11 @@ import sys
 
 from botocore.exceptions import ClientError
 
-from platform_team.agent_catalog.application_form import NAME_PATTERN
+from platform_team.agent_catalog.application_form import name_problems
 from platform_team.agent_catalog.catalog_records import drop_record, records
 from platform_team.agent_gateway.gateway_targets import drop_target, targets
-from platform_team.company_policy.cedar_statements import entry_action
 from platform_team.company_policy.policy_engine import drop_policy, list_policies
-from platform_team.hosting_review import review_steps as steps
+from platform_team.company_policy.policy_names import policy_names
 from platform_team.sample_tools.tool_schema import TARGETS
 from platform_team.shared_code.aws_helpers import Clients, wait_status
 from platform_team.shared_code.config import Settings
@@ -63,8 +62,9 @@ def cause(e: Exception) -> str:
 
 def check_name(agent: str) -> str:
     """The agent's name, if it is one the application form allows; every name below is built from it."""
-    if not isinstance(agent, str) or not re.fullmatch(NAME_PATTERN, agent):
-        raise ValueError(f"agent name {agent!r} must match {NAME_PATTERN}")
+    problems = name_problems(agent)
+    if problems:
+        raise ValueError(f"agent name {agent!r}: {'; '.join(problems)}")
     return agent
 
 
@@ -85,21 +85,12 @@ def _delete(call, *gone: str) -> bool:
 
 # ================================================================== one agent
 
-def policy_names(agent: str) -> list[str]:
-    """Every policy name the review can make for this agent, from the review's naming functions and the catalog's
-    tools (Read refuses any other tool): the entry permits first, the tool permits, the guard last, so no call gets
-    in unguarded while they go."""
-    tools = sorted(f"{target}___{t['name']}" for target, tools in TARGETS.items() for t in tools)
-    return [steps.entry_name(agent), steps.entry_review_name(agent),
-            *(steps.tool_permit_name(agent, t) for t in tools), steps.guard_name(agent)]
+def _catalog_tools() -> list[str]:
+    """Every tool the review can permit (Read refuses any other)."""
+    return sorted(f"{target}___{t['name']}" for target, tools in TARGETS.items() for t in tools)
 
 
-def _statement(policy: dict) -> str:
-    definition = policy.get("definition") or {}
-    return (definition.get("cedar") or definition.get("policy") or {}).get("statement", "")
-
-
-def _remove_policies(c, s: Settings, p: Platform, agent: str) -> list[str]:
+def _remove_policies(c, p: Platform, agent: str) -> list[str]:
     if not p.engine_id:
         return []                                       # no policy engine, no policies
     try:
@@ -108,15 +99,10 @@ def _remove_policies(c, s: Settings, p: Platform, agent: str) -> list[str]:
         if _code(e) == "ResourceNotFoundException":
             return []                                   # the engine is gone, and its policies with it
         raise
-    # entry_permit_<a> and entry_permit_review_<b> are one name when a is review_<b>, the only names two agents can
-    # share. Those two are removed only when their statement names this agent's target.
-    shared, action = {steps.entry_name(agent), steps.entry_review_name(agent)}, entry_action(s.target_name(agent))
     removed = []
-    for name in policy_names(agent):
+    for name in policy_names(agent, _catalog_tools()):     # entry permits first, the guard last
         policy = found.get(name)
-        if not policy or (name in shared and action not in _statement(policy)):
-            continue
-        if drop_policy(c, p.engine_id, policy["policyId"]):
+        if policy and drop_policy(c, p.engine_id, policy["policyId"]):
             removed.append(f"policy {name}")
     return removed
 
@@ -197,7 +183,7 @@ def remove_agent(c, s: Settings, p: Platform, agent: str) -> list[str]:
         stack, runtime = s.stack_name(agent), s.runtime_name(agent)
     except ValueError:              # no CLI project name for this agent: Deploy could not have made a stack or Runtime
         stack = runtime = None
-    plan = [("policies", lambda: _remove_policies(c, s, p, agent)),
+    plan = [("policies", lambda: _remove_policies(c, p, agent)),
             ("gateway target", lambda: _remove_target(c, s, p, agent)),
             ("Runtime stack", lambda: _remove_stack(c, stack) if stack else []),
             ("Runtime log groups", lambda: _remove_log_groups(c, runtime) if runtime else []),
@@ -240,7 +226,7 @@ def agent_names(c, s: Settings, p: Platform) -> list[str]:
             name = role["RoleName"]
             if name.startswith(head) and name.endswith(tail) and len(name) > len(head) + len(tail):
                 found.add(name[len(head):len(name) - len(tail)])
-    return sorted(a for a in found if re.fullmatch(NAME_PATTERN, a))
+    return sorted(a for a in found if not name_problems(a))
 
 
 def _remove_record(c, p: Platform, agent: str) -> list[str]:
