@@ -39,6 +39,17 @@ def test_names_of_different_agents_kinds_and_tools_never_meet():
     assert len({n for n, _ in made}) == len(made)
 
 
+def test_the_tool_permit_pattern_finds_one_agents_permits_and_no_others():     # final review M-3: the cleanup uses it
+    agents = ["quality", "quality_agent", "review_quality", "review", "permit", "tool", "entry", "entry_permit",
+              "guard", "secret", "agent", "parts", "ab_c", "a_bc", "abc"]
+    made = {a: names.policy_names(a, sorted(CATALOG)) for a in agents}
+    for agent in agents:
+        pattern = re.compile(names.tool_policy_pattern(agent))
+        found = {n for a in agents for n in made[a] if pattern.fullmatch(n)}
+        assert found == {names.tool_policy_name(agent, t) for t in CATALOG}, agent
+    assert re.fullmatch(names.tool_policy_pattern("quality_agent"), "tool_quality_agent_Retired_get_old_data")
+
+
 def test_catalog_targets_start_upper_case_and_hold_no_underscore():
     assert all(re.fullmatch(r"[A-Z][A-Za-z0-9]*", target) for target in TARGETS)
     assert all(re.fullmatch(TOOL_PATTERN, tool) for tool in CATALOG)

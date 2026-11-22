@@ -79,7 +79,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 | 순서 | 무엇 | 만든 단계 | 이름 | 지우는 방법 |
 |---|---|---|---|---|
-| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `review_permit_<에이전트>`, 카탈로그의 도구마다 `tool_<에이전트>_<Target>_<도구>`, `guard_secret_<에이전트>` (이 순서) | `DeletePolicy`. 사라질 때까지 기다린다. |
+| 1 | 정책 | Approve, Entry, Grant | `entry_permit_<에이전트>`, `review_permit_<에이전트>`, 그 에이전트의 `tool_<에이전트>_<Target>_<도구>` 모두, `guard_secret_<에이전트>` (이 순서). 도구 정책은 이름의 모양으로 찾으므로, 그 사이에 카탈로그에서 빠진 도구의 정책도 지운다 | `DeletePolicy`. 사라질 때까지 기다린다. |
 | 2 | 에이전트 게이트웨이의 target | Entry | 에이전트 이름의 CamelCase(예: `QualityAgent`) | `DeleteGatewayTarget`. 사라질 때까지 기다린다. |
 | 3 | Runtime이 든 CloudFormation 스택 | Deploy(`agentcore deploy`, CDK) | `AgentCore-<프로젝트>-default` | `DeleteStack`. 사라질 때까지 기다린다(15분까지). `DELETE_FAILED`면 스택 이름과 이유를 말하고 멈춘다. |
 | 4 | Runtime의 로그 그룹 | Runtime 자신 | `/aws/bedrock-agentcore/runtimes/<Runtime 이름>-<ID 10자>-<endpoint>` | `DeleteLogGroup` |
@@ -102,11 +102,11 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 ### `make destroy`
 
-`make destroy`는 확인을 받은 뒤, `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 역할은 허브의 권한 경계를 단 것만 에이전트로 본다. 이름은 맞지만 경계가 다르거나 없는 역할은 허브의 것이 아니므로 `skipped <역할>: not made by this hub`를 찍고 건너뛴다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지우고 `terraform destroy`를 돌린다.
+`make destroy`는 확인을 받은 뒤, `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 역할은 허브의 권한 경계를 단 것만 에이전트로 본다. 이름은 맞지만 경계가 다르거나 없는 역할은 허브의 것이 아니므로 `skipped <역할>: not made by this hub`를 찍고 건너뛴다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지운다. 그다음 `python -m platform_team.hosting_review.agent_cleanup --records`가 Registry에 남은 record를 종류와 이름에 상관없이 모두 지우고, 지운 record를 하나씩 찍는다(`removed record <이름> (<종류>, <상태>)`). AGENT가 아닌 record나 이름 규칙에 맞지 않는 record는 위의 정리가 에이전트로 찾지 못하는데, 남아 있으면 `terraform destroy`가 Registry에서 실패하기 때문이다. Registry는 허브의 것이고 바로 다음에 지워진다. 이 단계는 `make destroy`에만 있다. `reject`와 `remove_agent`는 record를 지우지 않는다. 그다음 `terraform destroy`를 돌린다.
 
 ### 한계
 
-- 심사가 돌고 있는 동안에는 반려하지 않는다. 아직 도는 단계가 지운 것을 다시 만든다. 알림이나 Step Functions 콘솔에서 실행이 `FAILED`로 멈춘 것을 확인한 뒤 반려한다.
+- 심사가 돌고 있는 동안에는 반려할 수 없다. 아직 도는 단계가 지운 것을 다시 만들기 때문이다. `reject`는 그 record의 심사가 `RUNNING`이면 아무것도 바꾸지 않고 거부한다(`a review of record <에이전트> is still running (<실행 이름>): reject after it stops`). 알림이나 Step Functions 콘솔에서 실행이 `FAILED`로 멈춘 것을 확인한 뒤 반려한다.
 - 이미 승인된 에이전트의 새 버전이 심사에서 떨어졌을 때는 반려하지 않는다. 새 버전도 같은 이름의 역할, 스택, target, 정책을 쓰므로 반려하면 운영 중인 에이전트까지 지워진다. 새 버전의 흐름은 계획 2가 다룬다.
 
 ## 파일
@@ -122,4 +122,4 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 | `buildspec_scan.yml`, `submission_check.py` | 검사 단계. 제출물의 압축을 안전하게 풀고 모양과 `requirements.txt`를 확인한 뒤 `pip-audit`를 돌린다. |
 | `buildspec_deploy.yml`, `deploy_build.py`, `runtime_skeleton/` | 배포 단계. 플랫폼의 배포 설정에 제출된 코드를 넣어 `agentcore deploy`를 돌린다(`runtime_skeleton/README.md`). |
 | `reject.sh`, `reject_agent.py` | 반려. record를 `REJECTED`로 바꾸고 심사가 만든 것을 지운다(위의 "반려"). |
-| `agent_cleanup.py` | 심사가 에이전트 하나에 만든 것을 지운다(`remove_agent`). `make destroy`는 모든 에이전트에 부른다(`clean_agents`). |
+| `agent_cleanup.py` | 심사가 에이전트 하나에 만든 것을 지운다(`remove_agent`). `make destroy`는 모든 에이전트에 부르고(`clean_agents`), 마지막에 Registry에 남은 record를 모두 지운다(`--records`, `remove_records`). |

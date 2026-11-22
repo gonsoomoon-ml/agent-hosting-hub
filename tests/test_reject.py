@@ -356,3 +356,61 @@ def test_the_commands_read_the_env_file_as_make_does_and_never_print_it(tmp_path
     r = run()
     assert r.stdout == "prefix=fromdotenv region=us-west-2\n"              # .env wins, as in make
     assert "do-not-print" not in r.stdout + r.stderr
+
+
+# ------------------------------------------------------------------ final review M-3: what the hub made and did not find
+
+def test_a_tool_permit_for_a_tool_no_longer_in_the_catalog_is_removed_too():
+    gone = "tool_quality_agent_Retired_get_old_data"                   # its tool left TARGETS after it was granted
+    others = {"tool_quality_agent_x_Parts_get_part_spec", "tool_quality_Parts_get_part_spec",
+              "tool_release_review_Release_file_review_request", "shared_tool_read"}
+    c = FakeClients(existing_policies={gone, "tool_quality_agent_Parts_get_part_spec", *others})
+    removed = remove_agent(c, Settings(), PLATFORM, "quality_agent")
+    assert removed == ["policy tool_quality_agent_Parts_get_part_spec", f"policy {gone}"]
+    assert set(c.policies) == others                                   # other agents' permits and the shared one stay
+
+
+def test_reject_refuses_while_a_review_of_the_record_is_running():
+    c = FakeClients(existing_roles={ROLE})
+    c.running = [("review-of-quality-agent", "rec-1")]
+    before = _state(c)
+    with pytest.raises(ValueError, match="a review of record quality_agent is still running "
+                                         r"\(review-of-quality-agent\): reject after it stops"):
+        reject(c, Settings(), PLATFORM, "quality_agent", "jinja2 2.11.2 has published advisories")
+    assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and _state(c) == before
+
+
+def test_a_review_of_another_record_does_not_stop_reject():
+    c = FakeClients(existing_roles={ROLE})
+    c.running = [("review-of-release-review", "rec-2")]
+    assert reject(c, Settings(), PLATFORM, "quality_agent", "a reason")["removed"] == [f"role {ROLE}"]
+
+
+def test_teardown_removes_every_record_left_in_the_registry_and_says_each(monkeypatch):
+    c = FakeClients(record_status="APPROVED", record_spec={**SPEC, "name": "Bad-Name"})
+    c.other_records = [{"name": "parts-tools", "recordId": "rec-tools", "recordType": "MCP", "status": "APPROVED"},
+                       {"name": "notes", "recordId": "rec-notes", "recordType": "CUSTOM", "status": "DRAFT"}]
+    monkeypatch.setattr(agent_cleanup, "load", lambda s, c=None: PLATFORM)
+    said = []
+    removed = agent_cleanup.remove_records(Settings(), c, say=said.append)
+    assert removed == ["record notes (CUSTOM, DRAFT)", "record parts-tools (MCP, APPROVED)",
+                       "record quality_agent (AGENT, APPROVED)"]
+    assert said == [f"removed {r}" for r in removed] and _state(c) == set()
+    assert agent_cleanup.remove_records(Settings(), c, say=said.append) == []
+
+
+def test_teardown_of_records_needs_no_platform(monkeypatch):
+    def nothing_deployed(s, c=None):
+        raise RuntimeError("nothing under /hub/platform/: run `make deploy` first")
+    monkeypatch.setattr(agent_cleanup, "load", nothing_deployed)
+    assert agent_cleanup.remove_records(Settings(), FakeClients(), say=pytest.fail) == []
+
+
+def test_make_destroy_removes_the_records_last_after_the_agents_and_the_seed():
+    r = subprocess.run(["make", "-n", "destroy", "AUTO_APPROVE=1"], cwd=ROOT, capture_output=True, text=True)
+    lines = r.stdout.splitlines()
+    def at(text):
+        return next(i for i, line in enumerate(lines) if text in line)
+    agents, seed = at("platform_team.hosting_review.agent_cleanup ||"), at("seed_catalog --remove")
+    records, destroy = at("agent_cleanup --records"), at("destroy -auto-approve")
+    assert agents < seed < records < destroy

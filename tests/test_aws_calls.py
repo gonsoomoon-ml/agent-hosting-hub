@@ -34,7 +34,7 @@ def aws(monkeypatch, tmp_path):
     monkeypatch.setattr("time.sleep", lambda seconds: None)                 # a poll answered DELETE_IN_PROGRESS
     c = Clients(boto3.Session(region_name=REGION, aws_access_key_id="AKIAIOSFODNN7EXAMPLE",
                               aws_secret_access_key="example"))
-    stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "cfn", "logs", "iam", "ssm", "reg")}
+    stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "cfn", "logs", "iam", "ssm", "reg", "sfn")}
     for st in stubs.values():
         st.activate()
     yield c, stubs
@@ -123,10 +123,20 @@ REMOVED = ["policy entry_permit_quality_agent", "target QualityAgent", f"stack {
            f"role {ROLE}", f"parameter {PARAM}"]
 
 
+MACHINE = f"arn:aws:states:{REGION}:{ACCOUNT}:stateMachine:hub-review"
+
+
 def test_reject_calls_match_the_service_models(aws):
     c, stubs = aws
     stubs["reg"].add_response("list_registry_records", {"registryRecords": [_record("PENDING_APPROVAL")]},
                               {"registryId": REG, "maxResults": 100})
+    other = f"arn:aws:states:{REGION}:{ACCOUNT}:execution:hub-review:other"          # final review M-3: is a review running?
+    stubs["sfn"].add_response("list_executions", {"executions": [{
+        "executionArn": other, "stateMachineArn": MACHINE, "name": "other", "status": "RUNNING", "startDate": NOW}]},
+        {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
+    stubs["sfn"].add_response("describe_execution", {
+        "executionArn": other, "stateMachineArn": MACHINE, "name": "other", "status": "RUNNING", "startDate": NOW,
+        "input": json.dumps({"detail": {"registryId": REG, "registryRecordId": "rec999999999"}})}, {"executionArn": other})
     _ownership_checks(stubs)                                                 # reject checks before the status changes
     stubs["reg"].add_response("update_registry_record_status", {
         "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
@@ -134,7 +144,8 @@ def test_reject_calls_match_the_service_models(aws):
         {"registryId": REG, "recordId": REC, "status": "REJECTED", "statusReason": "why"})
     _ownership_checks(stubs)                                                 # remove_agent checks again
     _removal(stubs)
-    assert reject_agent.reject(c, S, P, AGENT, "why") == {"status": "REJECTED", "removed": REMOVED}
+    with_machine = Platform(**{**P.__dict__, "machine_arn": MACHINE})
+    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {"status": "REJECTED", "removed": REMOVED}
 
 
 def test_clean_agents_calls_match_the_service_models(aws, monkeypatch):

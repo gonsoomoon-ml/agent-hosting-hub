@@ -35,7 +35,8 @@ seed:
 # Outside Terraform's state: what the hosting review made for each agent (policies, gateway target, Runtime stack and
 # logs, execution role, SSM values), the agents' catalog records and the seeded record. An agent role keeps the
 # boundary policy from being deleted, and a registry with records cannot be deleted: they all go first, the agents
-# before the seed. If removing the agents fails, terraform destroy does not run.
+# before the seed. Then `agent_cleanup --records` deletes any record still in the hub's registry (another type, a name
+# the rules refuse) and prints each one. If a step fails, terraform destroy does not run.
 # So the question comes before anything changes: the destroy plan, then yes or no. AUTO_APPROVE=1 skips it.
 # Last, check_cleanup lists what of the hub is still in the account (it reads only) and ends with `still present: ...`.
 destroy: package
@@ -46,6 +47,7 @@ ifneq ($(AUTO_APPROVE),1)
 endif
 	@$(CLEAN) || { echo "Destroy stopped before terraform destroy: the agents were not all removed (see the line above). Fix that and run make destroy again."; exit 1; }
 	$(SEED) --remove
+	$(CLEAN) --records
 	$(TF) destroy -auto-approve
 	uv run python e2e_checks/check_cleanup.py
 

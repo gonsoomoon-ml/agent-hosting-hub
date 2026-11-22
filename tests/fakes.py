@@ -265,13 +265,26 @@ class _Reg(_Client):
         return {"status": status}
 
 
+class _Sfn(_Client):
+    """Step Functions: `running` holds (execution name, record ID) for each review still RUNNING."""
+
+    def list_executions(self, stateMachineArn, statusFilter=None, **kw):
+        return {"executions": [{"executionArn": f"{stateMachineArn}:{n}", "name": n, "status": "RUNNING"}
+                               for n, _ in self.o.running if statusFilter in (None, "RUNNING")]}
+
+    def describe_execution(self, executionArn):
+        name = executionArn.rsplit(":", 1)[-1]
+        return {"executionArn": executionArn, "name": name, "status": "RUNNING",
+                "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": dict(self.o.running)[name]}})}
+
+
 class FakeClients:
     """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, cfn, logs).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     Recorded: created_policies (id, name, statement), deleted_policies, policies, roles, inline (role -> inline
     policy names), targets, posts (url, body), record_status, status_reason. Tests may also fill stacks, log_groups,
-    parameters and other_records."""
+    parameters, other_records and running (the reviews still running)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
 
@@ -292,8 +305,9 @@ class FakeClients:
         self.stacks, self.log_groups, self.parameters, self.other_records = {}, set(), {}, []
         self.stack_delete_reason, self.stack_delete_polls = stack_delete_reason, stack_delete_polls
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
+        self.running = []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
-        self.cfn, self.logs = _Cfn(self), _Logs(self)
+        self.cfn, self.logs, self.sfn = _Cfn(self), _Logs(self), _Sfn(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):

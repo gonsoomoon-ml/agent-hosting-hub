@@ -11,6 +11,7 @@ lower-case segments joined by single underscores (application_form); and a catal
 letter and holds no underscore, so in a tool permit the agent ends where the first upper-case letter begins.
 Nothing here imports the rest of the hub, so every part can import it.
 """
+import re
 
 MAX_POLICY_NAME = 48            # the policy engine's limit on a policy name (CreatePolicy name, max 48)
 
@@ -34,6 +35,12 @@ def tool_policy_name(agent: str, tool_id: str) -> str:
     """tool_<agent>_<Target>_<tool> for the tool ID <Target>___<tool>."""
     target, tool = tool_id.split("___", 1)
     return f"{KINDS['tool']}{agent}_{target}_{tool}"
+
+
+def tool_policy_pattern(agent: str) -> str:
+    """Every tool permit name of this agent, whatever the tool (also one no longer in the catalog), as a pattern to
+    full-match. It is exact for one agent: the agent name holds no upper-case letter and a target starts with one."""
+    return re.escape(f"{KINDS['tool']}{agent}_") + r"[A-Z][A-Za-z0-9]*_[a-z][a-z0-9_]*"
 
 
 def guard_secret_name(agent: str) -> str:

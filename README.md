@@ -73,11 +73,12 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ## `make destroy`가 지우는 것과 남기는 것
 
-`make destroy`는 지울 것의 계획을 보여 주고 `yes`를 받은 뒤(이 실행은 `AUTO_APPROVE=1`로 묻지 않고 돌렸다) 세 번에 나눠 지운다.
+`make destroy`는 지울 것의 계획을 보여 주고 `yes`를 받은 뒤(이 실행은 `AUTO_APPROVE=1`로 묻지 않고 돌렸다) 네 번에 나눠 지운다.
 
 1. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`), 에이전트 게이트웨이의 target, Runtime이 든 CloudFormation 스택 `AgentCore-<prefix><에이전트>-default`, Runtime의 로그 그룹, 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 Runtime과 함께 사라졌다.
 2. `make seed`가 넣은 공유 도구 record.
-3. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, SSM 값, 로그 그룹.
+3. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 1에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
+4. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, SSM 값, 로그 그룹.
 
 마지막에 `e2e_checks/check_cleanup.py`가 접두어로 시작하는 자원이 남았는지 종류마다 찾아보고 `still present: nothing`(또는 남은 종류)을 찍는다. 읽기만 한다.
 
@@ -91,7 +92,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 - 배포 단계의 권한: CDK bootstrap 역할을 거치므로 배포 단계에서는 역할을 나눈 효과가 약하다. [호스팅 심사, 알려진 한계](platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
 - 시험 호출은 HTTP 상태만 보고 답의 내용은 보지 않는다. [호스팅 심사, 시험 호출](platform_team/hosting_review/README.md#알려진-한계-시험-호출)
-- 반려의 한계: 심사가 도는 동안이나 이미 승인된 에이전트의 새 버전에는 반려를 쓰지 않는다. [호스팅 심사, 반려의 한계](platform_team/hosting_review/README.md#한계)
+- 반려의 한계: 심사가 도는 동안에는 반려가 거부한다. 이미 승인된 에이전트의 새 버전에는 반려를 쓰지 않는다. [호스팅 심사, 반려의 한계](platform_team/hosting_review/README.md#한계)
 - 개발팀 역할의 카탈로그 권한은 모든 record에 걸린다. [개발팀의 권한](platform_team/dev_access/README.md#카탈로그-권한의-범위)
 - 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않는다. [런타임 뼈대, requirements.txt 규칙](platform_team/hosting_review/runtime_skeleton/README.md#requirementstxt-규칙)
 - `release_review`의 판정은 모델 호출 한 번이다. [release_review, 한계](dev_team/release_review/README.md#한계)

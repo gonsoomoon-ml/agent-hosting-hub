@@ -1,6 +1,7 @@
 """Remove what the hosting review made for an agent. None of it is in Terraform's state.
 
-    python -m platform_team.hosting_review.agent_cleanup        # make destroy, before terraform destroy
+    python -m platform_team.hosting_review.agent_cleanup              # make destroy, first
+    python -m platform_team.hosting_review.agent_cleanup --records    # make destroy, right before terraform destroy
 
 What the review makes for an agent: Grant makes the execution role (with its inline policy) and one tool permit per
 tool; Deploy (the AgentCore CLI, with CDK) makes a CloudFormation stack that holds the Runtime and writes the Runtime
@@ -9,7 +10,9 @@ the guard; Approve makes the users' entry permit.
 
 remove_agent removes one agent's things (reject_agent calls it). clean_agents removes every agent's things and its
 catalog record, approved agents too (make destroy calls it): an agent role keeps Terraform from deleting the
-permissions boundary policy, and a registry that still has records cannot be deleted.
+permissions boundary policy, and a registry that still has records cannot be deleted. remove_records (--records,
+make destroy only, after the agents and the seed) deletes whatever record is still in the hub's registry and says
+each one: a record of another type, or with a name the rules refuse, is not an agent the steps above find.
 
 Every name comes from Settings and company_policy.policy_names for that one agent, never from a pattern wider
 than it. A name is not proof enough for the role and the stack, so before anything is deleted check_agent reads
@@ -31,9 +34,9 @@ from platform_team.agent_catalog.application_form import name_problems
 from platform_team.agent_catalog.catalog_records import drop_record, records
 from platform_team.agent_gateway.gateway_targets import drop_target, targets
 from platform_team.company_policy.policy_engine import drop_policy, list_policies
-from platform_team.company_policy.policy_names import policy_names
-from platform_team.sample_tools.tool_schema import TARGETS
-from platform_team.shared_code.aws_helpers import Clients, wait_status
+from platform_team.company_policy.policy_names import (entry_permit_name, guard_secret_name, review_permit_name,
+                                                       tool_policy_pattern)
+from platform_team.shared_code.aws_helpers import Clients, all_items, wait_status
 from platform_team.shared_code.config import RUNTIME_ID_TAIL, Settings
 from platform_team.shared_code.hub_state import Platform, load
 
@@ -180,12 +183,10 @@ def check_agent(c, s: Settings, agent: str) -> None:
 
 # ================================================================== one agent
 
-def _catalog_tools() -> list[str]:
-    """Every tool the review can permit (Read refuses any other)."""
-    return sorted(f"{target}___{t['name']}" for target, tools in TARGETS.items() for t in tools)
-
-
 def _remove_policies(c, p: Platform, agent: str) -> list[str]:
+    """The agent's policies, entry permits first and the guard last. Its tool permits are found by the shape of their
+    names (tool_policy_pattern), not by the catalog of this checkout: a permit for a tool since removed from the
+    catalog goes too."""
     if not p.engine_id:
         return []                                       # no policy engine, no policies
     try:
@@ -194,8 +195,11 @@ def _remove_policies(c, p: Platform, agent: str) -> list[str]:
         if _code(e) == "ResourceNotFoundException":
             return []                                   # the engine is gone, and its policies with it
         raise
+    tool_permit = re.compile(tool_policy_pattern(agent))
+    names = [entry_permit_name(agent), review_permit_name(agent),
+             *sorted(n for n in found if tool_permit.fullmatch(n)), guard_secret_name(agent)]
     removed = []
-    for name in policy_names(agent, _catalog_tools()):     # entry permits first, the guard last
+    for name in names:
         policy = found.get(name)
         if policy and drop_policy(c, p.engine_id, policy["policyId"]):
             removed.append(f"policy {name}")
@@ -373,20 +377,65 @@ def clean_agents(s: Settings, c=None, say=print) -> list[str]:
     return removed
 
 
-def main() -> int:
-    hub = "this hub"
+# ================================================================== every record left (make destroy only)
+
+def remove_records(s: Settings, c=None, say=print) -> list[str]:
+    """Teardown only: make destroy runs it after clean_agents and after the seed removed its own record, right before
+    terraform destroy deletes the registry (which fails while the registry holds a record). It deletes every record
+    still in the hub's registry, whatever its type or name (an MCP record, a name the rules refuse), and says each
+    one as it goes. reject and remove_agent never call it. Returns "record <name> (<type>, <status>)" per record."""
+    c = c or Clients.for_settings(s)
+    try:
+        p = load(s, c)
+    except RuntimeError:            # no platform values in SSM: no catalog to look in
+        return []
+    if not p.registry_id:
+        return []
+    try:
+        left = sorted(all_items(c.reg.list_registry_records, registryId=p.registry_id, maxResults=100),
+                      key=lambda r: (r.get("name", ""), r["recordId"]))
+    except ClientError as e:
+        if _code(e) == "ResourceNotFoundException":
+            return []               # the registry is gone, and its records with it
+        raise
+    removed = []
+    for r in left:
+        line = f"record {r.get('name')} ({r.get('recordType')}, {r.get('status')})"
+        try:
+            drop_record(c, p.registry_id, r["recordId"])
+        except Exception as e:
+            raise CleanupFailed(f"removing the catalog {line}", e, removed) from e
+        say(f"removed {line}")
+        removed.append(line)
+    return removed
+
+
+USAGE = "usage: python -m platform_team.hosting_review.agent_cleanup [--records]"
+
+
+def main(argv: list[str] | None = None) -> int:
+    """No argument: every agent's things and records (clean_agents). --records: every record still in the
+    registry (remove_records), the last step of make destroy before terraform destroy."""
+    argv = list(argv or [])
+    if argv not in ([], ["--records"]):
+        print(USAGE)
+        return 2
+    hub, what = "this hub", "catalog records" if argv else "agents"
     try:
         s = Settings.from_env()
         hub = f"prefix {s.prefix}, region {s.region}"
-        removed = clean_agents(s)
+        if argv:
+            removed = remove_records(s)                  # says each record as it goes
+        else:
+            removed = clean_agents(s)
+            for line in removed:
+                print(f"removed {line}")
     except Exception as e:          # say what failed in one line, no traceback
-        print(f"agents not cleaned ({hub}): {e if isinstance(e, CleanupFailed) else cause(e)}")
+        print(f"{what} not cleaned ({hub}): {e if isinstance(e, CleanupFailed) else cause(e)}")
         return 1
-    for line in removed:
-        print(f"removed {line}")
-    print(f"agents cleaned ({hub}): {len(removed)} removed")
+    print(f"{what} cleaned ({hub}): {len(removed)} removed")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
