@@ -10,12 +10,20 @@
 
 `deploy_build.py`가 아래 순서로 한다.
 
-1. 제출물을 카탈로그 기록에 적힌 object version으로 S3에서 받아 푼다. 위험한 경로가 있거나 `main.py`, `requirements.txt`가 없으면 멈춘다.
+1. 제출물을 카탈로그 기록에 적힌 object version으로 S3에서 받아 푼다. 위험한 경로가 있거나, `main.py`나 `requirements.txt`가 없거나, `requirements.txt`가 아래 규칙에 맞지 않으면 멈춘다.
 2. 고정한 CLI(`@aws/agentcore@1.0.3`)로 프로젝트를 만든다: `agentcore create --name <프로젝트> --template agent-python-minimal --skip-install --skip-git`. 프로젝트 이름은 접두어와 에이전트 이름을 이은 것이다(예: `hubQualityAgent`). 이 프로젝트에서 쓰는 것은 CDK 앱(`agentcore/cdk/`)이다.
-3. 프로젝트의 `app/agent/`를 비우고 제출물로 채운다.
-4. `requirements.txt`로 `app/agent/pyproject.toml`을 쓴다. CLI의 CodeZip 패키징은 코드 위치에 있는 `pyproject.toml`의 의존성을 설치하기 때문이다. 제출물에 있던 `pyproject.toml`과 `uv.lock`은 지운다. 그래서 설치되는 의존성은 검사 단계가 검사한 `requirements.txt`의 것과 같다.
+3. 프로젝트의 `app/agent/`를 비우고 제출물로 채운다. 제출물에 있던 `pyproject.toml`, `uv.lock`, `uv.toml`, `.python-version`은 거부하지 않고 지운다. 무엇을 어디서 설치할지는 플랫폼이 정한다. buildspec도 `UV_NO_CONFIG=1`을 두어 uv가 설정 파일을 하나도 읽지 않게 한다.
+4. `requirements.txt`로 `app/agent/pyproject.toml`을 쓴다. CLI의 CodeZip 패키징은 코드 위치에 있는 `pyproject.toml`의 의존성을 설치하기 때문이다.
 5. `agentcore.json.tmpl`을 채워 `agentcore/agentcore.json`을 쓴다. 들어가는 값은 프로젝트 이름, 허가 단계가 만든 실행 역할(`ROLE_ARN`), 환경 변수 `HUB_REGION`, `TOOL_GATEWAY_URL`, `MODEL_ID`, `AGENT_NAME`이다.
 6. `agentcore/cdk/`에서 `npm install`을 하고 `agentcore deploy --json --skip-bootstrap`을 돌린다. 스택 `AgentCore-<프로젝트>-default`가 없으면 만들고, 있으면 갱신한다. 갱신하면 Runtime에 새 버전이 생긴다.
 7. 출력에서 Runtime ARN(키에 `RuntimeArnOutput`이 들어 있는 값)을 읽어 SSM `/<접두어>/agents/<에이전트>/runtime_arn`에 쓴다. 다음 단계(Entry)가 이 값을 읽는다.
+
+## `requirements.txt` 규칙
+
+`requirements.txt`에는 패키지 색인에 있는 패키지를 이름으로 적는다. 이름, extras, 버전, 환경 표시(`; python_version ...`)를 쓸 수 있다. pip 옵션(`-r`, `-e`, `--index-url`, `--hash`)과 직접 참조(`pkg @ URL`, URL, `file:`, 로컬 경로)는 검사 단계에서 거부된다. 배포 build는 같은 규칙(`submission_check.parse_requirements`)으로 한 번 더 확인한다.
+
+그래서 배포가 설치하는 패키지는 검사 단계가 검사한 줄에 적힌 패키지다. 두 단계 모두 기본 색인(PyPI)에서 wheel만 받고, sdist의 `setup.py`는 실행하지 않는다. 다만 범위로 적은 버전과 간접 의존성은 두 단계가 따로 고른다. 그 사이에 새 버전이 나오면 설치되는 것이 검사한 것과 다를 수 있다. 정확히 같게 하려면 `==`로 고정한다.
+
+## OTel
 
 `instrumentation.enableOtel`은 `false`다. 켜 두면 CLI가 진입점을 `opentelemetry-instrument main.py`로 감싸는데, 이 명령은 `aws-opentelemetry-distro` 패키지가 있어야 돈다. 팀의 `requirements.txt`에는 보통 이 패키지가 없다.

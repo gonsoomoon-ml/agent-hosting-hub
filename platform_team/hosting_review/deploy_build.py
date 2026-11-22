@@ -5,16 +5,18 @@ Runtime ARN to SSM, where the Entry step reads it.
     python -m platform_team.hosting_review.deploy_build
 
 The team supplies code and requirements.txt only; the platform owns the deploy configuration:
-  1 read the submission at the object version the catalog record names, unpack it and check its layout
-  2 `agentcore create` makes a CDK project; its app/agent/ is replaced by the submission, and the platform
-    writes agentcore/agentcore.json (runtime_skeleton/agentcore.json.tmpl) and app/agent/pyproject.toml
+  1 read the submission at the object version the catalog record names, unpack it, and check its layout and its
+    requirements.txt with the scan's rules (submission_check)
+  2 `agentcore create` makes a CDK project; its app/agent/ becomes the submission without its own build settings
+    (prepare_code), and the platform writes app/agent/pyproject.toml and agentcore/agentcore.json
+    (runtime_skeleton/agentcore.json.tmpl)
   3 `agentcore deploy`. The stack is AgentCore-<project>-default; when it exists, the Runtime gets a new version
   4 the Runtime ARN from the deploy output goes to SSM /<prefix>/agents/<agent>/runtime_arn
 
 Environment: AGENT, CODE_KEY, CODE_VERSION, ROLE_ARN per run; BUCKET, PREFIX, TOOL_GW_URL, MODEL_ID on the
-project; AWS_REGION from CodeBuild; AGENTCORE_CLI (the CLI's path) from the buildspec.
-The pure parts (render_config, template_values, pyproject_from, runtime_arn) have unit tests; main() wires them to
-the shell commands, S3 and SSM. Nothing calls AWS at import time.
+project; AWS_REGION from CodeBuild; AGENTCORE_CLI (the CLI's path) and UV_NO_CONFIG=1 from the buildspec.
+The pure parts (render_config, template_values, pyproject_from, prepare_code, runtime_arn) have unit tests; main()
+wires them to the shell commands, S3 and SSM. Nothing calls AWS at import time.
 """
 import json
 import os
@@ -27,7 +29,7 @@ from pathlib import Path
 
 from botocore.exceptions import ClientError
 
-from platform_team.hosting_review.submission_check import check_layout, unpack
+from platform_team.hosting_review.submission_check import check_layout, check_requirements, parse_requirements, unpack
 from platform_team.shared_code.aws_helpers import Clients
 from platform_team.shared_code.config import Settings
 
@@ -37,6 +39,9 @@ CODE_LOCATION = Path("app", "agent")      # the template's codeLocation
 REQUIRED_ENV = ("AGENT", "CODE_KEY", "CODE_VERSION", "ROLE_ARN", "BUCKET", "PREFIX", "TOOL_GW_URL", "MODEL_ID",
                 "AWS_REGION")
 ARN_KEY = "RuntimeArnOutput"              # the stack output key is ...RuntimeArnOutput<CDK hash>
+# Files in the code location that would change what uv installs or with which Python. The buildspec also sets
+# UV_NO_CONFIG=1, so uv reads no config file at all.
+PLATFORM_OWNED = ("pyproject.toml", "uv.lock", "uv.toml", ".python-version")
 
 
 # ================================================================== pure parts
@@ -73,19 +78,34 @@ def render_config(template: str, values: dict[str, str]) -> str:
 def pyproject_from(requirements: str, name: str) -> str:
     """A minimal pyproject.toml whose dependencies are the requirement lines of requirements.txt.
     The CLI's CodeZip packager installs the dependencies of the pyproject.toml it finds in the code location.
-    pip options (-r, --index-url, --hash, ...) have no place there, so they are refused."""
-    deps = []
-    for raw in requirements.replace("\\\n", " ").splitlines():
-        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
-        if not line:
-            continue
-        if re.search(r"(^|\s)--?[A-Za-z]", line):
-            raise ValueError(f"requirements.txt: a pip option is not supported in the deploy build: {raw.strip()}")
-        deps.append(" ".join(line.split()))
+    The lines follow the scan's rule (submission_check.parse_requirements); a line it refuses raises ValueError."""
+    deps, problems = parse_requirements(requirements)
+    if problems:
+        raise ValueError("; ".join(problems))
     lines = ["# Written by the deploy build from the submission's requirements.txt. The platform owns this file.",
              "[project]", f"name = {json.dumps(name)}", 'version = "0.1.0"', 'requires-python = ">=3.13"',
              "dependencies = [", *(f"    {json.dumps(d)}," for d in deps), "]"]
     return "\n".join(lines) + "\n"
+
+
+def prepare_code(src: Path, code: Path, pyproject: str) -> list[str]:
+    """Make the code location the unpacked submission plus the platform's pyproject.toml. The submission's own
+    build settings (PLATFORM_OWNED: what uv would read in that folder) are deleted, not refused: the platform
+    decides what is installed and from where. Returns the names deleted."""
+    shutil.rmtree(code, ignore_errors=True)
+    shutil.copytree(src, code)
+    dropped = []
+    for name in sorted(PLATFORM_OWNED):
+        path = code / name
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+        else:
+            continue
+        dropped.append(name)
+    (code / "pyproject.toml").write_text(pyproject)
+    return dropped
 
 
 def _json_documents(text: str) -> list:
@@ -172,26 +192,17 @@ def main() -> None:
         unpack(work / "submission.zip", src)
     except ValueError as e:
         raise SystemExit(f"deploy refused: {e}") from None
-    problems = check_layout(src)
+    problems = check_layout(src) + check_requirements(src)        # the scan's rules, checked again here
     if problems:
         raise SystemExit(f"deploy refused: {'; '.join(problems)}")
-    try:
-        pyproject = pyproject_from((src / "requirements.txt").read_text(), project)
-    except ValueError as e:
-        raise SystemExit(f"deploy refused: {e}") from None
+    pyproject = pyproject_from((src / "requirements.txt").read_text(), project)
     say(f"submission unpacked: {where}")
 
     # 2 the CDK project from the pinned CLI; the submission is its code; the platform writes the configuration
     run([cli, "create", "--name", project, "--template", CLI_TEMPLATE, "--skip-install", "--skip-git", "--json"], work)
     root = work / project
-    code = root / CODE_LOCATION
-    shutil.rmtree(code, ignore_errors=True)
-    shutil.copytree(src, code)
-    for own in ("pyproject.toml", "uv.lock"):      # dependencies come from requirements.txt, the file the scan audited
-        if (code / own).exists():
-            say(f"the submission's {own} is replaced by the platform's")
-            (code / own).unlink()
-    (code / "pyproject.toml").write_text(pyproject)
+    for name in prepare_code(src, root / CODE_LOCATION, pyproject):
+        say(f"the submission's {name} is deleted: the platform decides what is installed")
     (root / "agentcore" / "agentcore.json").write_text(render_config(TEMPLATE.read_text(), template_values(env)))
     say(f"{CODE_LOCATION}/pyproject.toml and agentcore/agentcore.json written by the platform")
 

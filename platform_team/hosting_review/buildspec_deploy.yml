@@ -2,6 +2,8 @@
 # The install phase sets up Node 22, Python 3.13, uv and the pinned AgentCore CLI (the commands Task 0's spike ran).
 # The build phase gets the hub's code bundle and runs deploy_build.py: it reads the submission, makes the CLI project
 # from the platform's runtime_skeleton, runs `agentcore deploy` under ROLE_ARN, and writes the Runtime ARN to SSM.
+# UV_NO_CONFIG: the CLI's packager runs uv inside the team's code folder, and uv reads no config file from there
+# (a uv.toml could otherwise choose the package index). deploy_build.py also deletes such files from the code.
 # Variables per run: AGENT, CODE_KEY, CODE_VERSION, ROLE_ARN. On the project: BUCKET, PREFIX, TOOL_GW_URL, MODEL_ID.
 version: 0.2
 env:
@@ -9,6 +11,7 @@ env:
   variables:
     AGENTCORE_CLI: /tmp/cli/node_modules/.bin/agentcore
     AGENTCORE_TELEMETRY_DISABLED: "1"
+    UV_NO_CONFIG: "1"
 phases:
   install:
     runtime-versions:

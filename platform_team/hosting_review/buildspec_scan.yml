@@ -1,6 +1,10 @@
 # The scan step of the hosting review (CodeBuild). It reads the team's submission at the object version the
-# catalog record names, refuses a broken one (unsafe paths, no main.py or requirements.txt), and runs pip-audit
-# on its requirements.txt. A known vulnerability fails the build, and the review stops before anything is granted.
+# catalog record names, refuses a broken one (unsafe paths, no main.py or requirements.txt, a requirements line
+# that is not a package on the index), and runs pip-audit on its requirements.txt. A known vulnerability fails the
+# build, and the review stops before anything is granted.
+# No Python runs from the submission's folder: pip-audit runs in isolated mode (-I) from an empty folder, so no
+# file of the submission can stand in for pip-audit or pip. PIP_ONLY_BINARY keeps pip from running the setup.py
+# of an sdist, as the deploy's packager does (--only-binary :all:).
 # Variables per run: AGENT, CODE_KEY, CODE_VERSION. On the project: BUCKET, PREFIX.
 version: 0.2
 env:
@@ -19,4 +23,4 @@ phases:
       - rm -rf /tmp/hub && unzip -q /tmp/hub.zip -d /tmp/hub
       - aws s3api get-object --bucket "$BUCKET" --key "$CODE_KEY" --version-id "$CODE_VERSION" /tmp/submission.zip > /dev/null
       - PYTHONPATH=/tmp/hub python3 -m platform_team.hosting_review.submission_check /tmp/submission.zip /tmp/src
-      - cd /tmp/src && python3 -m pip_audit -r requirements.txt --progress-spinner off
+      - 'mkdir -p /tmp/audit && cd /tmp/audit && PIP_ONLY_BINARY=:all: python3 -I -m pip_audit -r /tmp/src/requirements.txt --progress-spinner off'

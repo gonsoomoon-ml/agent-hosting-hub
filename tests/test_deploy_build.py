@@ -1,4 +1,4 @@
-import json, tomllib, pytest
+import json, re, tomllib, pytest, yaml
 from platform_team.hosting_review import deploy_build as d
 
 ROLE = "arn:aws:iam::111122223333:role/hub-agent-quality_agent-role"
@@ -52,7 +52,30 @@ def test_pyproject_lists_what_requirements_txt_lists():
     assert doc["project"]["name"] == "hubQualityAgent" and doc["project"]["requires-python"] == ">=3.13"
     assert doc["project"]["dependencies"] == ["boto3==1.40.0", 'requests>=2 ; python_version >= "3.10"', "urllib3 <3"]
 
-def test_pyproject_refuses_pip_options():
-    for line in ("--index-url https://example.com/simple", "-r more.txt", "boto3==1.40.0 --hash=sha256:abc"):
-        with pytest.raises(ValueError, match="pip option.*not supported"):
+def test_pyproject_follows_the_scan_rule_for_requirements():
+    for line in ("--index-url https://example.com/simple", "pkg @ https://example.com/pkg.whl", "./local_pkg"):
+        with pytest.raises(ValueError, match=r"^requirements\.txt: .+: " + re.escape(line) + "$"):
             d.pyproject_from(f"requests\n{line}\n", "hubQualityAgent")
+
+def test_prepare_code_keeps_the_team_code_and_drops_its_build_settings(tmp_path):
+    src, code = tmp_path / "submission", tmp_path / "project" / "app" / "agent"
+    for name, text in {"main.py": "team code", "requirements.txt": "boto3\n", "helpers/util.py": "X = 1\n",
+                       "pyproject.toml": "[project]\nname = 'team'\n", "uv.lock": "version = 1\n",
+                       "uv.toml": "[pip]\nindex-url = 'http://127.0.0.1:9/evil-simple'\n", ".python-version": "3.8\n"}.items():
+        (src / name).parent.mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(text)
+    code.mkdir(parents=True)
+    (code / "main.py").write_text("from the CLI template")
+    (code / "README.md").write_text("from the CLI template")
+    dropped = d.prepare_code(src, code, "# the platform's pyproject\n")
+    assert dropped == [".python-version", "pyproject.toml", "uv.lock", "uv.toml"]
+    assert sorted(p.relative_to(code).as_posix() for p in code.rglob("*") if p.is_file()) == [
+        "helpers/util.py", "main.py", "pyproject.toml", "requirements.txt"]
+    assert (code / "main.py").read_text() == "team code"
+    assert (code / "pyproject.toml").read_text() == "# the platform's pyproject\n"
+
+def test_the_deploy_build_reads_no_uv_config_and_sends_no_telemetry():
+    doc = yaml.safe_load((d.TEMPLATE.parents[1] / "buildspec_deploy.yml").read_text())
+    variables = doc["env"]["variables"]
+    assert variables["UV_NO_CONFIG"] == "1" and variables["AGENTCORE_TELEMETRY_DISABLED"] == "1"
+    assert all(isinstance(c, str) for phase in doc["phases"].values() for c in phase.get("commands", []))
