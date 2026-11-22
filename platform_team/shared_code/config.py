@@ -19,7 +19,7 @@ ENV_LOADED = "HUB_ENV_LOADED"
 
 def env_file_updates(env, path: Path) -> dict[str, str]:
     """What to set in the environment `env` from the .env file at `path`: the hub's three values it holds (they win
-    over the shell's; the last line of a name counts), and ENV_LOADED. Nothing when ENV_LOADED is set already (make, or
+    over the shell's; the last non-empty line of a name counts; `NAME=` with no value is the same as no line), and ENV_LOADED. Nothing when ENV_LOADED is set already (make, or
     a caller that read .env). No other line of the file is read, so credentials in it are never exported."""
     if env.get(ENV_LOADED):
         return {}
@@ -27,7 +27,7 @@ def env_file_updates(env, path: Path) -> dict[str, str]:
     if path.is_file():
         for line in path.read_text().splitlines():
             name, sep, value = line.partition("=")
-            if sep and name in HUB_VARIABLES:
+            if sep and name in HUB_VARIABLES and value:      # an empty value is no value, as for make
                 found[name] = value
     return {**found, ENV_LOADED: "1"}
 

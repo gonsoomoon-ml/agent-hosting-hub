@@ -3,9 +3,10 @@
 # values as TF_VAR_region, TF_VAR_prefix and TF_VAR_model_id. Where they come from (README, ".env"): a value on the
 # make command line, else the line NAME=value in .env (see .env.example), else the shell, else the default below.
 # Only these three lines of .env are read; nothing else in it becomes a make variable or is exported.
+# A line with no value (DEMO_PREFIX=) is the same as no line.
 # HUB_ENV_LOADED=1 tells the commands make runs (publish.sh, e2e_hosting.py) that the values are chosen already.
 HUB_VARIABLES := AWS_REGION DEMO_PREFIX MODEL_ID
-dotenv = $(if $(wildcard .env),$(shell sed -n 's/^$(1)=//p' .env | tail -n 1))
+dotenv = $(if $(wildcard .env),$(shell sed -n 's/^$(1)=\(.\)/\1/p' .env | tail -n 1))
 $(foreach v,$(HUB_VARIABLES),$(if $(call dotenv,$(v)),$(eval $(v) := $(call dotenv,$(v)))))
 AWS_REGION ?= us-west-2
 DEMO_PREFIX ?= hub
@@ -49,7 +50,7 @@ destroy: package
 	$(TF) init -input=false
 ifneq ($(AUTO_APPROVE),1)
 	$(TF) plan -destroy
-	@printf "Destroy everything above, every hosted agent with its catalog record, and the seeded catalog record? Only 'yes' is accepted: "; read answer; \
+	@printf "Destroy everything above, every hosted agent with its catalog record, the seeded catalog record, and every other record left in the catalog? Only 'yes' is accepted: "; read answer; \
 	  [ "$$answer" = yes ] || { echo "Destroy cancelled."; exit 1; }
 endif
 	@$(CLEAN) || { echo "Destroy stopped before terraform destroy: the agents were not all removed (see the line above). Fix that and run make destroy again."; exit 1; }

@@ -14,13 +14,15 @@ the hub's prefix, so hub_name cannot tell it from another registry's; it goes wi
 a listing by hand showed it gone).
 Printed output masks the account ID.
 """
+import os
 import re
 import sys
+from pathlib import Path
 
 from botocore.exceptions import ClientError
 
 from platform_team.shared_code.aws_helpers import Clients, all_items, mask
-from platform_team.shared_code.config import Settings
+from platform_team.shared_code.config import Settings, env_file_updates
 
 
 def hub_name(s: Settings, name: str) -> bool:
@@ -78,7 +80,12 @@ def leftovers(s: Settings, c: Clients) -> dict[str, list[str]]:
     return out
 
 
+REPO = Path(__file__).resolve().parents[1]
+
+
 def main() -> int:
+    # .env by the same rule as make and the commands (README, ".env"): before the settings are read
+    os.environ.update(env_file_updates(os.environ, REPO / ".env"))
     s = Settings.from_env()
     c = Clients.for_settings(s)
     account = c.account

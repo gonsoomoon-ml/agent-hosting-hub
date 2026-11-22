@@ -50,7 +50,7 @@ def parse_tool_response(text: str) -> str:
     doc = next((d for d in docs if isinstance(d, dict) and ("result" in d or "error" in d)), None)
     if doc is None:
         return "ERROR: unexpected answer: " + text[:300]
-    if doc.get("error"):
+    if "error" in doc:
         error = doc["error"]          # an object with a message, as JSON-RPC says; anything else is shown as it is
         return "ERROR: " + str(error.get("message") if isinstance(error, dict) else error)[:500]
     result = doc.get("result") or {}

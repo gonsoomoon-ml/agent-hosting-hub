@@ -1,5 +1,8 @@
 # tests/test_e2e_scripts.py  (the pure parts of the scripts in e2e_checks/: they decide what a check line says)
 import datetime as dt
+import pathlib
+
+import pytest
 
 from e2e_checks import check_cleanup, e2e_hosting as e2e
 from platform_team.shared_code.config import Settings
@@ -132,3 +135,12 @@ def test_check_9_sees_every_kind_a_passed_review_makes():
     _review(c, SPEC)                                 # what a passed review leaves for quality_agent
     assert sorted(e2e.nothing_made(c, Settings(), PLATFORM, "quality_agent")) == sorted(e2e.MADE_BY_A_REVIEW)
     assert e2e.nothing_made(c, Settings(), PLATFORM, "release_review") == {}
+
+
+@pytest.mark.parametrize("script", ["check_platform.py", "check_cleanup.py"])
+def test_a_check_script_reads_the_env_file_before_it_builds_its_settings(script):
+    """Each calls os.environ.update(env_file_updates(os.environ, REPO / ".env")) before Settings.from_env(), as e2e_hosting.py does."""
+    text = (pathlib.Path(__file__).resolve().parents[1] / "e2e_checks" / script).read_text()
+    main = text[text.index("def main()"):]
+    assert 'os.environ.update(env_file_updates(os.environ, REPO / ".env"))' in main
+    assert main.index("env_file_updates(") < main.index("Settings.from_env()")

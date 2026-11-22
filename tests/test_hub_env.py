@@ -91,6 +91,34 @@ def test_the_e2e_script_reads_env_by_the_same_rule(tmp_path):
     assert config.env_file_updates({**shell, "HUB_ENV_LOADED": "1"}, dotenv) == {}     # make (or a caller) read it
 
 
+def test_an_empty_line_in_the_env_file_is_no_value_for_any_reader(tmp_path):
+    """shell DEMO_PREFIX=fromshell, .env line `DEMO_PREFIX=`: make, publish.sh, reject.sh and env_file_updates all use fromshell."""
+    repo, env = _copy(tmp_path)
+    (repo / ".env").write_text("DEMO_PREFIX=\nMODEL_ID=model-from-dotenv\n")
+    for command in COMMANDS:
+        out = _run(COMMANDS[command](repo), repo, env, cwd=tmp_path if command != "make publish" else repo)
+        assert "prefix=fromshell" in out and "model=model-from-dotenv" in out, command
+    updates = config.env_file_updates(env, repo / ".env")
+    assert "DEMO_PREFIX" not in updates and updates["MODEL_ID"] == "model-from-dotenv"
+    # an empty line after a filled one does not erase it: an empty line is the same as no line
+    (repo / ".env").write_text("DEMO_PREFIX=fromdotenv\nDEMO_PREFIX=\n")
+    assert config.env_file_updates(env, repo / ".env")["DEMO_PREFIX"] == "fromdotenv"
+    for command in COMMANDS:
+        out = _run(COMMANDS[command](repo), repo, env, cwd=tmp_path if command != "make publish" else repo)
+        assert "prefix=fromdotenv" in out, command
+
+
+def test_nothing_else_from_the_env_file_reaches_stdout_or_stderr(tmp_path):
+    """.env holds SOME_TOKEN=do-not-export: the value is in neither stream of publish.sh, reject.sh or `make publish`."""
+    repo, env = _copy(tmp_path)
+    (repo / ".env").write_text(DOTENV)
+    for command in COMMANDS:
+        r = subprocess.run(COMMANDS[command](repo), cwd=tmp_path if command != "make publish" else repo, env=env,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "do-not-export" not in r.stdout + r.stderr, command
+
+
 def test_the_e2e_script_applies_the_rule_before_it_reads_its_settings():
     text = (ROOT / "e2e_checks" / "e2e_hosting.py").read_text()
     main = text[text.index("def main()"):]
@@ -136,3 +164,9 @@ def test_make_destroy_initialises_terraform_before_it_plans_or_destroys(approve)
     init = next(i for i, line in enumerate(lines) if "init -input=false" in line)
     first_tf = next(i for i, line in enumerate(lines) if re.search(r"terraform -chdir=\S+ (plan|destroy)", line))
     assert init < first_tf
+
+
+def test_make_destroy_asks_about_the_catalog_records_too():
+    r = subprocess.run(["make", "-n", "destroy", "AUTO_APPROVE=0"], cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
+    assert "and every other record left in the catalog" in r.stdout
