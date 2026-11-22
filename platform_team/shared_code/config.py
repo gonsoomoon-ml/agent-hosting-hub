@@ -47,15 +47,15 @@ class Settings:
 
     @property
     def topic(self) -> str:
-        return f"{self.prefix}-review"
+        return f"{self.prefix}-alerts"
 
     @property
     def machine(self) -> str:
-        return f"{self.prefix}-review-flow"
+        return f"{self.prefix}-review"
 
     @property
     def rule(self) -> str:
-        return f"{self.prefix}-registry-events"
+        return f"{self.prefix}-on-submit"
 
     def role(self, key: str) -> str:
         return f"{self.prefix}-{key}-role"
@@ -85,6 +85,4 @@ class Settings:
         return f"{self.prefix}-{account}-{self.region}"
 
     def ssm(self, *parts: str) -> str:
-        # "agents" is the registry-facing word; the stored path uses the owner folder name.
-        mapped = ["dev_team" if i == 0 and p == "agents" else p for i, p in enumerate(parts)]
-        return "/".join([f"/{self.prefix}", *mapped])
+        return "/".join([f"/{self.prefix}", *parts])
