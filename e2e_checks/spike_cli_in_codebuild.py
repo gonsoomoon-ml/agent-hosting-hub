@@ -27,6 +27,7 @@ import re
 import sys
 import time
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import boto3
@@ -36,6 +37,7 @@ REGION = os.environ.get("AWS_REGION", "us-west-2")
 P = "hubspike"
 EXEC_ROLE, DEPLOY_ROLE, PROJECT = f"{P}-agent-role", f"{P}-deploy-role", f"{P}-deploy"
 STACK = f"AgentCore-{P}-default"                 # the CLI names the stack AgentCore-<project>-<target>
+RUNTIME_NAME = f"{P}_default_agent"              # and the Runtime <project>_<target>_<runtime name> (seen in build 1)
 LOG_GROUP = f"/aws/codebuild/{PROJECT}"
 CLI_VERSION = "1.0.3"
 TIME_BOX = 5                                     # builds
@@ -287,15 +289,52 @@ def test() -> None:
 
 # ================================================================== down
 
-def asset_keys() -> set[str]:
-    """The CDK asset objects (code zip, template) the builds uploaded, as the post_build phase printed them."""
-    keys = set()
+def versions(key: str) -> list[dict]:
+    """Every version and delete marker of one key in the CDK bucket (the bucket keeps versions)."""
+    return [o for page in s3.get_paginator("list_object_versions").paginate(Bucket=CDK_BUCKET, Prefix=key)
+            for o in page.get("Versions", []) + page.get("DeleteMarkers", []) if o["Key"] == key]
+
+
+def template_assets(key: str, template: dict) -> set[str]:
+    """If this CDK template declares the spike's Runtime, its own key and the key of the code zip it names."""
+    for r in template.get("Resources", {}).values():
+        props = r.get("Properties", {}) if r.get("Type") == "AWS::BedrockAgentCore::Runtime" else {}
+        if props.get("AgentRuntimeName") == RUNTIME_NAME:
+            code = props.get("AgentRuntimeArtifact", {}).get("CodeConfiguration", {}).get("Code", {}).get("S3", {}).get("Prefix")
+            return {key, code} if isinstance(code, str) else {key}
+    return set()
+
+
+def asset_keys() -> tuple[set[str], str]:
+    """The CDK asset objects (code zip, template) the builds uploaded, and where the keys came from.
+    First the SPIKE_ASSET lines that post_build printed into the build log. When there are none (the log group is gone
+    after a first `down`, or the project was deleted), search the CDK bucket: a .json asset written after the stack was
+    first created (stack records stay listed after deletion) that declares the Runtime RUNTIME_NAME, and the code zip
+    that template names. An asset uploaded without its template is not found that way."""
+    keys: set[str] = set()
     try:
         for page in logs.get_paginator("filter_log_events").paginate(logGroupName=LOG_GROUP, filterPattern='"SPIKE_ASSET"'):
             keys |= {m.group(1) for e in page["events"] for m in [re.search(r"SPIKE_ASSET (\S+)", e["message"])] if m}
-    except ClientError:
-        pass
-    return keys
+        if keys:
+            return keys, f"the build log {LOG_GROUP}"
+        source = f"the build log {LOG_GROUP} has no SPIKE_ASSET lines"
+    except ClientError as e:
+        source = f"the build log {LOG_GROUP} cannot be read ({e.response['Error']['Code']})"
+    created = [s["CreationTime"] for page in cfn.get_paginator("list_stacks").paginate() for s in page["StackSummaries"]
+               if s["StackName"] == STACK]
+    if not created:
+        return keys, f"{source}; no record of the stack {STACK}, so the CDK bucket was not searched"
+    since = min(created) - timedelta(minutes=15)                 # the CDK Toolkit uploads the assets just before the stack
+    for page in s3.get_paginator("list_object_versions").paginate(Bucket=CDK_BUCKET):
+        for o in page.get("Versions", []):
+            if o["Key"].endswith(".json") and o["LastModified"] >= since:
+                try:
+                    body = json.loads(s3.get_object(Bucket=CDK_BUCKET, Key=o["Key"], VersionId=o["VersionId"])["Body"].read())
+                except (ClientError, ValueError):
+                    continue
+                if isinstance(body, dict):
+                    keys |= template_assets(o["Key"], body)
+    return keys, f"{source}; searched the CDK bucket for templates of {RUNTIME_NAME} since {since:%Y-%m-%d %H:%M} UTC"
 
 
 def quiet(fn, what=""):
@@ -313,7 +352,10 @@ def runtimes() -> list[dict]:
 
 def down() -> None:
     say(f"== down ({REGION})")
-    keys = asset_keys()
+    keys, source = asset_keys()
+    say(f"CDK asset keys: {len(keys)}, from {source}")
+    if not keys:
+        say("  WARNING: no CDK asset keys found. No asset object is deleted, and the CDK bucket cannot be checked by key.")
     try:
         cfn.describe_stacks(StackName=STACK)
         stack_exists = True
@@ -335,12 +377,11 @@ def down() -> None:
         say(f"log group deleted: {g['logGroupName']}")
     removed = 0
     for key in sorted(keys):                         # the bucket keeps versions: delete every version of each key
-        for page in s3.get_paginator("list_object_versions").paginate(Bucket=CDK_BUCKET, Prefix=key):
-            for o in page.get("Versions", []) + page.get("DeleteMarkers", []):
-                if o["Key"] == key:
-                    s3.delete_object(Bucket=CDK_BUCKET, Key=key, VersionId=o["VersionId"])
-                    removed += 1
-    say(f"CDK asset objects deleted: {len(keys)} key(s), {removed} version(s)")
+        for o in versions(key):
+            s3.delete_object(Bucket=CDK_BUCKET, Key=key, VersionId=o["VersionId"])
+            removed += 1
+    if keys:
+        say(f"CDK asset objects deleted: {len(keys)} key(s), {removed} version(s)")
     if cb.batch_get_projects(names=[PROJECT])["projects"]:
         cb.delete_project(name=PROJECT)
         say(f"CodeBuild project deleted: {PROJECT}")
@@ -366,11 +407,15 @@ def down() -> None:
                   if r["RoleName"].startswith(P) or r["RoleName"].startswith(f"AgentCore-{P}")],
         "log groups": [g["logGroupName"] for prefix in (f"/aws/codebuild/{P}", f"/aws/bedrock-agentcore/runtimes/{P}")
                        for g in logs.describe_log_groups(logGroupNamePrefix=prefix).get("logGroups", [])],
-        "CDK asset objects": [k for k in keys if s3.list_object_versions(Bucket=CDK_BUCKET, Prefix=k).get("Versions")],
     }
+    if keys:                                         # with no keys there is nothing to look up: say so, do not claim "none"
+        left["CDK asset objects"] = [k for k in sorted(keys) if versions(k)]
     for what, names in left.items():
         say(f"  left {what}: {names or 'none'}")
-    say(f"== down finished; still present: {[w for w, n in left.items() if n] or 'nothing'}")
+    if not keys:
+        say("  left CDK asset objects: not checked (no asset keys found, see the warning above)")
+    say(f"== down finished; still present: {[w for w, n in left.items() if n] or 'nothing'}"
+        + ("" if keys else "; not checked: CDK asset objects"))
 
 
 if __name__ == "__main__":
