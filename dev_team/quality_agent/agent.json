@@ -1,0 +1,7 @@
+{
+  "name": "quality_agent",
+  "team": "appliance",
+  "framework": "strands",
+  "description": "Answers questions about inspection results and part specifications through the hub's shared tools.",
+  "tools": ["Quality___get_inspection_data", "Parts___get_part_spec"]
+}
