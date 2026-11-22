@@ -79,14 +79,19 @@ def _statement(doc, sid):
     return found
 
 
-def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list():
+def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list_and_create():
     doc = document("deploy")
     runtime = _statement(doc, "TheAgentsRuntime")
     resources = re.search(r"resources\s*=\s*\[(.*?)\]", runtime, re.S).group(1)
     assert re.findall(r'"([^"]+)"', resources) == [      # the Runtimes and their workload identities, by the prefix
         "${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/default",
         "${local.agentcore}:workload-identity-directory/default/workload-identity/${var.prefix}_*"]
-    assert "ListAgentRuntimes" not in runtime
+    assert "ListAgentRuntimes" not in runtime and "CreateAgentRuntime\"" not in runtime
+    # found by running: IAM checks CreateAgentRuntime against runtime/* (the new Runtime has no ID yet), so a
+    # resource of runtime/<prefix>_* is denied; the create is alone in its statement, on runtime/* only
+    create = _statement(doc, "CreateTheRuntime")
+    assert actions(create) == ["bedrock-agentcore:CreateAgentRuntime"]
+    assert re.search(r'resources\s*=\s*\["\$\{local\.agentcore\}:runtime/\*"\]', create)
     find = _statement(doc, "FindTheRuntime")                  # the only statement on "*": a list that reads names
     assert actions(find) == ["bedrock-agentcore:ListAgentRuntimes"] and re.search(r'resources\s*=\s*\["\*"\]', find)
     assert [s for s in statements(doc) if '["*"]' in s] == [find]

@@ -1,12 +1,14 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
 # found by running. The steps that handle submitted code (scan, deploy) can read the submission and hold no action
-# that grants. Scan only reads. Deploy can create and update the hub's Runtimes and pass them a role named
-# <prefix>-agent-*-role; it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
-# name only under the agent boundary (its role's iam:PermissionsBoundary condition); a role of that name made outside
-# the hub would not be bounded, and making one takes IAM rights that none of the review's roles hold. Its one limit:
-# one deploy role serves every review, so code that runs in the deploy build could change another agent's Runtime or
-# pass it another agent's role (hosting_review/README.md, the known limit).
+# that grants. Scan only reads. Deploy can create a Runtime (of any name: IAM checks the create against runtime/*),
+# update and read the hub's Runtimes, and pass a Runtime a role named <prefix>-agent-*-role; it cannot make a role, a
+# policy, a gateway target or an approval. Grant makes roles of that name only under the agent boundary (its role's
+# iam:PermissionsBoundary condition); a role of that name made outside the hub would not be bounded, and making one
+# takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code that
+# runs in the deploy build could change another agent's Runtime or pass it another agent's role; and such code could
+# create a Runtime whose name does not start with <prefix>_, which the hub's cleanup does not find
+# (hosting_review/README.md, the known limit).
 # The steps that grant (Lambda) never open the submitted code.
 
 locals {
@@ -197,8 +199,9 @@ resource "aws_iam_policy" "agent_boundary" {
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
 # The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
-# reaches the Runtimes whose names start with <prefix>_ and their workload identities, and passes only roles named
-# <prefix>-agent-*-role, to AgentCore only.
+# can create a Runtime of any name (CreateTheRuntime); everything else it does on a Runtime reaches only the Runtimes
+# whose names start with <prefix>_ and their workload identities. It passes only roles named <prefix>-agent-*-role, to
+# AgentCore only.
 
 data "aws_iam_policy_document" "deploy" {
   statement {
@@ -222,15 +225,20 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid = "TheAgentsRuntime" # create or update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Not run yet with this code
-    actions = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
+    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime against runtime/* (the new Runtime has no ID yet), and denies it on runtime/<prefix>_*. So the role can create a Runtime of any name
+    actions   = ["bedrock-agentcore:CreateAgentRuntime"]
+    resources = ["${local.agentcore}:runtime/*"]
+  }
+  statement {
+    sid = "TheAgentsRuntime" # update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Not run yet with this code
+    actions = ["bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
       "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
     "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity"]
     resources = ["${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/default",
     "${local.agentcore}:workload-identity-directory/default/workload-identity/${var.prefix}_*"]
   }
   statement {
-    sid       = "FindTheRuntime" # list_agent_runtimes, every page, to find <prefix>_<agent> by name. It reads names, IDs and status only. The Service Authorization Reference gives the action no resource type, so only "*" matches it (not checked by running)
+    sid       = "FindTheRuntime" # list_agent_runtimes, every page, to find <prefix>_<agent> by name. It reads names, IDs and status only. The Service Authorization Reference gives the action no resource type, so only "*" matches it (on "*" it worked when run; a narrower resource was not tried)
     actions   = ["bedrock-agentcore:ListAgentRuntimes"]
     resources = ["*"]
   }
