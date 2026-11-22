@@ -47,13 +47,14 @@ def test_runtime_arn_absent_or_ambiguous_is_a_clear_error():
         d.runtime_arn(two)
 
 def test_pyproject_lists_what_requirements_txt_lists():
-    req = 'boto3==1.40.0  # the SDK\n\n# a comment\nrequests>=2 ; python_version >= "3.10"\nurllib3 \\\n  <3\n'
+    req = 'boto3==1.40.0  # the SDK\n\n# a comment\nrequests[socks]>=2\nurllib3 \\\n  <3\n'
     doc = tomllib.loads(d.pyproject_from(req, "hubQualityAgent"))
     assert doc["project"]["name"] == "hubQualityAgent" and doc["project"]["requires-python"] == ">=3.13"
-    assert doc["project"]["dependencies"] == ["boto3==1.40.0", 'requests>=2 ; python_version >= "3.10"', "urllib3 <3"]
+    assert doc["project"]["dependencies"] == ["boto3==1.40.0", "requests[socks]>=2", "urllib3 <3"]
 
 def test_pyproject_follows_the_scan_rule_for_requirements():
-    for line in ("--index-url https://example.com/simple", "pkg @ https://example.com/pkg.whl", "./local_pkg"):
+    for line in ("--index-url https://example.com/simple", "pkg @ https://example.com/pkg.whl", "./local_pkg",
+                 'jinja2==2.11.2 ; platform_release == ""'):
         with pytest.raises(ValueError, match=r"^requirements\.txt: .+: " + re.escape(line) + "$"):
             d.pyproject_from(f"requests\n{line}\n", "hubQualityAgent")
 

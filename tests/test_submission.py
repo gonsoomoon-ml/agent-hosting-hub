@@ -39,7 +39,7 @@ def requirements(tmp_path, text):
     return check_requirements(tmp_path)
 
 def test_requirements_by_name_and_version_pass(tmp_path):
-    text = 'boto3==1.44.9  # the SDK\n\n# a note\nrequests[socks] >=2, <3 ; python_version >= "3.10"\nurllib3 \\\n  <3\n'
+    text = 'boto3==1.44.9  # the SDK\n\n# a note\nrequests[socks] >=2, <3\nurllib3 \\\n  <3\n'
     assert requirements(tmp_path, text) == []
 
 def test_requirements_that_pick_their_own_source_are_refused(tmp_path):
@@ -48,6 +48,15 @@ def test_requirements_that_pick_their_own_source_are_refused(tmp_path):
                  "https://example.com/pkg-1.0.tar.gz", "./local_pkg", "file:../pkg"):
         problems = requirements(tmp_path, f"requests\n{line}\n")
         assert len(problems) == 1 and problems[0].startswith("requirements.txt: ") and problems[0].endswith(line), line
+
+def test_requirements_with_an_environment_marker_are_refused(tmp_path):
+    # The scan's pip and the deploy's uv test a marker against different machines, so a marked line can be
+    # skipped by the audit and installed by the deploy. The target is fixed (Linux aarch64, CPython 3.13).
+    for line in ('jinja2==2.11.2 ; platform_release == ""', 'jinja2==2.11.2;platform_machine=="aarch64"',
+                 'requests>=2 ; python_version >= "3.10"'):
+        problems = requirements(tmp_path, f"boto3\n{line}\n")
+        assert problems == [f"requirements.txt: environment markers are not allowed (the Runtime is Linux aarch64, "
+                            f"CPython 3.13): {line}"], line
 
 def test_the_command_line_refuses_bad_requirements(tmp_path, capsys):
     z = make(tmp_path, {"main.py": "x", "requirements.txt": "pkg @ https://example.com/pkg.whl\n"})
