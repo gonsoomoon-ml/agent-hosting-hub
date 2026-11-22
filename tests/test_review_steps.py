@@ -194,3 +194,33 @@ def test_approve_refuses_a_record_that_changed_in_any_way_after_read(change):
     with pytest.raises(RuntimeError, match="the record changed after the review started"):
         steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
+
+# ------------------------------------------------------------------ final review I-2: Approve requires the record to be pending
+
+@pytest.mark.parametrize("status", ["REJECTED", "DRAFT", "APPROVED"])
+def test_approve_refuses_a_record_that_is_no_longer_pending(status):
+    c = FakeClients(record_status=status)              # rejected while the review ran, changed, or approved already
+    with pytest.raises(RuntimeError, match=f"record quality_agent is {status}, not PENDING_APPROVAL"):
+        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    assert c.created_policies == [] and c.record_status == status and c.status_reason is None
+
+def _changes_while_the_entry_permit_waits(c, change):
+    """The fake's create_policy, followed by a change to the record (the policy wait sits between the two checks)."""
+    create = c.ctl.create_policy
+    def create_then_change(**kw):
+        out = create(**kw)
+        change(c)
+        return out
+    c.ctl.create_policy = create_then_change
+
+@pytest.mark.parametrize("change, message", [
+    (lambda c: setattr(c, "record_status", "REJECTED"), "record quality_agent is REJECTED, not PENDING_APPROVAL"),
+    (lambda c: setattr(c, "record_spec", {**SPEC, "code_version": "v2"}), "the record changed after the review started"),
+])
+def test_approve_checks_the_record_again_right_before_approving(change, message):     # ledger 184: the second check
+    c = FakeClients()
+    _changes_while_the_entry_permit_waits(c, change)
+    with pytest.raises(RuntimeError, match=message):
+        steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
+    assert [p["name"] for p in c.created_policies] == ["entry_permit_quality_agent"]    # made between the checks
+    assert c.status_reason is None                                                        # never approved

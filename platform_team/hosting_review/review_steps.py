@@ -184,9 +184,10 @@ def testcall(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:
 
 
 def _record_unchanged(ctx: dict, c, env: dict) -> None:
-    """The record still holds the application the review started with. A team can change its record while the
-    review runs; approving then would approve content nobody reviewed. The record is read through the same check
-    as in Read (application), and the whole application must be as it was (its digest)."""
+    """The record still holds the application the review started with, and still asks for approval. A team can
+    change its record while the review runs, and the platform team can reject it; approving then would approve
+    content nobody reviewed, or open a rejected agent to every user. The record is read through the same check as
+    in Read (application), the whole application must be as it was (its digest), and its status PENDING_APPROVAL."""
     rec = c.reg.get_registry_record(registryId=ctx["registryId"], recordId=ctx["recordId"])
     try:
         spec, digest = application(rec, env)
@@ -195,6 +196,9 @@ def _record_unchanged(ctx: dict, c, env: dict) -> None:
     if spec != ctx["spec"] or digest != ctx.get("applicationDigest"):
         raise RuntimeError("the record changed after the review started: it is not approved "
                            "(the changed record goes through a review of its own)")
+    if rec.get("status") != "PENDING_APPROVAL":
+        raise RuntimeError(f"record {_shown(rec.get('name'))} is {_shown(rec.get('status'))}, not PENDING_APPROVAL: "
+                           "it is not approved")
 
 
 def approve(ctx: dict, c, env: dict, deadline: Deadline | None = None) -> dict:

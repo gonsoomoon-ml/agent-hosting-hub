@@ -174,6 +174,30 @@ def test_read_calls_match_the_service_model(aws):
     assert out["spec"] == {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS} and out["record"] == AGENT
 
 
+def test_approve_calls_match_the_service_models(aws):
+    """final review I-2: Approve reads the record (its status too) before and after making the entry permit."""
+    c, stubs = aws
+    reg, ctl = stubs["reg"], stubs["ctl"]
+    ctx = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
+           "spec": {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS},
+           "applicationDigest": review_steps.application_digest(APPLICATION)}
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    pol = _policy("entry_permit_quality_agent")
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("create_policy", {**pol, "status": "CREATING"}, {
+        "policyEngineId": ENGINE, "name": pol["name"], "validationMode": "IGNORE_ALL_FINDINGS", "enforcementMode": "ACTIVE",
+        "definition": {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}}})
+    ctl.add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    reg.add_response("update_registry_record_status", {
+        "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
+        "status": "APPROVED", "statusReason": "passed the hosting review", "updatedAt": NOW},
+        {"registryId": REG, "recordId": REC, "status": "APPROVED", "statusReason": "passed the hosting review"})
+    out = review_steps.approve(ctx, c, env)
+    assert out["recordStatus"] == "APPROVED" and out["entryPolicy"] == pol["policyId"]
+
+
 def test_a_stack_without_a_made_runtime_is_checked_by_its_template(aws):
     c, stubs = aws
     stubs["iam"].add_client_error("get_role", "NoSuchEntity", http_status_code=404, expected_params={"RoleName": ROLE})

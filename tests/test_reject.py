@@ -51,6 +51,7 @@ def _review(c, spec):
     the Runtime ARN in SSM, the Runtime's log group), Entry and Approve."""
     s, agent = Settings(), spec["name"]
     c.record_spec = spec                                       # Read reads the record, Approve reads it again
+    c.record_status = "PENDING_APPROVAL"                       # as publish leaves it (the fake has one record status)
     ctx = steps.grant(steps.read({"detail": {"registryId": CTX["registryId"], "registryRecordId": CTX["recordId"]}},
                                  c, ENV), c, ENV)
     runtime = f"{s.runtime_name(agent)}-{RUNTIME_ID}"
