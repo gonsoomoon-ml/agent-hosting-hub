@@ -117,15 +117,19 @@ def main(argv: list[str]) -> int:
     if len(argv) not in (1, 2):
         print("usage: python -m platform_team.agent_catalog.publish_agent <agent_dir> [variant]")
         return 2
+    hub = "this hub"            # the first line says which hub: its prefix and region
     try:
-        out = publish(Path(argv[0]), Settings.from_env(), argv[1] if len(argv) == 2 else None)
+        s = Settings.from_env()
+        hub = f"prefix {s.prefix}, region {s.region}"
+        out = publish(Path(argv[0]), s, argv[1] if len(argv) == 2 else None)
     except (ValueError, RuntimeError, PublishFailed) as e:
-        print(f"not published: {e}")
+        print(f"not published ({hub}): {e}")
         return 1
     except Exception as e:      # reading the hub's values, credentials: say what failed, no traceback
-        print(f"not published: {_cause(e)}")
+        print(f"not published ({hub}): {_cause(e)}")
         return 1
-    print(f"published {out['code_key']} (version {out['code_version']}); record {out['record_id']} is {out['status']}")
+    print(f"published {out['code_key']} (version {out['code_version']}); record {out['record_id']} is {out['status']} "
+          f"({hub})")
     if out.get("note"):
         print(out["note"])
     return 0

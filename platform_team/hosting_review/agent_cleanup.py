@@ -12,12 +12,16 @@ catalog record, approved agents too (make destroy calls it): an agent role keeps
 permissions boundary policy, and a registry that still has records cannot be deleted.
 
 Every name comes from Settings and company_policy.policy_names for that one agent, never from a pattern wider
-than it. A thing that is not there is already gone, so running again is safe; any other error stops the
-run and says which step failed.
+than it. A name is not proof enough for the role and the stack, so before anything is deleted check_agent reads
+them: the role must carry the hub's agent boundary (Grant can make no other agent role) and have no managed policy
+or instance profile, and the stack must hold this agent's Runtime. Anything else is not this hub's, and nothing of
+that agent is deleted. A thing that is not there is already gone, so running again is safe; any other error stops
+the run and says which step failed.
 
 Kept on purpose: the submitted zip in the submission bucket (the record of what was submitted; the bucket goes with
 terraform destroy) and the code CDK uploaded to the account's CDK bootstrap bucket (shared with other stacks).
 """
+import json
 import re
 import sys
 
@@ -40,6 +44,11 @@ STACK_STEP = 10          # s, between two looks at the stack
 # <Runtime name>-<10 letters or digits>. A Runtime name has no "-", so the name and the "-" after it are exact.
 RUNTIME_LOGS = "/aws/bedrock-agentcore/runtimes/"
 RUNTIME_ID_TAIL = r"[A-Za-z0-9]{10}(-.*)?"
+RUNTIME_TYPE = "AWS::BedrockAgentCore::Runtime"     # its physical ID in a stack is the Runtime ID (Task 0's run)
+
+
+class NotOwned(ValueError):
+    """A role or stack has the agent's name but is not this hub's as it stands. Nothing of the agent is deleted."""
 
 
 class CleanupFailed(RuntimeError):
@@ -81,6 +90,92 @@ def _delete(call, *gone: str) -> bool:
             return False
         raise
     return True
+
+
+# ================================================================== is it this hub's? (reads only)
+
+def _boundary(c, role: str) -> str | None:
+    """The ARN of the role's permissions boundary ("" for none); None when there is no such role."""
+    try:
+        found = c.iam.get_role(RoleName=role)["Role"]
+    except ClientError as e:
+        if _code(e) == "NoSuchEntity":
+            return None
+        raise
+    return (found.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn", "")
+
+
+def _hub_boundary(s: Settings, arn: str) -> bool:
+    return arn.endswith(f":policy/{s.agent_boundary}")
+
+
+def _check_role(c, s: Settings, agent: str) -> None:
+    role = s.agent_role(agent)
+    arn = _boundary(c, role)
+    if arn is None:
+        return
+    if not _hub_boundary(s, arn):
+        shown = arn.rsplit("/", 1)[-1] if arn else "none"
+        raise NotOwned(f"role {role} is not this hub's: its permissions boundary is {shown}, not {s.agent_boundary}")
+    attached = [p["PolicyName"] for page in c.iam.get_paginator("list_attached_role_policies").paginate(RoleName=role)
+                for p in page["AttachedPolicies"]]
+    if attached:
+        raise NotOwned(f"role {role} has managed policies {', '.join(attached)} that the hub does not attach: "
+                       "detach them first")
+    profiles = [p["InstanceProfileName"] for page in c.iam.get_paginator("list_instance_profiles_for_role").paginate(
+        RoleName=role) for p in page["InstanceProfiles"]]
+    if profiles:
+        raise NotOwned(f"role {role} has instance profiles {', '.join(profiles)} that the hub does not make: "
+                       "remove the role from them first")
+
+
+def _stack_gone(e: Exception) -> bool:
+    return _code(e) == "ValidationError" and "does not exist" in e.response["Error"].get("Message", "")
+
+
+def _template_runtimes(c, stack: str) -> list[str]:
+    """The Runtime names the stack's template declares."""
+    body = c.cfn.get_template(StackName=stack)["TemplateBody"]      # botocore parses a JSON template into a dict
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return []
+    return [(r.get("Properties") or {}).get("AgentRuntimeName", "") for r in (body.get("Resources") or {}).values()
+            if isinstance(r, dict) and r.get("Type") == RUNTIME_TYPE]
+
+
+def _check_stack(c, stack: str, runtime: str) -> None:
+    """The stack must hold this agent's Runtime: a Runtime resource whose physical ID is <runtime>-<10 characters>,
+    or, when no Runtime was made (a deploy that rolled back), a template that declares the Runtime <runtime>."""
+    if _stack_status(c, stack)["status"] in ("GONE", "DELETE_COMPLETE"):
+        return
+    try:
+        held = [r.get("PhysicalResourceId") or "" for page in c.cfn.get_paginator("list_stack_resources").paginate(
+            StackName=stack) for r in page["StackResourceSummaries"] if r["ResourceType"] == RUNTIME_TYPE]
+        own = re.compile(re.escape(runtime) + r"-[A-Za-z0-9]{10}")
+        if any(own.fullmatch(h) for h in held):
+            return
+        made = [h for h in held if h]
+        if not made and runtime in _template_runtimes(c, stack):
+            return
+    except ClientError as e:
+        if _stack_gone(e):
+            return
+        raise
+    raise NotOwned(f"stack {stack} does not hold this agent's Runtime {runtime}: it holds "
+                   f"{', '.join(made) or 'no Runtime made for it'}")
+
+
+def check_agent(c, s: Settings, agent: str) -> None:
+    """Raise NotOwned when the agent's role or stack exists but is not this hub's as it stands. Reads only."""
+    check_name(agent)
+    _check_role(c, s, agent)
+    try:
+        stack, runtime = s.stack_name(agent), s.runtime_name(agent)
+    except ValueError:              # no CLI project name for this agent: Deploy could not have made a stack
+        return
+    _check_stack(c, stack, runtime)
 
 
 # ================================================================== one agent
@@ -126,7 +221,7 @@ def _stack_status(c, name: str) -> dict:
     try:
         stack = c.cfn.describe_stacks(StackName=name)["Stacks"][0]
     except ClientError as e:
-        if _code(e) == "ValidationError" and "does not exist" in e.response["Error"].get("Message", ""):
+        if _stack_gone(e):
             return {"status": "GONE"}
         raise
     return {"status": stack["StackStatus"], "statusReason": stack.get("StackStatusReason")}
@@ -177,8 +272,13 @@ def remove_agent(c, s: Settings, p: Platform, agent: str) -> list[str]:
     """Remove what the hosting review made for this agent, in this order: its policies, its gateway target (waits
     until it is gone), the stack that holds its Runtime (waits until it is gone), the Runtime's log groups, its
     execution role, and its SSM values. Returns what was removed, as "<kind> <name>"; what was not there is not
-    listed. A step that fails raises CleanupFailed, and the steps after it do not run."""
+    listed. check_agent runs first: a role or stack that is not this hub's stops it before anything is deleted. A
+    step that fails raises CleanupFailed, and the steps after it do not run."""
     check_name(agent)
+    try:
+        check_agent(c, s, agent)
+    except Exception as e:
+        raise CleanupFailed(f"{agent}: checking that its role and stack are this hub's", e, []) from e
     try:
         stack, runtime = s.stack_name(agent), s.runtime_name(agent)
     except ValueError:              # no CLI project name for this agent: Deploy could not have made a stack or Runtime
@@ -212,9 +312,11 @@ def _catalog_agents(c, p: Platform) -> dict[str, dict]:
         raise
 
 
-def agent_names(c, s: Settings, p: Platform) -> list[str]:
+def agent_names(c, s: Settings, p: Platform, say=print) -> list[str]:
     """Every agent the hub may hold something for, whether or not the catalog is still whole: the catalog's AGENT
-    records, the SSM values under /<prefix>/agents/<agent>/, and the roles named Settings.agent_role(<agent>)."""
+    records, the SSM values under /<prefix>/agents/<agent>/, and the roles named Settings.agent_role(<agent>) that
+    carry the hub's agent boundary. A role with that name but another boundary, or none, is not the hub's: it is
+    skipped with one line and its name is not taken as an agent."""
     found = set(_catalog_agents(c, p))
     base = s.ssm("agents") + "/"
     found |= {prm["Name"][len(base):].split("/")[0]
@@ -224,8 +326,15 @@ def agent_names(c, s: Settings, p: Platform) -> list[str]:
     for page in c.iam.get_paginator("list_roles").paginate():
         for role in page["Roles"]:
             name = role["RoleName"]
-            if name.startswith(head) and name.endswith(tail) and len(name) > len(head) + len(tail):
-                found.add(name[len(head):len(name) - len(tail)])
+            agent = name[len(head):len(name) - len(tail)]
+            if not (name.startswith(head) and name.endswith(tail) and len(name) > len(head) + len(tail)) \
+                    or name_problems(agent):
+                continue
+            arn = _boundary(c, name)
+            if arn is not None and _hub_boundary(s, arn):
+                found.add(agent)
+            elif arn is not None:
+                say(f"skipped {name}: not made by this hub")
     return sorted(a for a in found if not name_problems(a))
 
 
@@ -237,10 +346,10 @@ def _remove_record(c, p: Platform, agent: str) -> list[str]:
     return [f"record {agent}"]
 
 
-def clean_agents(s: Settings, c=None) -> list[str]:
+def clean_agents(s: Settings, c=None, say=print) -> list[str]:
     """Remove every agent's things (remove_agent) and then its catalog record, approved agents too. Runs before
     terraform destroy, so it does not need the platform to be whole. Returns everything removed; a failure raises
-    CleanupFailed with everything removed before it."""
+    CleanupFailed with everything removed before it. `say` gets one line per role skipped as not this hub's."""
     c = c or Clients.for_settings(s)
     try:
         p = load(s, c)
@@ -249,7 +358,7 @@ def clean_agents(s: Settings, c=None) -> list[str]:
     removed = []
     try:
         try:
-            agents = agent_names(c, s, p)
+            agents = agent_names(c, s, p, say)
         except Exception as e:
             raise CleanupFailed("finding the agents", e, []) from e
         for agent in agents:
@@ -265,14 +374,17 @@ def clean_agents(s: Settings, c=None) -> list[str]:
 
 
 def main() -> int:
+    hub = "this hub"
     try:
-        removed = clean_agents(Settings.from_env())
+        s = Settings.from_env()
+        hub = f"prefix {s.prefix}, region {s.region}"
+        removed = clean_agents(s)
     except Exception as e:          # say what failed in one line, no traceback
-        print(f"agents not cleaned: {e if isinstance(e, CleanupFailed) else cause(e)}")
+        print(f"agents not cleaned ({hub}): {e if isinstance(e, CleanupFailed) else cause(e)}")
         return 1
     for line in removed:
         print(f"removed {line}")
-    print(f"agents cleaned: {len(removed)} removed")
+    print(f"agents cleaned ({hub}): {len(removed)} removed")
     return 0
 
 

@@ -66,7 +66,7 @@ platform_team/hosting_review/reject.sh <에이전트> "<사유>"
 platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has published advisories"
 ```
 
-어느 폴더에서 불러도 된다. 지운 것을 한 줄에 하나씩 찍는다. 실패하면 무엇이 실패했는지 한 줄로 찍고 0이 아닌 값으로 끝난다. 플랫폼팀의 자격 증명으로 돈다.
+어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`처럼 리포의 `.env`에서 읽는다(있으면 셸의 값보다 앞선다). 첫 줄에 어느 허브인지(접두어, 리전) 찍고, 지운 것을 한 줄에 하나씩 찍는다. 실패하면 무엇이 실패했는지 한 줄로 찍고 0이 아닌 값으로 끝난다. 플랫폼팀의 자격 증명으로 돈다.
 
 - 사유는 꼭 적는다(255자까지). 팀은 record에서 사유를 읽고, 고친 것을 다시 제출한다. 다시 제출하면 심사가 처음부터 돈다.
 - record의 상태에 따라 다르게 한다. `PENDING_APPROVAL`이면 `REJECTED`로 바꾸고 지운다. Registry가 반려를 받는 것은 승인 요청 상태의 record뿐이다. 이미 `REJECTED`면 상태와 사유는 그대로 두고 지우는 일만 다시 한다. 앞의 실행이 중간에 멈췄을 때 쓴다. `APPROVED`면 거부한다(`approved agents are stopped, not rejected`). 승인된 에이전트는 반려하지 않고 정지한다. 그 밖의 상태이거나 record가 없어도 거부한다. 거부하면 아무것도 바꾸지 않는다.
@@ -86,6 +86,8 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 이름은 모두 그 에이전트 하나의 것으로만 만든다. `Settings`와 `company_policy/policy_names.py`의 이름 함수로 만들고, 접두어로 넓게 찾아 지우지 않는다. 두 에이전트나 두 종류가 같은 이름을 만드는 일은 없다(위의 "정책 이름"). 그래서 `quality`를 반려해도 `quality_agent`의 `tool_quality_agent_...`, target `QualityAgent`, 스택, 로그 그룹, 역할, SSM 값은 그대로다.
 
+역할과 스택은 이름만으로는 허브의 것인지 알 수 없다. 그래서 지우기 전에 읽어서 확인한다(`check_agent`). 역할은 허브의 권한 경계 `<prefix>-agent-boundary`를 달고 있어야 한다. Grant는 이 경계 없이는 역할을 만들 수 없다. 또 managed 정책이나 instance profile이 없어야 한다. 허브는 둘 다 붙이지 않는다. 스택은 그 에이전트의 Runtime을 담고 있어야 한다. Runtime 자원의 physical ID가 `<Runtime 이름>-<ID 10자>`여야 하고, Runtime이 만들어지지 않은 스택(배포가 rollback된 스택)이면 template이 그 이름의 Runtime을 선언해야 한다. 하나라도 맞지 않으면 그 에이전트의 것은 아무것도 지우지 않고, 무엇이 맞지 않는지 말하고 멈춘다. `reject`는 record의 상태를 바꾸기 전에 확인하므로, 이때 record도 그대로다. 확인은 읽기만 한다.
+
 없는 것은 이미 지워진 것으로 본다. 그래서 두 번 돌려도 되고, 두 번째에는 지우는 것이 없다. 그 밖의 오류(권한이 없을 때 같은)가 나면 어느 단계에서 멈췄는지와 그 전에 지운 것을 말하고 멈춘다. 뒤의 단계는 돌지 않는다.
 
 ### 남기는 것
@@ -96,7 +98,7 @@ platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has publishe
 
 ### `make destroy`
 
-`make destroy`는 확인을 받은 뒤, `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지우고 `terraform destroy`를 돌린다.
+`make destroy`는 확인을 받은 뒤, `terraform destroy` 앞에서 같은 정리를 모든 에이전트에 한다(`python -m platform_team.hosting_review.agent_cleanup`). 승인된 에이전트도 지우고, 에이전트마다 카탈로그 record까지 지운다. 에이전트는 세 곳에서 찾는다. 카탈로그의 AGENT record, SSM `/<prefix>/agents/` 아래의 값, `<prefix>-agent-<에이전트>-role` 이름의 역할이다. 그래서 카탈로그가 이미 없어도 찾는다. 역할은 허브의 권한 경계를 단 것만 에이전트로 본다. 이름은 맞지만 경계가 다르거나 없는 역할은 허브의 것이 아니므로 `skipped <역할>: not made by this hub`를 찍고 건너뛴다. 이 정리가 실패하면 `terraform destroy`를 돌리지 않는다. 에이전트 역할이 남아 있으면 Terraform이 권한 경계 정책을 지우지 못하고, record가 남아 있으면 Registry를 지우지 못하기 때문이다. 정리가 끝나면 공유 도구 record(seed)를 지우고 `terraform destroy`를 돌린다.
 
 ### 한계
 

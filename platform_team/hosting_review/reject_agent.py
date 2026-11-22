@@ -10,7 +10,7 @@ things again.
 import sys
 
 from platform_team.agent_catalog.catalog_records import records, set_status
-from platform_team.hosting_review.agent_cleanup import CleanupFailed, cause, check_name, remove_agent
+from platform_team.hosting_review.agent_cleanup import CleanupFailed, cause, check_agent, check_name, remove_agent
 from platform_team.shared_code.aws_helpers import Clients
 from platform_team.shared_code.config import Settings
 from platform_team.shared_code.hub_state import Platform, load
@@ -24,7 +24,8 @@ def reject(c, s: Settings, p: Platform, agent: str, reason: str) -> dict:
 
     The registry rejects a record that is pending approval. A record already REJECTED keeps its status and reason
     and is cleaned again (a run after one that stopped part way). An APPROVED record is refused: approved agents are
-    stopped, not rejected. Any other status, a missing record or a blank reason is refused too; nothing changes."""
+    stopped, not rejected. Any other status, a missing record or a blank reason is refused too, and so is an agent
+    whose role or stack is not this hub's (agent_cleanup.check_agent); then nothing changes."""
     check_name(agent)
     reason = (reason or "").strip()
     if not reason:
@@ -37,10 +38,11 @@ def reject(c, s: Settings, p: Platform, agent: str, reason: str) -> dict:
     status = rec["status"]
     if status == "APPROVED":
         raise ValueError("approved agents are stopped, not rejected")
+    if status not in ("PENDING_APPROVAL", "REJECTED"):
+        raise ValueError(f"record {agent} is {status}: only a record pending approval can be rejected")
+    check_agent(c, s, agent)        # reads only: a role or stack that is not this hub's stops it here
     if status == "PENDING_APPROVAL":
         set_status(c, p.registry_id, rec["recordId"], "REJECTED", reason)
-    elif status != "REJECTED":
-        raise ValueError(f"record {agent} is {status}: only a record pending approval can be rejected")
     return {"status": "REJECTED", "removed": remove_agent(c, s, p, agent)}
 
 
@@ -49,17 +51,19 @@ def main(argv: list[str]) -> int:
         print('usage: python -m platform_team.hosting_review.reject_agent <agent> "<reason>"')
         return 2
     agent, reason = argv
-    s = Settings.from_env()
+    hub = "this hub"                # every first line says which hub: its prefix and region
     try:
+        s = Settings.from_env()
+        hub = f"prefix {s.prefix}, region {s.region}"
         c = Clients.for_settings(s)
         out = reject(c, s, load(s, c), agent, reason)
     except CleanupFailed as e:      # the record is REJECTED by now; a second run finishes the removal
-        print(f"record {agent} is REJECTED, but not everything was removed: {e}. Run reject again to finish.")
+        print(f"record {agent} is REJECTED ({hub}), but not everything was removed: {e}. Run reject again to finish.")
         return 1
     except Exception as e:          # say what failed in one line, no traceback
-        print(f"not rejected: {e if isinstance(e, ValueError) else cause(e)}")
+        print(f"not rejected ({hub}): {e if isinstance(e, ValueError) else cause(e)}")
         return 1
-    print(f"record {agent}: {out['status']}")
+    print(f"record {agent}: {out['status']} ({hub})")
     for line in out["removed"]:
         print(f"removed {line}")
     if not out["removed"]:

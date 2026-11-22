@@ -181,3 +181,12 @@ def test_main_names_the_step_that_failed_and_what_succeeded(tmp_path, monkeypatc
     out = capsys.readouterr().out
     assert "AccessDeniedException" in out and "code uploaded" in out and "ver-1" in out
     assert "record not written" in out and "run again" in out
+
+
+def test_main_says_which_hub_it_published_to(tmp_path, monkeypatch, capsys):
+    fake, _ = _wire(monkeypatch)
+    monkeypatch.setattr(publish_agent, "Clients", type("C", (), {"for_settings": staticmethod(lambda s: fake)}))
+    monkeypatch.setenv("DEMO_PREFIX", "hub")
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    assert publish_agent.main([str(_agent_folder(tmp_path))]) == 0
+    assert capsys.readouterr().out.splitlines()[0].endswith("(prefix hub, region us-west-2)")

@@ -63,6 +63,11 @@ class Settings:
     def agent_role(self, agent: str) -> str:
         return self.role(f"agent-{agent}")
 
+    @property
+    def agent_boundary(self) -> str:
+        """The permissions boundary every agent role carries (hosting_review/terraform/iam.tf)."""
+        return f"{self.prefix}-agent-boundary"
+
     def project_name(self, agent: str) -> str:
         name = self.prefix + _camel(agent)
         if len(name) > MAX_PROJECT_NAME or not _PROJECT_NAME.fullmatch(name):

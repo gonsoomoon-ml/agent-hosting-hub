@@ -102,7 +102,9 @@ class _Ctl(_Client):
 
 
 class _Iam(_Client):
-    """Roles: existing_roles (made before, each with the inline policy "agent") and roles (made by the test)."""
+    """Roles: existing_roles (made before, each with the inline policy "agent") and roles (made by the test). A role's
+    permissions boundary is the hub's agent boundary unless role_boundaries says otherwise (None: no boundary);
+    attached and instance_profiles give a role's managed policies and instance profiles by name."""
 
     def __init__(self, owner):
         super().__init__(owner)
@@ -112,9 +114,26 @@ class _Iam(_Client):
         if RoleName not in self.o.existing_roles and RoleName not in self.o.roles:
             raise self.exceptions.NoSuchEntityException({"Error": {"Code": "NoSuchEntity", "Message": "no role"}}, op)
 
+    def _boundary(self, RoleName):
+        if RoleName in self.o.role_boundaries:
+            return self.o.role_boundaries[RoleName]
+        return self.o.roles.get(RoleName, {}).get("boundary") or ENV["AGENT_BOUNDARY"]
+
     def get_role(self, RoleName):
         self._no_role(RoleName, "GetRole")
-        return {"Role": {"Arn": f"arn:aws:iam::{ACCOUNT}:role/{RoleName}"}}
+        boundary = self._boundary(RoleName)
+        return {"Role": {"RoleName": RoleName, "Arn": f"arn:aws:iam::{ACCOUNT}:role/{RoleName}",
+                         **({"PermissionsBoundary": {"PermissionsBoundaryType": "PermissionsBoundaryPolicy",
+                                                     "PermissionsBoundaryArn": boundary}} if boundary else {})}}
+
+    def list_attached_role_policies(self, RoleName):
+        self._no_role(RoleName, "ListAttachedRolePolicies")
+        return {"AttachedPolicies": [{"PolicyName": n, "PolicyArn": f"arn:aws:iam::aws:policy/{n}"}
+                                     for n in self.o.attached.get(RoleName, [])]}
+
+    def list_instance_profiles_for_role(self, RoleName):
+        self._no_role(RoleName, "ListInstanceProfilesForRole")
+        return {"InstanceProfiles": [{"InstanceProfileName": n} for n in self.o.instance_profiles.get(RoleName, [])]}
 
     def list_roles(self, **kw):
         return {"Roles": [{"RoleName": n} for n in sorted(self.o.existing_roles | set(self.o.roles))]}
@@ -164,22 +183,43 @@ class _Ssm(_Client):
 
 
 class _Cfn(_Client):
-    """CloudFormation: stacks {name: {"status", "reason"}}. A stack deletes at once, or ends DELETE_FAILED with
+    """CloudFormation: stacks {name: {"status", "reason", "resources", "template"}}. A deleted stack is gone at once,
+    or shows DELETE_IN_PROGRESS to the next stack_delete_polls looks (inf: for ever), or ends DELETE_FAILED with
     stack_delete_reason."""
 
-    def describe_stacks(self, StackName):
+    def _stack(self, StackName, op):
         st = self.o.stacks.get(StackName)
+        if st is not None and st.get("polls_left") is not None:
+            if st["polls_left"] <= 0:
+                del self.o.stacks[StackName]
+                st = None
+            else:
+                st["polls_left"] -= 1
         if st is None:
-            raise _client_error("ValidationError", f"Stack with id {StackName} does not exist", "DescribeStacks")
+            raise _client_error("ValidationError", f"Stack with id {StackName} does not exist", op)
+        return st
+
+    def describe_stacks(self, StackName):
+        st = self._stack(StackName, "DescribeStacks")
         return {"Stacks": [{"StackName": StackName, "StackStatus": st["status"],
                             **({"StackStatusReason": st["reason"]} if st.get("reason") else {})}]}
 
+    def list_stack_resources(self, StackName):
+        return {"StackResourceSummaries": list(self._stack(StackName, "ListStackResources").get("resources", []))}
+
+    def get_template(self, StackName):
+        return {"TemplateBody": self._stack(StackName, "GetTemplate").get("template", {"Resources": {}})}
+
     def delete_stack(self, StackName):
-        if StackName in self.o.stacks:
-            if self.o.stack_delete_reason:
-                self.o.stacks[StackName] = {"status": "DELETE_FAILED", "reason": self.o.stack_delete_reason}
-            else:
-                del self.o.stacks[StackName]
+        st = self.o.stacks.get(StackName)
+        if st is None:
+            return {}
+        if self.o.stack_delete_reason:
+            st.update(status="DELETE_FAILED", reason=self.o.stack_delete_reason)
+        elif self.o.stack_delete_polls:
+            st.update(status="DELETE_IN_PROGRESS", polls_left=self.o.stack_delete_polls)
+        else:
+            del self.o.stacks[StackName]
         return {}
 
 
@@ -229,7 +269,8 @@ class FakeClients:
     latest = None       # the most recently built fake, for the patched signed_post
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
-                 policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, stack_delete_reason=None):
+                 policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, stack_delete_reason=None,
+                 stack_delete_polls=0):
         self.record_spec = SPEC if record_spec is None else record_spec
         self.record_status, self.status_reason = record_status, None
         self.existing_policies, self.existing_roles = set(existing_policies), set(existing_roles)
@@ -241,7 +282,8 @@ class FakeClients:
         self.roles, self.targets, self.target_arns, self.posts = {}, {}, {}, []
         self.inline = {r: {"agent"} for r in self.existing_roles}
         self.stacks, self.log_groups, self.parameters, self.other_records = {}, set(), {}, []
-        self.stack_delete_reason = stack_delete_reason
+        self.stack_delete_reason, self.stack_delete_polls = stack_delete_reason, stack_delete_polls
+        self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.cfn, self.logs = _Cfn(self), _Logs(self)
         FakeClients.latest = self
