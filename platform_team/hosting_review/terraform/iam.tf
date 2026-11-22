@@ -220,17 +220,17 @@ data "aws_iam_policy_document" "deploy" {
     resources = [local.hub_code]
   }
   statement {
-    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). Not run yet with this code
+    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). The deploy worked with it; whether the service needs GetObject was not tried
     actions   = ["s3:PutObject", "s3:GetObject"]
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (the new Runtime has no ID yet), and denies both on runtime/<prefix>_*. So the role can create a Runtime and its endpoint of any name
+    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (perhaps because the new Runtime has no ID yet; not checked), and denies both on runtime/<prefix>_*. So the role can create a Runtime and its endpoint of any name
     actions   = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateAgentRuntimeEndpoint"]
     resources = ["${local.agentcore}:runtime/*"]
   }
   statement {
-    sid = "TheAgentsRuntime" # update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Not run yet with this code
+    sid = "TheAgentsRuntime" # update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Create and update worked with them; whether each is needed was not tried
     actions = ["bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
       "bedrock-agentcore:GetAgentRuntimeEndpoint",
     "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity"]

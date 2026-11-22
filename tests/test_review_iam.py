@@ -89,7 +89,7 @@ def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list_an
     assert "ListAgentRuntimes" not in runtime and "CreateAgentRuntime\"" not in runtime
     assert "CreateAgentRuntimeEndpoint" not in runtime
     # found by running: IAM checks CreateAgentRuntime, and the CreateAgentRuntimeEndpoint it implies, against
-    # runtime/* (the new Runtime has no ID yet), so a resource of runtime/<prefix>_* is denied; the two creates are
+    # runtime/* (perhaps because the new Runtime has no ID yet; not checked), so a resource of runtime/<prefix>_* is denied; the two creates are
     # alone in their statement, on runtime/* only
     create = _statement(doc, "CreateTheRuntime")
     assert actions(create) == ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateAgentRuntimeEndpoint"]
