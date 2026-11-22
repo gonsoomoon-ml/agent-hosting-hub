@@ -67,3 +67,35 @@ def test_the_dev_role_reads_the_hub_values_publish_needs():
     reads = [line for line in dev.splitlines() if '"ssm:' in line]          # one statement per line
     assert len(reads) == 1 and re.search(r'Action\s*=\s*\["ssm:GetParametersByPath"\]', reads[0])
     assert re.search(r'Resource\s*=\s*\["arn:aws:ssm:\$\{[\w.]+\}:\$\{[\w.]+\}:parameter/\$\{var\.prefix\}/platform"\]', reads[0])
+
+# ------------------------------------------------------------------ the gateway roles
+
+GATEWAYS = {"agents": "agent_gateway", "tools": "tool_gateway"}      # the role's name in Terraform, its module
+
+def gateway_block(kind, name):
+    text = (ROOT / GATEWAYS[name] / "terraform" / "main.tf").read_text()
+    m = re.search(r'resource\s+"%s"\s+"%s"\s*{(.*?)\n}\n' % (kind, name), text, re.S)
+    assert m, f"{GATEWAYS[name]}: {kind}.{name} is not declared"
+    return m.group(1)
+
+def test_a_gateway_role_trusts_the_service_for_this_account_only():
+    for name in GATEWAYS:
+        trust = gateway_block("aws_iam_role", name)
+        assert 'Principal = { Service = "bedrock-agentcore.amazonaws.com" }' in trust, name
+        assert re.search(r'Condition\s*=\s*{\s*StringEquals\s*=\s*{\s*"aws:SourceAccount"\s*=\s*'
+                         r'data\.aws_caller_identity\.me\.account_id\s*}\s*}', trust), name
+
+def test_the_agent_gateway_invokes_one_lambda():
+    # the custom guardrail's interceptor, <prefix>-guardrail (attached by API during operation), and no other function
+    [line] = [l for l in gateway_block("aws_iam_role_policy", "agents").splitlines() if "lambda:InvokeFunction" in l]
+    assert re.search(r'Resource\s*=\s*\["\$\{local\.lambda\}:\$\{var\.prefix\}-guardrail"\]', line)
+
+def test_a_gateway_role_authorizes_on_the_hubs_gateways_only():
+    for name in GATEWAYS:
+        policy = gateway_block("aws_iam_role_policy", name)
+        authorize = re.search(r'Action\s*=\s*\["bedrock-agentcore:AuthorizeAction".*?\n\s*Resource\s*=\s*\[(.*?)\]', policy, re.S)
+        assert authorize and [r.strip() for r in authorize.group(1).split(",")] == [
+            "var.policy_engine_arn", '"${local.agentcore}:gateway/${var.prefix}-*"'], name
+    agents = gateway_block("aws_iam_role_policy", "agents")
+    [guardrail] = [l for l in agents.splitlines() if "bedrock:InvokeGuardrailChecks" in l]
+    assert re.search(r'Resource\s*=\s*"\*"', guardrail)               # the one action left on "*" (see the comment)

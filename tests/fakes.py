@@ -17,6 +17,7 @@ ENV = {
     "TOOL_GW_ARN": f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:gateway/hub-tools-abcdefghij",
     "TESTCALL_ROLE": "hub-review-testcall-role", "EXAMPLE_KEY": "EXAMPLE-ACCESS-KEY",
     "CATALOG_TOOLS": ",".join(TOOLS), "AGENT_BOUNDARY": f"arn:aws:iam::{ACCOUNT}:policy/hub-agent-boundary",
+    "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 
 SPEC = {"name": "quality_agent", "team": "appliance", "framework": "strands",

@@ -8,8 +8,13 @@ D = render()
 
 def test_steps_run_in_the_design_order_on_the_right_service():
     order, state = [], D["StartAt"]
-    while state in D["States"] and D["States"][state]["Type"] == "Task" and state != "Notify":
+    while state in D["States"] and state != "Notify":
         st = D["States"][state]
+        if st["Type"] == "Choice":                 # Reviewable: a record the review hosts goes on (Default)
+            state = st["Default"]
+            continue
+        if st["Type"] != "Task":
+            break
         order.append((state, "codebuild" if "codebuild" in st["Resource"] else "lambda"))
         state = st.get("Next")
     assert order == [("Read", "lambda"), ("Scan", "codebuild"), ("Grant", "lambda"), ("Deploy", "codebuild"),
@@ -40,3 +45,19 @@ def test_the_alert_names_the_step_that_failed():
     assert "$failedStep" in p["Message.$"] and "States.JsonMerge(" in p["Message.$"] and p["Message.$"].count(", $, ") == 1
     # the alert names no field of the review's state: a failed Read has no spec yet, and its alert must still go out
     assert "$." not in json.dumps(p)
+
+# ------------------------------------------------------------------ a record the review skips; the alert's retry
+
+def test_a_skipped_record_ends_without_an_alert():
+    # Read returns {"skip": <reason>} for a record the review does not host (a shared tool, a harness)
+    assert D["States"]["Read"]["Next"] == "Reviewable"
+    choice = D["States"]["Reviewable"]
+    assert choice["Type"] == "Choice" and choice["Default"] == "Scan"
+    assert choice["Choices"] == [{"Variable": "$.skip", "IsPresent": True, "Next": "Skipped"}]
+    assert D["States"]["Skipped"]["Type"] == "Succeed"
+    leads_to_notify = [n for n, st in D["States"].items() if st.get("Next") == "Notify"]
+    assert leads_to_notify == []                                # only a Catch reaches the alert
+
+def test_notify_retries_before_it_gives_up():
+    retries = [r for r in D["States"]["Notify"].get("Retry", []) if "States.TaskFailed" in r["ErrorEquals"]]
+    assert len(retries) == 1 and retries[0]["MaxAttempts"] >= 3 and retries[0]["IntervalSeconds"] >= 1

@@ -5,18 +5,20 @@
 # runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so it does not hold a
 # create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after
 # its ID, and the role reaches workload identities only for <prefix>_* names), and a condition key was not looked into.
-# Deploy can update and read the hub's Runtimes and pass a Runtime a role named <prefix>-agent-*-role; it cannot make a
-# role, a policy, a gateway target or an approval. Grant makes roles of that name only under the agent boundary (its
-# role's iam:PermissionsBoundary condition); a role of that name made outside the hub would not be bounded, and making
-# one takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code
-# that runs in the deploy build could change another agent's Runtime or pass it another agent's role; and the policy
+# Deploy can update and read the hub's Runtimes, pass a Runtime a role named <prefix>-agent-*-role, and write an
+# agent's Runtime ARN to SSM (the policy allows /<prefix>/agents/<agent>/runtime_arn and no other parameter); it
+# cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that name only under the agent
+# boundary (its role's iam:PermissionsBoundary condition); a role of that name made outside the hub would not be
+# bounded, and making one takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves
+# every review, so code that runs in the deploy build could change another agent's Runtime, pass it another agent's
+# role, or write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy
 # leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
 # cleanup would not find (hosting_review/README.md, the known limit).
 # The steps that grant (Lambda) never open the submitted code.
 
 locals {
   agentcore  = "arn:aws:bedrock-agentcore:${local.region}:${local.account}"
-  agent_ssm  = "arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/agents/*" # /<prefix>/agents/<agent>/runtime_arn
+  agent_ssm  = "arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/agents/*/runtime_arn" # one per agent
   submission = "${aws_s3_bucket.inbox.arn}/submissions/*"
   hub_code   = "${aws_s3_bucket.inbox.arn}/${aws_s3_object.code.key}"
   step_policy = {
@@ -204,8 +206,8 @@ resource "aws_iam_policy" "agent_boundary" {
 # The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
 # creates a Runtime and its endpoint under CreateTheRuntime, on runtime/*, which does not hold a create to the hub's
 # names; everything else it does on a Runtime reaches only the Runtimes whose names start with <prefix>_ and their
-# workload identities. It passes only roles named <prefix>-agent-*-role, to
-# AgentCore only.
+# workload identities. It passes only roles named <prefix>-agent-*-role, to AgentCore only, and writes only the SSM
+# parameters /<prefix>/agents/<agent>/runtime_arn.
 
 data "aws_iam_policy_document" "deploy" {
   statement {
@@ -282,9 +284,9 @@ data "aws_iam_policy_document" "entry" {
     resources = [var.agent_gateway_arn]
   }
   statement {
-    sid       = "TheTargetsRuntime" # as in the run that passed (checks/whole-process): a Runtime target names the Runtime
+    sid       = "TheTargetsRuntime" # a Runtime target names the Runtime; only the hub's, <prefix>_<agent> (Deploy's names)
     actions   = ["bedrock-agentcore:GetAgentRuntime", "bedrock-agentcore:GetAgentRuntimeEndpoint"]
-    resources = ["${local.agentcore}:runtime/${var.prefix}*"]
+    resources = ["${local.agentcore}:runtime/${var.prefix}_*"]
   }
   statement {
     sid       = "EntryPolicies" # ensure_policy: review_permit_<agent>, guard_secret_<agent>
@@ -377,6 +379,25 @@ data "aws_iam_policy_document" "events" {
     sid       = "StartTheReview"
     actions   = ["states:StartExecution"]
     resources = [aws_sfn_state_machine.review.arn]
+  }
+}
+
+# The inbox's bucket policy (main.tf): every request to the inbox must come over TLS.
+data "aws_iam_policy_document" "inbox" {
+  statement {
+    sid       = "TlsOnly"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.inbox.arn, "${aws_s3_bucket.inbox.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
   }
 }
 

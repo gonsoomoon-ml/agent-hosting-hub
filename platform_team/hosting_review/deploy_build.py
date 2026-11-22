@@ -8,7 +8,8 @@ Entry step reads it.
 The team supplies code and requirements.txt only; the platform decides what is installed and how the Runtime runs:
   1 read the submission at the object version the catalog record names, unpack it, and check its layout and its
     requirements.txt with the scan's rules (submission_check). The submission's own build settings (PLATFORM_OWNED)
-    are deleted, and the platform writes the requirement lines into its own requirements file (requirements_from)
+    are deleted, and the platform writes the requirement lines into its own requirements file with the function
+    that wrote the file the scan audited (submission_check.requirements_from), so the same lines are installed
   2 uv installs those requirements as wheels for the Runtime's platform (install_command); the package is what uv
     installed plus the submission's top-level .py files (package), uploaded to the inbox at Settings.package_key
   3 the Runtime <prefix>_<agent> (Settings.runtime_name) is created the first time and updated after that; the
@@ -17,8 +18,8 @@ The team supplies code and requirements.txt only; the platform decides what is i
 
 Environment: AGENT, CODE_KEY, CODE_VERSION, ROLE_ARN per run; BUCKET, PREFIX, TOOL_GW_URL, MODEL_ID on the
 project; AWS_REGION from CodeBuild; UV_NO_CONFIG=1 from the buildspec, so uv reads no config file at all.
-The pure parts (requirements_from, drop_build_settings, install_command, package, runtime_config) and deploy() have
-unit tests; main() wires them to uv, S3, AgentCore and SSM. Nothing calls AWS at import time.
+The pure parts (drop_build_settings, install_command, package, runtime_config) and deploy() have unit tests; main()
+wires them to uv, S3, AgentCore and SSM. Nothing calls AWS at import time.
 """
 import json
 import os
@@ -31,7 +32,7 @@ from pathlib import Path
 
 from botocore.exceptions import ClientError
 
-from platform_team.hosting_review.submission_check import check_layout, check_requirements, parse_requirements, unpack
+from platform_team.hosting_review.submission_check import check_layout, check_requirements, requirements_from, unpack
 from platform_team.shared_code.aws_helpers import Clients, all_items, wait_status
 from platform_team.shared_code.config import Settings
 
@@ -54,16 +55,6 @@ OWN_ROLE_DENIED = ("is not authorized to perform: bedrock-agentcore:", "is not a
 
 def _settings(env: dict) -> Settings:
     return Settings(region=env["AWS_REGION"], prefix=env["PREFIX"], model_id=env["MODEL_ID"])
-
-
-def requirements_from(text: str) -> str:
-    """The platform's requirements file: the requirement lines of the submission's requirements.txt, one per line,
-    with comments, blank lines and continuations gone. The lines follow the scan's rule
-    (submission_check.parse_requirements); a line it refuses raises ValueError. uv reads this file, not the team's."""
-    deps, problems = parse_requirements(text)
-    if problems:
-        raise ValueError("; ".join(problems))
-    return "".join(f"{d}\n" for d in deps)
 
 
 def drop_build_settings(src: Path) -> list[str]:
@@ -226,8 +217,8 @@ def main(env: dict | None = None, c=None) -> dict:
         raise SystemExit(f"deploy refused: {'; '.join(problems)}")
     for name in drop_build_settings(src):
         say(f"the submission's {name} is deleted: the platform decides what is installed")
-    requirements = work / "requirements.txt"
-    requirements.write_text(requirements_from((src / "requirements.txt").read_text()))
+    requirements = work / "requirements.txt"                # the lines the scan audited (submission_check.main)
+    requirements.write_text(requirements_from((src / "requirements.txt").read_text(encoding="utf-8")), encoding="utf-8")
     say(f"submission unpacked: {where}")
 
     # 2 the dependencies as wheels for the Runtime, and the package with the submitted .py files

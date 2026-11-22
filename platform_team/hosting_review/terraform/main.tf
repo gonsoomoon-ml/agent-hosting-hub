@@ -5,13 +5,16 @@
 # allows both creates on runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so
 # it does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload
 # identity named after its ID, and the role reaches workload identities only for <prefix>_* names), and a condition
-# key was not looked into. Deploy can update and read the hub's Runtimes and pass a Runtime a role named
-# <prefix>-agent-*-role; it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
+# key was not looked into. Deploy can update and read the hub's Runtimes, pass a Runtime a role named
+# <prefix>-agent-*-role, and write an agent's Runtime ARN to SSM (the policy allows /<prefix>/agents/<agent>/runtime_arn
+# and no other parameter); it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
 # name only under the agent boundary; a role of that name made outside the hub would not be bounded, and making one
 # takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code
-# that runs in the deploy build could change another agent's Runtime or pass it another agent's role; and the policy
-# leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
-# cleanup would not find (../README.md, the known limit). Every step has its own role (iam.tf). A failed step publishes to the alert topic.
+# that runs in the deploy build could change another agent's Runtime, pass it another agent's role, or write another
+# agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves open that such
+# code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's cleanup would not find
+# (../README.md, the known limit). Every step has its own role (iam.tf). A record the review does not host (not an
+# AGENT record, or a harness) ends after Read, with no alert. A failed step publishes to the alert topic.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
@@ -46,6 +49,7 @@ locals {
     EXAMPLE_KEY    = join("", ["AKIA", "IOSFODNN7EXAMPLE"])
     CATALOG_TOOLS  = join(",", sort(var.catalog_tools))
     AGENT_BOUNDARY = aws_iam_policy.agent_boundary.arn # Grant creates agent roles under this boundary
+    MODEL_ID       = var.model_id                      # Grant: the one model an agent role may call
   }
 }
 
@@ -71,6 +75,13 @@ resource "aws_s3_bucket_public_access_block" "inbox" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# Requests without TLS are refused (iam.tf, the policy document "inbox").
+resource "aws_s3_bucket_policy" "inbox" {
+  bucket     = aws_s3_bucket.inbox.id
+  policy     = data.aws_iam_policy_document.inbox.json
+  depends_on = [aws_s3_bucket_public_access_block.inbox]
 }
 
 resource "aws_s3_object" "code" {

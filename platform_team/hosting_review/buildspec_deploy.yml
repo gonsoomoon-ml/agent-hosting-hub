@@ -1,7 +1,7 @@
 # The deploy step of the hosting review (CodeBuild). It runs after the Grant step made the agent's execution role.
-# The install phase sets up Python 3.13 and uv (pinned to the version deploy_build.install_command was tried with,
-# outside CodeBuild). The build phase gets the hub's code bundle and runs deploy_build.py: it
-# reads the submission, installs its requirements as wheels for the Runtime's platform, packages them with the
+# The install phase sets up Python 3.13 and uv (pinned to 0.10.8, the version the deploy builds of 2026-11-22 ran
+# with on this image). The build phase gets the hub's code bundle and runs deploy_build.py: it
+# reads the submission, installs the lines the scan audited as wheels for the Runtime's platform, packages them with the
 # submission's .py files, creates or updates the agent's Runtime under ROLE_ARN (CreateAgentRuntime,
 # UpdateAgentRuntime), and writes the Runtime ARN to SSM.
 # UV_NO_CONFIG: uv reads no config file (a uv.toml could otherwise choose the package index). deploy_build.py also

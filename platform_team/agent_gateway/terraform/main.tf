@@ -12,8 +12,13 @@ locals {
 resource "aws_iam_role" "agents" {
   name = "${var.prefix}-agents-role"
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Principal = { Service = "bedrock-agentcore.amazonaws.com" }, Action = "sts:AssumeRole" }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "bedrock-agentcore.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+      Condition = { StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.me.account_id } }
+    }]
   })
 }
 
@@ -25,14 +30,17 @@ resource "aws_iam_role_policy" "agents" {
     Statement = [
       # the hosted agents: their Runtime names start with the prefix
       { Effect = "Allow", Action = ["bedrock-agentcore:InvokeAgentRuntime"], Resource = ["${local.agentcore}:runtime/${var.prefix}*"] },
-      # the interceptor Lambda of the custom guardrail, attached after the gateway exists
-      { Effect = "Allow", Action = ["lambda:InvokeFunction"], Resource = ["${local.lambda}:${var.prefix}-*"] },
+      # the interceptor Lambda of the custom guardrail, attached after the gateway exists (by API, during operation)
+      { Effect = "Allow", Action = ["lambda:InvokeFunction"], Resource = ["${local.lambda}:${var.prefix}-guardrail"] },
       {
         Effect   = "Allow"
         Action   = ["bedrock-agentcore:AuthorizeAction", "bedrock-agentcore:PartiallyAuthorizeActions", "bedrock-agentcore:GetPolicyEngine"]
-        Resource = [var.policy_engine_arn, "${local.agentcore}:gateway/*"]
+        Resource = [var.policy_engine_arn, "${local.agentcore}:gateway/${var.prefix}-*"]
       },
-      # company policies that use guardrails (BedrockGuardrails::...)
+      # company policies that use guardrails (BedrockGuardrails::...). Not narrowed: the AWS documents give this
+      # action's resource differently (AgentCore's "Guardrails in policies" a guardrail ARN; Bedrock's "Set up
+      # permissions" for InvokeGuardrailChecks says it has none and uses "*", and the Service Authorization Reference
+      # lists no resource type for it).
       { Effect = "Allow", Action = ["bedrock:InvokeGuardrailChecks"], Resource = "*" },
     ]
   })

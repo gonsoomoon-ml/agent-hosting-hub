@@ -47,8 +47,8 @@ def test_grant_can_make_agent_roles_only_under_the_boundary():
 def test_the_boundary_allows_every_action_of_the_agent_role_and_no_wildcard():
     from platform_team.hosting_review.review_steps import _execution_role
     from tests.fakes import ENV
-    _, perms = _execution_role(ENV)
-    granted = {a for s in perms["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
+    _, perms = _execution_role(ENV, "quality_agent")
+    granted ={a for s in perms["Statement"] for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])}
     boundary = actions(document("agent_boundary"))
     assert granted and sorted(granted - set(boundary)) == [] and [a for a in boundary if "*" in a] == []
 
@@ -104,3 +104,55 @@ def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list_an
     assert re.search(r'test\s*=\s*"StringEquals"', passing) and re.search(r'variable\s*=\s*"iam:PassedToService"', passing)
     assert '"bedrock-agentcore.amazonaws.com"' in passing
     assert 'resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]' in passing
+
+
+# ------------------------------------------------------------------ narrower roles
+
+def _resources(statement):
+    return re.findall(r'"([^"]+)"', re.search(r"resources\s*=\s*\[(.*?)\]", statement, re.S).group(1))
+
+
+def test_the_deploy_role_writes_one_parameter_per_agent():
+    # /<prefix>/agents/<agent>/runtime_arn, the value Entry reads; not every value under /<prefix>/agents/
+    assert re.search(r'\n  agent_ssm\s*=\s*"arn:aws:ssm:\$\{local\.region\}:\$\{local\.account\}:'
+                     r'parameter/\$\{var\.prefix\}/agents/\*/runtime_arn"', TEXT)
+    deploy = document("deploy")
+    write = _statement(deploy, "WriteTheRuntimeArn")
+    assert actions(write) == ["ssm:PutParameter"] and re.search(r"resources\s*=\s*\[local\.agent_ssm\]", write)
+    assert [s for s in statements(deploy) if "ssm:" in s] == [write]
+
+
+def test_entry_reaches_only_runtimes_the_hub_deploys():
+    runtime = _statement(document("entry"), "TheTargetsRuntime")
+    assert actions(runtime) == ["bedrock-agentcore:GetAgentRuntime", "bedrock-agentcore:GetAgentRuntimeEndpoint"]
+    assert _resources(runtime) == ["${local.agentcore}:runtime/${var.prefix}_*"]     # <prefix>_<agent>, Deploy's names
+
+
+def test_an_agent_role_gets_tokens_for_its_own_workload_only():
+    # A Runtime's workload identity is named after its ID, <Runtime name>-<10 characters> (the AWS example of a Runtime
+    # execution role has .../workload-identity/<agent name>-*). An agent name has no "-", so no other agent's matches.
+    from fnmatch import fnmatchcase
+    from platform_team.hosting_review.review_steps import _execution_role
+    from tests.fakes import ENV
+    _, perms = _execution_role(ENV, "quality_agent")
+    [tokens] = [s for s in perms["Statement"] if "bedrock-agentcore:GetWorkloadAccessToken" in s["Action"]]
+    wid = "arn:aws:bedrock-agentcore:us-west-2:123456789012:workload-identity-directory/default"
+    assert tokens["Resource"] == [wid, f"{wid}/workload-identity/hub_quality_agent-*"]
+    identity = f"{wid}/workload-identity/%s-Ab12Cd34Ef"
+    assert fnmatchcase(identity % "hub_quality_agent", tokens["Resource"][1])
+    assert not [n for n in ("hub_quality_agent_v2", "hub_release_review", "other_quality_agent")
+                if fnmatchcase(identity % n, tokens["Resource"][1])]
+
+
+def test_the_inbox_refuses_requests_without_tls():
+    inbox = document("inbox")
+    [deny] = statements(inbox)
+    assert re.search(r'effect\s*=\s*"Deny"', deny) and actions(deny) == ["s3:*"]
+    assert re.search(r'principals\s*{\s*type\s*=\s*"\*"\s*identifiers\s*=\s*\["\*"\]\s*}', deny)
+    assert re.search(r'condition\s*{\s*test\s*=\s*"Bool"\s*variable\s*=\s*"aws:SecureTransport"\s*values\s*=\s*\["false"\]',
+                     deny)
+    assert re.search(r'resources\s*=\s*\[aws_s3_bucket\.inbox\.arn,\s*"\$\{aws_s3_bucket\.inbox\.arn\}/\*"\]', deny)
+    main = pathlib.Path("platform_team/hosting_review/terraform/main.tf").read_text()
+    policy = re.search(r'resource\s+"aws_s3_bucket_policy"\s+"inbox"\s*{(.*?)\n}\n', main, re.S)
+    assert policy and re.search(r"bucket\s*=\s*aws_s3_bucket\.inbox\.id", policy.group(1))
+    assert re.search(r"policy\s*=\s*data\.aws_iam_policy_document\.inbox\.json", policy.group(1))

@@ -202,10 +202,46 @@ def test_read_refuses_an_application_whose_name_is_not_the_records():
     with pytest.raises(ValueError, match="the application's name quality_agent is not the record's name foo"):
         steps.read(EVENT, c, ENV)
 
-def test_read_refuses_a_record_that_is_not_an_agent():
-    c = FakeClients(record_type="MCP")
+@pytest.mark.parametrize("record_type, framework", [("MCP", "strands"), ("AGENT", "harness")])
+def test_read_skips_a_record_the_review_does_not_host(record_type, framework):
+    out = steps.read(EVENT, FakeClients(record_type=record_type, record_spec={**SPEC, "framework": framework}), ENV)
+    assert set(out) == {"skip"} and out["skip"]
+
+@pytest.mark.parametrize("record_type, application", [
+    ("AGENT", {"name": "spec_assistant", "team": "parts", "framework": "harness", "tools": ["Parts___get_part_spec"]}),
+    ("MCP", {"server": "parts-tools", "tools": ["nope"]}),
+])
+def test_the_skip_comes_before_every_check_of_the_application(record_type, application):
+    """A skipped record has no place for code (a harness), or is no agent's application at all (a shared tool)."""
+    out = steps.read(EVENT, FakeClients(record_type=record_type, record_spec=application), ENV)
+    assert set(out) == {"skip"} and out["skip"]
+
+def test_a_record_that_is_not_an_agent_is_never_approved():
+    # Read skips such a record (above). Approve reads the record through application(), which still refuses it.
+    c = FakeClients()
+    ctx = steps.read(EVENT, c, ENV)
+    c.record_type = "MCP"                                   # the record changed its type during the review
     with pytest.raises(ValueError, match="record type is MCP, not AGENT"):
-        steps.read(EVENT, c, ENV)
+        steps.application(c.reg.get_registry_record(registryId="reg-1", recordId="rec-1"), ENV)
+    with pytest.raises(RuntimeError, match="the record changed after the review started"):
+        steps.approve({**ctx, "target": "QualityAgent"}, c, ENV)
+    assert c.record_status == "PENDING_APPROVAL" and c.created_policies == []
+
+def test_an_agent_role_may_call_its_model_and_no_other():
+    trust, perms = steps._execution_role({**ENV, "MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
+                                         "quality_agent")
+    model = next(s for s in perms["Statement"] if "bedrock:InvokeModel" in s["Action"])
+    assert sorted(model["Resource"]) == [
+        "arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0",
+        "arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0"]
+
+def test_grant_gives_the_agent_role_the_model_of_its_environment():
+    # A model ID without a cross-Region prefix (us., eu., ...) names a foundation model of the hub's Region.
+    c = FakeClients()
+    steps.grant(dict(CTX), c, {**ENV, "MODEL_ID": "anthropic.claude-haiku-4-5-20251001-v1:0"})
+    statements = c.roles["hub-agent-quality_agent-role"]["permissions"]["Statement"]
+    [model] = [s for s in statements if "bedrock:InvokeModel" in s["Action"]]
+    assert model["Resource"] == ["arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0"]
 
 @pytest.mark.parametrize("change, message", [
     ({"code_key": "agents/quality_agent/code.zip"}, "code_key must be a key under submissions/"),

@@ -1,10 +1,13 @@
 # The scan step of the hosting review (CodeBuild). It reads the team's submission at the object version the
 # catalog record names, refuses a broken one (unsafe paths, no main.py or requirements.txt, a requirements line
-# that is not a package on the index), and runs pip-audit on its requirements.txt. A known vulnerability fails the
+# that is not a package on the index), and runs pip-audit on the requirement lines submission_check writes to
+# /tmp/audit/requirements.txt. The deploy build installs from a file of the same lines (the same function,
+# submission_check.requirements_from), so the scan audits what the deploy installs. A known vulnerability fails the
 # build, and the review stops before anything is granted.
-# No Python runs from the submission's folder: pip-audit runs in isolated mode (-I) from an empty folder, so no
-# file of the submission can stand in for pip-audit or pip. PIP_ONLY_BINARY keeps pip from running the setup.py
-# of an sdist, as the deploy's packager does (--only-binary :all:).
+# No Python runs from the submission's folder: pip-audit runs in isolated mode (-I) from /tmp/audit, which holds only
+# the platform's file, so no file of the submission can stand in for pip-audit or pip. PIP_ONLY_BINARY keeps pip
+# from running the setup.py of an sdist, as the deploy's packager does (--only-binary :all:).
+# pip-audit is pinned to one version (PyPI's latest on 2026-11-22), so every review audits with the same tool.
 # Variables per run: AGENT, CODE_KEY, CODE_VERSION. On the project: BUCKET, PREFIX.
 version: 0.2
 env:
@@ -14,7 +17,7 @@ phases:
     runtime-versions:
       python: 3.13
     commands:
-      - python3 -m pip install --quiet pip-audit
+      - python3 -m pip install --quiet pip-audit==2.10.1
       - echo "$(python3 --version), pip-audit $(python3 -m pip_audit --version | awk '{print $2}')"
   build:
     commands:
@@ -22,5 +25,5 @@ phases:
       - aws s3 cp "s3://$BUCKET/platform/platform_team.zip" /tmp/hub.zip --quiet
       - rm -rf /tmp/hub && unzip -q /tmp/hub.zip -d /tmp/hub
       - aws s3api get-object --bucket "$BUCKET" --key "$CODE_KEY" --version-id "$CODE_VERSION" /tmp/submission.zip > /dev/null
-      - PYTHONPATH=/tmp/hub python3 -m platform_team.hosting_review.submission_check /tmp/submission.zip /tmp/src
-      - 'mkdir -p /tmp/audit && cd /tmp/audit && PIP_ONLY_BINARY=:all: python3 -I -m pip_audit -r /tmp/src/requirements.txt --progress-spinner off'
+      - PYTHONPATH=/tmp/hub python3 -m platform_team.hosting_review.submission_check /tmp/submission.zip /tmp/src /tmp/audit/requirements.txt
+      - 'cd /tmp/audit && PIP_ONLY_BINARY=:all: python3 -I -m pip_audit -r /tmp/audit/requirements.txt --progress-spinner off'
