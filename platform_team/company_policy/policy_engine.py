@@ -17,7 +17,7 @@ def ensure_policy(c, engine_id: str, name: str, statement: str, guardrail: bool 
     deleted, found or new: a FAILED status raises RuntimeError with the reasons, still not ACTIVE after `wait`
     seconds raises TimeoutError. Guardrail policies (BedrockGuardrails::...) use the definition key `policy`,
     the others `cedar`. `mode` is the enforcement mode (MODES): a new policy is made in it, and a policy of this
-    name in another mode is switched to it (set_mode), not made again. Any other mode raises ValueError."""
+    name in another mode is switched to it (set_mode), not made again; a switch that fails raises and keeps the policy. Any other mode raises ValueError."""
     if mode not in MODES:
         raise ValueError(f"unknown enforcement mode {mode!r}: one of {MODES}")
     found = list_policies(c, engine_id).get(name)
@@ -35,11 +35,11 @@ def ensure_policy(c, engine_id: str, name: str, statement: str, guardrail: bool 
     try:
         wait_status(lambda: c.ctl.get_policy(policyEngineId=engine_id, policyId=pid), ("ACTIVE",), f"policy {name}",
                     timeout=wait)
-        if found and found.get("enforcementMode", mode) != mode:
-            set_mode(c, engine_id, pid, mode, wait)
     except (RuntimeError, TimeoutError) as e:                      # leave nothing half-made, and say why
         drop_policy(c, engine_id, pid)
         raise type(e)(f"{e} (deleted)") from None
+    if found and found.get("enforcementMode", mode) != mode:
+        set_mode(c, engine_id, pid, mode, wait)     # outside the try: a working policy is never deleted for this
     return pid
 
 

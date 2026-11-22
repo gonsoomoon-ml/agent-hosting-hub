@@ -102,3 +102,23 @@ def test_set_mode_updates_the_policy_and_waits_for_it_to_be_active():
 
 def test_the_modes_are_the_two_the_service_knows():
     assert MODES == ("ACTIVE", "LOG_ONLY")
+
+
+@pytest.mark.parametrize("status, error", [("UPDATING", TimeoutError), ("UPDATE_FAILED", RuntimeError)])
+def test_a_failed_mode_switch_keeps_the_working_policy(status, error):
+    c = FakeClients(existing_policies={"stop_agent_quality_agent"}, policy_mode="ACTIVE")
+    real_get = c.ctl.get_policy
+    switched = []
+    real_update = c.ctl.update_policy
+
+    def update(**kw):
+        switched.append(kw)
+        return real_update(**kw)
+
+    def get(policyEngineId, policyId):
+        return {"status": status, "statusReasons": ["x"]} if switched else real_get(policyEngineId=policyEngineId, policyId=policyId)
+
+    c.ctl.update_policy, c.ctl.get_policy = update, get
+    with pytest.raises(error):
+        ensure_policy(c, "engine-1", "stop_agent_quality_agent", "forbid ...;", mode="LOG_ONLY", wait=1)
+    assert c.deleted_policies == [] and "stop_agent_quality_agent" in c.policies
