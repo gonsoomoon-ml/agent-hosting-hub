@@ -15,6 +15,34 @@ def test_bad_submission_is_refused(tmp_path):
     unpack(make(tmp_path, {"agent.py": "x"}), tmp_path / "out2")
     assert check_layout(tmp_path / "out2") == ["missing: main.py", "missing: requirements.txt"]
 
+
+# final review I-5 (Review Focus 4): every kind of unsafe name _unsafe handles, not only ../
+import stat
+
+@pytest.mark.parametrize("name", ["../evil.py", "app/../../evil.py", "/etc/evil.py", "C:\\evil.py", "C:/evil.py",
+                                  "c:evil.py", "..\\evil.py", "app\\..\\..\\evil.py", "\\\\server\\share\\evil.py",
+                                  "\\evil.py"])
+def test_every_unsafe_name_is_refused_before_anything_is_written(tmp_path, name):
+    out = tmp_path / "out"
+    with pytest.raises(ValueError, match="unsafe path in the submission"):
+        unpack(make(tmp_path, {"main.py": "x", name: "x"}), out)
+    assert not out.exists()
+
+def test_a_symbolic_link_is_refused_before_anything_is_written(tmp_path):
+    z = tmp_path / "s.zip"
+    with zipfile.ZipFile(z, "w") as f:
+        f.writestr("main.py", "x")
+        link = zipfile.ZipInfo("requirements.txt")
+        link.external_attr = (stat.S_IFLNK | 0o777) << 16
+        f.writestr(link, "/etc/passwd")
+    with pytest.raises(ValueError, match="unsafe path in the submission: requirements.txt"):
+        unpack(z, tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+def test_a_name_that_only_looks_odd_is_kept(tmp_path):
+    unpack(make(tmp_path, {"main.py": "x", "requirements.txt": "boto3\n", "notes..py": "x", "app/x.py": "x"}), tmp_path / "out")
+    assert (tmp_path / "out" / "notes..py").is_file() and (tmp_path / "out" / "app" / "x.py").is_file()
+
 def test_good_submission_unpacks(tmp_path):
     unpack(make(tmp_path, {"main.py": "x", "requirements.txt": "boto3\n"}), tmp_path / "out")
     assert check_layout(tmp_path / "out") == []

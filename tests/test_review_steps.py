@@ -134,6 +134,37 @@ def test_approve_refuses_a_record_that_changed_after_the_review_started():
         steps.approve({**CTX, "target": "QualityAgent"}, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
 
+# ------------------------------------------------------------------ final review I-5: a second run keeps what the first made
+
+RUNTIME_ARN = "arn:aws:bedrock-agentcore:us-west-2:111122223333:runtime/hubQualityAgent_default_agent-Ab12Cd34Ef"
+
+def _counting(c, client, method):
+    calls = []
+    original = getattr(getattr(c, client), method)
+    def counted(**kw):
+        calls.append(kw)
+        return original(**kw)
+    setattr(getattr(c, client), method, counted)
+    return calls
+
+def test_grant_run_again_keeps_the_role_and_its_permits():                 # Review Focus 1
+    c = FakeClients()
+    created = _counting(c, "iam", "create_role")
+    first = steps.grant(dict(CTX), c, ENV)
+    second = steps.grant(dict(CTX), c, ENV)
+    assert len(created) == 1 and list(c.roles) == ["hub-agent-quality_agent-role"]
+    assert first["roleArn"] == second["roleArn"] and first["toolPolicies"] == second["toolPolicies"]
+    assert len(c.created_policies) == 2 and c.deleted_policies == []
+
+def test_entry_run_again_keeps_the_target_and_its_policies():              # Review Focus 1
+    c = FakeClients(runtime_arn=RUNTIME_ARN)
+    created = _counting(c, "ctl", "create_gateway_target")
+    first = steps.entry({**CTX, "roleArn": "r"}, c, ENV)
+    second = steps.entry({**CTX, "roleArn": "r"}, c, ENV)
+    assert len(created) == 1 and list(c.targets) == ["QualityAgent"] and first["targetId"] == second["targetId"]
+    assert [p["name"] for p in c.created_policies] == ["review_permit_quality_agent", "guard_secret_quality_agent"]
+    assert (first["reviewPolicy"], first["guardPolicy"]) == (second["reviewPolicy"], second["guardPolicy"])
+
 # ------------------------------------------------------------------ final review I-1: Read binds the application to its record
 
 EVENT = {"detail": {"registryId": "reg-1", "registryRecordId": "rec-1"}}
