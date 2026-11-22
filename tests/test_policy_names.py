@@ -92,7 +92,10 @@ def test_a_cli_project_name_over_the_limit_is_refused_with_the_room_the_agent_na
     assert problems == ["CLI project name hubAbcdefghijKlmnopqrstu has 24 characters; the AgentCore CLI allows at "
                         "most 23, so with the prefix hub the agent name may have at most 20 characters besides "
                         "its underscores"]
-    assert validate(APP, CATALOG, Settings(prefix="longprefix12"))[0].startswith("CLI project name longprefix12QualityAgent")
+    long_prefix = validate({**APP, "name": "quality_agent_xy"}, CATALOG, Settings(prefix="longprefix"))   # 10, the most
+    assert long_prefix == ["CLI project name longprefixQualityAgentXy has 24 characters; the AgentCore CLI allows at "
+                           "most 23, so with the prefix longprefix the agent name may have at most 13 characters "
+                           "besides its underscores"]
 
 
 def test_read_refuses_a_name_that_does_not_fit_before_grant_makes_anything():

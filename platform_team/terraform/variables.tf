@@ -8,9 +8,15 @@ variable "region" {
 }
 
 variable "prefix" {
-  description = "Every resource name starts with this"
+  description = "Every resource name starts with this: 2 to 10 lower-case letters or digits, starting with a letter"
   type        = string
   default     = "hub"
+  # The same rule as PREFIX_PATTERN in shared_code/config.py: the policy engine name takes no "-", the CLI project
+  # only letters and digits, a gateway no "_", a bucket no upper case.
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.prefix))
+    error_message = "The prefix must be 2 to 10 lower-case letters or digits, starting with a letter (for example hub)."
+  }
 }
 
 variable "model_id" {

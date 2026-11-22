@@ -19,10 +19,21 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 - Terraform 1.9 이상, Python 3.12 이상과 [uv](https://docs.astral.sh/uv/), bash
 - AWS 자격 증명. 허브는 IAM 역할, 정책 엔진, 게이트웨이, Lambda, CodeBuild, Step Functions, S3 bucket 등을 만든다. 이 문서의 시간은 관리자 권한의 자격 증명으로 잰 것이다.
-- 리전 `us-west-2`. 셸의 기본 리전이 다르면 `AWS_REGION=us-west-2`(도구에 따라 `AWS_DEFAULT_REGION`도)를 준다. `.env.example`을 `.env`로 복사하면 `make`, `publish.sh`, `reject.sh`가 거기서 리전, 접두어, 모델을 읽는다(이 실행은 `.env` 없이 셸의 `AWS_REGION`과 기본값으로 돌렸으므로 `.env`를 읽는 길은 확인하지 않았다).
+- 리전 `us-west-2`. 셸의 기본 리전이 다르면 `AWS_REGION=us-west-2`(도구에 따라 `AWS_DEFAULT_REGION`도)를 준다. 리전, 접두어, 모델은 `.env`로도 정할 수 있다(아래 "`.env`").
 - Amazon Bedrock 모델 사용 권한. 에이전트가 부르는 모델은 `MODEL_ID`(기본값은 추론 프로파일 `us.anthropic.claude-haiku-4-5-20251001-v1:0`)다.
 - CDK bootstrap. 심사의 배포 단계가 AgentCore CLI(`agentcore deploy`, CDK)로 Runtime을 올리므로 계정과 리전에 기본 qualifier(`hnb659fds`)의 bootstrap 스택 `CDKToolkit`이 있어야 한다. 없으면 `npx aws-cdk bootstrap aws://<ACCOUNT>/us-west-2`로 만든다(이 실행은 계정에 이미 있던 bootstrap을 썼고, 이 명령은 확인하지 않았다). 리포의 명령은 로컬에서 Node.js를 쓰지 않는다. CLI는 CodeBuild 안에서 설치된다.
 - CloudWatch Transaction Search. 배포 build의 AgentCore CLI가 "enabling CloudWatch Transaction Search"를 찍는다. 이 실행의 계정에는 이미 켜져 있었고, 배포 역할은 그 설정을 읽기만 할 수 있다(`xray:GetTraceSegmentDestination`). 꺼진 계정에서 어떻게 되는지는 확인하지 않았다.
+
+### `.env`
+
+`.env.example`을 `.env`로 복사하면 허브의 세 값, 리전(`AWS_REGION`), 접두어(`DEMO_PREFIX`), 모델(`MODEL_ID`)을 거기서 읽는다. `make`, `publish.sh`, `reject.sh`, `e2e_checks/e2e_hosting.py`가 모두 같은 규칙을 따른다.
+
+- `.env`에서 읽는 것은 이 세 줄뿐이다. 다른 줄은 읽지도 내보내지도 않는다. 그래서 `.env`에 자격 증명을 적어 두어도 명령이 쓰는 자격 증명은 바뀌지 않는다.
+- 한 줄에 `이름=값`으로 쓴다. 따옴표, `export`, `=` 앞뒤의 빈칸은 쓰지 않는다. `make`와 셸은 따옴표를 다르게 읽기 때문이다. 같은 이름이 두 번 나오면 마지막 줄을 쓴다.
+- 어느 값을 쓰나: `make`의 명령줄에 준 값(`make deploy DEMO_PREFIX=demo`)이 가장 앞서고, 그다음이 `.env`, 그다음이 셸의 환경 변수, 마지막이 기본값(`us-west-2`, `hub`, 아래의 모델)이다. `make`가 부르는 명령(`make publish`, `make e2e`)은 `make`가 정한 값을 그대로 쓰고 `.env`를 다시 읽지 않는다(그 표시가 `HUB_ENV_LOADED=1`이다). `publish.sh`, `reject.sh`, `e2e_hosting.py`를 직접 부르면 같은 규칙으로 `.env`를 읽는다. `e2e_hosting.py`가 부르는 두 명령은 그 스크립트가 정한 값을 쓴다.
+- 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자다(`hub`, `demo2`). 정책 엔진, CLI 프로젝트, 게이트웨이, bucket의 이름이 접두어로 시작하는데, 그 이름들의 규칙을 모두 지키는 모양이 이것이다. 다른 모양이면 Terraform(`make deploy`)과 Python 명령이 아무것도 만들기 전에 거부한다.
+
+이 규칙은 단위 시험(`tests/test_hub_env.py`)으로 확인했다. AWS에서는 `.env` 없이 셸의 `AWS_REGION`과 기본값으로만 돌렸으므로, `.env`를 읽는 길은 AWS에서 확인하지 않았다.
 
 ## 다섯 명령
 

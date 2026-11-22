@@ -334,28 +334,7 @@ def test_reject_sh_runs_the_module_from_the_repo_whatever_the_current_folder(tmp
     assert r.returncode == 2 and "usage: reject.sh <agent>" in r.stderr
 
 
-@pytest.mark.parametrize("script, args", [
-    ("platform_team/hosting_review/reject.sh", ["quality_agent", "a reason"]),
-    ("dev_team/agent_template/publish.sh", ["."]),
-])
-def test_the_commands_read_the_env_file_as_make_does_and_never_print_it(tmp_path, script, args):
-    repo = tmp_path / "repo"                                    # a copy, so the test never reads or writes a real .env
-    (repo / script).parent.mkdir(parents=True)
-    (repo / script).write_bytes((ROOT / script).read_bytes())
-    (repo / script).chmod(0o755)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    (bin_dir / "uv").write_text('#!/usr/bin/env bash\necho "prefix=$DEMO_PREFIX region=$AWS_REGION"\n')
-    (bin_dir / "uv").chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "DEMO_PREFIX": "fromshell", "AWS_REGION": "us-west-2"}
-
-    def run():
-        return subprocess.run([str(repo / script), *args], cwd=tmp_path, env=env, capture_output=True, text=True)
-    assert run().stdout == "prefix=fromshell region=us-west-2\n"           # no .env: the shell's values
-    (repo / ".env").write_text("DEMO_PREFIX=fromdotenv\nSOME_TOKEN=do-not-print\n")
-    r = run()
-    assert r.stdout == "prefix=fromdotenv region=us-west-2\n"              # .env wins, as in make
-    assert "do-not-print" not in r.stdout + r.stderr
+# The two commands' reading of .env: tests/test_hub_env.py (one rule for make, the commands and the e2e script).
 
 
 # ------------------------------------------------------------------ final review M-3: what the hub made and did not find

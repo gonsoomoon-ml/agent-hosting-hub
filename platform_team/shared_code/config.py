@@ -2,10 +2,34 @@
 import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 DEFAULT_REGION = "us-west-2"
 DEFAULT_PREFIX = "hub"
 DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+# The prefix starts every name: the policy engine takes [A-Za-z][A-Za-z0-9_]*, the CLI project letters and digits,
+# a gateway no "_", a bucket no upper case. platform_team/terraform/variables.tf checks the same rule.
+PREFIX_PATTERN = r"[a-z][a-z0-9]{1,9}"
+
+# .env (README, ".env"): only these three names are read from it, as NAME=value lines. Make, publish.sh, reject.sh
+# and e2e_hosting.py follow the same rule; whoever reads .env sets ENV_LOADED, so the commands it runs do not again.
+HUB_VARIABLES = ("AWS_REGION", "DEMO_PREFIX", "MODEL_ID")
+ENV_LOADED = "HUB_ENV_LOADED"
+
+
+def env_file_updates(env, path: Path) -> dict[str, str]:
+    """What to set in the environment `env` from the .env file at `path`: the hub's three values it holds (they win
+    over the shell's; the last line of a name counts), and ENV_LOADED. Nothing when ENV_LOADED is set already (make, or
+    a caller that read .env). No other line of the file is read, so credentials in it are never exported."""
+    if env.get(ENV_LOADED):
+        return {}
+    path, found = Path(path), {}
+    if path.is_file():
+        for line in path.read_text().splitlines():
+            name, sep, value = line.partition("=")
+            if sep and name in HUB_VARIABLES:
+                found[name] = value
+    return {**found, ENV_LOADED: "1"}
 
 MAX_PROJECT_NAME = 23  # AgentCore CLI limit
 _PROJECT_NAME = re.compile(r"[A-Za-z][A-Za-z0-9]*")
@@ -22,6 +46,12 @@ class Settings:
     region: str = DEFAULT_REGION
     prefix: str = DEFAULT_PREFIX
     model_id: str = DEFAULT_MODEL_ID
+
+    def __post_init__(self):
+        if not isinstance(self.prefix, str) or not re.fullmatch(PREFIX_PATTERN, self.prefix):
+            raise ValueError(f"prefix {self.prefix!r} must be 2 to 10 lower-case letters or digits, starting with a "
+                             "letter: it starts the names of the policy engine, the CLI projects, the gateways and "
+                             "the bucket")
 
     @classmethod
     def from_env(cls) -> "Settings":

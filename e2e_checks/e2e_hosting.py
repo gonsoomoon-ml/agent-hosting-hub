@@ -50,7 +50,7 @@ from platform_team.hosting_review.agent_cleanup import remove_agent
 from platform_team.sample_tools.tool_data import INSPECTIONS, PARTS, TEST_RESULTS
 from platform_team.sample_tools.tool_schema import SHARED_READ, TARGETS
 from platform_team.shared_code.aws_helpers import Clients, mask, retry, signed_post
-from platform_team.shared_code.config import Settings
+from platform_team.shared_code.config import Settings, env_file_updates
 from platform_team.shared_code.hub_state import Platform, load
 
 REPO = Path(__file__).resolve().parents[1]
@@ -612,6 +612,9 @@ def observe_leftovers(c: Clients, s: Settings, agent: str) -> None:
 
 def main() -> int:
     global ACCOUNT
+    # .env by the rule make and the two commands follow (README, ".env"); the commands this script runs inherit the
+    # values chosen here and the mark that .env was read, so the checks and the commands use one hub.
+    os.environ.update(env_file_updates(os.environ, REPO / ".env"))
     s = Settings.from_env()
     c = Clients.for_settings(s)
     ACCOUNT = c.account

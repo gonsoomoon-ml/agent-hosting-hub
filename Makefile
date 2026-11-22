@@ -1,11 +1,17 @@
 # Targets run from the repo root. AGENT=<name> selects a developer-team agent.
-# Region, prefix and model come from .env (see .env.example) or the shell. Python reads them as AWS_REGION,
-# DEMO_PREFIX and MODEL_ID; Terraform gets the same values as TF_VAR_region, TF_VAR_prefix and TF_VAR_model_id.
--include .env
+# Region, prefix and model: Python reads them as AWS_REGION, DEMO_PREFIX and MODEL_ID; Terraform gets the same
+# values as TF_VAR_region, TF_VAR_prefix and TF_VAR_model_id. Where they come from (README, ".env"): a value on the
+# make command line, else the line NAME=value in .env (see .env.example), else the shell, else the default below.
+# Only these three lines of .env are read; nothing else in it becomes a make variable or is exported.
+# HUB_ENV_LOADED=1 tells the commands make runs (publish.sh, e2e_hosting.py) that the values are chosen already.
+HUB_VARIABLES := AWS_REGION DEMO_PREFIX MODEL_ID
+dotenv = $(if $(wildcard .env),$(shell sed -n 's/^$(1)=//p' .env | tail -n 1))
+$(foreach v,$(HUB_VARIABLES),$(if $(call dotenv,$(v)),$(eval $(v) := $(call dotenv,$(v)))))
 AWS_REGION ?= us-west-2
 DEMO_PREFIX ?= hub
 MODEL_ID ?= us.anthropic.claude-haiku-4-5-20251001-v1:0
 export AWS_REGION DEMO_PREFIX MODEL_ID
+export HUB_ENV_LOADED := 1
 export TF_VAR_region = $(AWS_REGION)
 export TF_VAR_prefix = $(DEMO_PREFIX)
 export TF_VAR_model_id = $(MODEL_ID)
@@ -40,6 +46,7 @@ seed:
 # So the question comes before anything changes: the destroy plan, then yes or no. AUTO_APPROVE=1 skips it.
 # Last, check_cleanup lists what of the hub is still in the account (it reads only) and ends with `still present: ...`.
 destroy: package
+	$(TF) init -input=false
 ifneq ($(AUTO_APPROVE),1)
 	$(TF) plan -destroy
 	@printf "Destroy everything above, every hosted agent with its catalog record, and the seeded catalog record? Only 'yes' is accepted: "; read answer; \

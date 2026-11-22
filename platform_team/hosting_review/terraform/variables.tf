@@ -9,9 +9,8 @@ variable "code_zip" {
 }
 
 variable "model_id" {
-  description = "Model the deployed agents call (the deploy build writes it into the Runtime's environment)"
+  description = "Model the deployed agents call (the deploy build writes it into the Runtime's environment); the start point passes var.model_id"
   type        = string
-  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "catalog_tools" {

@@ -7,9 +7,7 @@ repo="$(cd "$here/../.." && pwd)"
 [ $# -ge 1 ] || { echo "usage: publish.sh <agent_dir> [variant]" >&2; exit 2; }
 dir="$(cd "$1" && pwd)"
 shift
-# The hub's prefix and region come from <repo>/.env when it is there, as for make (it wins over the shell).
-set -a
-[ -f "$repo/.env" ] && . "$repo/.env"
-set +a
+# The hub's prefix, region and model: the three hub lines of <repo>/.env, as make reads them (README, ".env").
+. "$repo/platform_team/shared_code/hub_env.sh"
 cd "$repo"
 exec uv run python -m platform_team.agent_catalog.publish_agent "$dir" "$@"
