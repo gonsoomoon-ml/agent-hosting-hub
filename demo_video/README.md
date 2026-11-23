@@ -25,7 +25,7 @@ demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record
 ```
 
 - 스토리보드는 찍는 화면을 한 줄(`export const surfaces = ['hub'];`)로 적는다. `hub`는 허브 화면(`make ui`, `127.0.0.1:8300`), `dev`는 개발자 PC의 터미널(`tools/dev_pc/run.sh term`, `127.0.0.1:7681`), `user`는 사용자의 셸(`tools/user_shell.sh up`, `127.0.0.1:7682`)이다. `record.sh`는 그 화면이 답하지 않으면 띄우는 명령을 말하고 멈춘다.
-- 녹화는 `out/raw/<장면>.webm`, 카메라 기록 `out/raw/<장면>.camlog.json`, 샷마다 화면의 글 `out/raw/<장면>.texts.txt`로 남는다. 같은 장면을 다시 찍으면 앞의 것은 `out/raw/old/`로 옮긴다. 끝나면 샷, 메모, 선택자가 아무것도 찾지 못한 샷을 찍고, 화면의 글에 12자리 숫자나 이메일 주소가 있으면 그 줄을 (숫자는 가리고) 찍고 종료 값 1로 끝난다.
+- 녹화는 `out/raw/<장면>.webm`, 카메라 기록 `out/raw/<장면>.camlog.json`, 화면의 글 `out/raw/<장면>.texts.txt`로 남는다. 화면의 글은 샷마다 하나이고, Claude Code 장면에서는 스토리보드가 샷 사이에 읽은 화면도 처음 본 것마다 하나씩 들어간다. 같은 장면을 다시 찍으면 앞의 것은 `out/raw/old/`로 옮긴다. 끝나면 샷, 메모, 선택자가 아무것도 찾지 못한 샷을 찍고, 화면의 글에 12자리 숫자나 이메일 주소가 있으면 그 줄을 (숫자는 가리고) 찍고 종료 값 1로 끝난다(`lib/check_texts.sh`. 개발자 PC의 이름 `dev@dev-pc`는 가리고 그 줄의 나머지도 검사한다).
 - 스토리보드는 먼저 허브가 그 장면에 필요한 상태인지 본다(`lib/state.mjs`가 `lib/hub_state.py`로 카탈로그의 record와 상태, 도는 심사, 전사 정책의 모드, 커스텀 가드레일, 멈춘 에이전트를 읽는다. 녹화하는 사람의 자격 증명으로 읽기만 한다). 아니면 무엇이 다른지 한 줄로 말하고 아무것도 하지 않는다.
 - 장면이 치거나 기다리는 글은 모두 `lib/texts.mjs`에 언어별로 있다. 스토리보드는 `--lang`을 읽는다. 지금은 한국어만 찍는다.
 - 허브 화면의 버튼은 폼 POST이고 303으로 페이지를 다시 연다. 작업이 끝나면 페이지가 한 번 새로 읽힌다. 카메라는 페이지 안에 있으므로 `lib/hub.mjs`가 새 페이지마다 카메라를 다시 넣는다.
@@ -50,11 +50,13 @@ demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record
 
 ### Claude Code 장면
 
-Claude Code가 화면에 찍는 것은 믿지 않는다. 스토리보드(`lib/claude.mjs`)는 화면을 보고 언제 넘어갈지와 카메라를 어디에 둘지만 정한다. Claude Code가 물으면, 만드는 에이전트의 폴더 안의 파일이거나 코드를 돌리지 않고 다른 곳에 쓰지 않는 셸 명령일 때만 "1. Yes"(그 한 번)를 고르고, 그 밖의 것(코드 실행, 올리기, 다른 곳에 쓰기, 화면에 다 보이지 않는 셸 명령)에는 No를 고른다. "다시 묻지 않기"는 고르지 않는다.
+Claude Code가 화면에 찍는 것은 믿지 않는다(묻는 말의 글은 다른 에이전트가 정한다). 스토리보드(`lib/claude.mjs`)는 화면을 보고 언제 넘어갈지와 카메라를 어디에 둘지만 정한다. Claude Code가 물으면 "1. Yes"(그 한 번)는 다음이 모두 맞을 때만 고른다. 묻는 창이 Claude Code 2.1.330이 그리는 모양 그대로이고(줄, 제목, 점선, `│` 뒤의 명령 줄, 점선, 물음, 선택지) 가려진 줄이 없고, 표시(`❯`)가 "1. Yes"에 있다. 셸 명령이면 그 안의 모든 단순 명령이 읽기만 하는 명령(작업 폴더 안으로의 `cd`, `ls`, `cat`, `head`, `tail`, `grep`, `wc`, `cut`, `sort`(`-o` 없이), `diff`, `pwd`, `echo`, `find`(`-exec`, `-ok`, `-delete`, `-fprint` 없이), `sed -n '<줄>p'`, `tr`, `basename`, `dirname`, `stat`)으로 시작하고, `/dev/null` 말고는 리다이렉트가 없고, 이 검사가 읽지 않는 구문(명령 치환, 백틱, `$`, 괄호, 중괄호, `<`와 here-document, 주석, 백그라운드 작업, 명령 앞의 변수 대입)이 없고, 경로가 모두 작업 폴더 안이다. 줄바꿈은 명령의 끝으로도, 길어서 접힌 줄로도 읽어서 두 가지 모두 읽기만 할 때만 Yes다. 파일을 쓰는 셸 명령은 에이전트의 폴더 안이어도 No다(파일은 Claude Code의 쓰기 도구로 만든다). 파일을 만들거나 고치는 물음이면 창에 보인 경로가 절대 경로(또는 `~/`)로 `dev_team/quality_agent/` 안이고 `.claude`, `.mcp.json`, `CLAUDE.md`가 아니고 물음이 말하는 파일과 같을 때만 Yes다. 상대 경로는 Claude Code의 셸이 선 폴더를 기준으로 보이므로 자리를 알 수 없어 No다. 그 밖에는 모두 No다. Yes를 누르기 바로 전에 화면을 다시 읽어서, 같은 창에 표시가 "1. Yes"에 있을 때만 Enter를 누르고, 아니면 Esc(No)를 누르고 무엇이 보였는지 한 줄로 말하고 장면을 멈춘다. "다시 묻지 않기"는 고르지 않는다.
+
+2026-11-23의 `11-find`는 이 검사의 앞선 꼴로 찍었다. 그 꼴은 명령 줄 앞의 `│`를 떼지 않고 읽어서, Claude Code가 그리는 창에서는 코드를 돌리는 명령에도 Yes를 했을 것이다(그 꼴을 그 창의 모양에 돌려 보니 시험한 우회 35가지 가운데 31가지에 Yes였다). 그 장면에서 한 대답은 다섯이었다. 읽기만 하는 명령 넷(`cd`, `ls`, `cat`, `grep`, `sed -n`, `head`, `tail`, `for` 문 안의 `echo`와 `cat`)에 Yes, 앞의 43줄이 가려진 명령(폴더를 만들고 here-document로 파일을 쓰는 것)에 No였다. 지금의 검사라면 넷 가운데 `cd /home/dev/work; grep … uv.lock`에만 Yes이고 `for` 문을 쓴 둘과 줄바꿈 뒤에 경로로 시작하는 줄이 있는 하나는 No다.
 
 2026-11-23의 녹화(`11-find`, UTC 11:50~12:07, 다섯 번 찍었다)에서 본 것이다. 첫 번째에는 "그 도구의 record를 보여 주세요"라는 요청에 Claude Code가 record의 ARN(계정 ID가 들어 있다)을 표로 보였고, `record.sh`의 글 검사가 그것을 잡아 그 녹화를 버렸다. 그 뒤로 요청은 도구의 이름, 설명, 입력을 묻는다. 그다음 세 번은 스토리보드가 묻는 말에 잘못 No를 고른 것(따옴표 안의 `|aws`를 명령으로 읽은 것, 긴 미리보기로 경로가 화면 밖에 있던 파일, 두 줄로 접힌 `cp` 명령)이어서 고치고 다시 찍었다. 다섯 번째에서 Claude Code는 읽기 넷을 묻고(Yes), 앞의 43줄이 화면에 보이지 않는 긴 명령(`mkdir`, `cp`, here-document로 파일 쓰기)을 물었고(No), 그 뒤 파일 다섯을 `dev_team/quality_agent/`에 묻지 않고 썼다. 아무것도 실행하거나 올리지 않았다.
 
-같은 날 Claude Code가 셸에서 `cd dev_team`을 한 뒤에는 `dev_team/` 아래의 파일을 만들 때도 물었고, 화면의 경로는 `dev_team/`을 기준으로 보였다(`quality_agent/agent.json`). `./`로 시작하는 권한 규칙이 Claude Code의 그때 폴더를 기준으로 읽히는 것으로 보인다. 그렇다면 그렇게 `cd`한 뒤에는 `Edit(./demo_scenes/**)` 같은 거부 규칙도 맞지 않아 거부 대신 묻게 된다(해 보지 않았다). `Read(//run/dev-pc/**)`는 절대 경로라 해당하지 않는다.
+같은 날 Claude Code가 셸에서 `cd dev_team`을 한 뒤에는 `dev_team/` 아래의 파일을 만들 때도 물었고, 화면의 경로는 `dev_team/`을 기준으로 보였다(`quality_agent/agent.json`). 12:54~12:56(UTC)에 컨테이너의 대화형 세션에서 확인했다. `cd demo_scenes` 뒤에 편집 도구로 `search`를 고치는 것과, `cd dev_team` 뒤에 `dev_team/x/.claude/skills/y/SKILL.md`를 쓰는 것은 둘 다 `File is in a directory that is denied by your permission settings.`로 거부되었다. 거부 규칙은 `cd` 뒤에도 맞았다. `dev_team/quality_agent/` 아래에 쓰는 것은 `cd` 없이는 묻지 않았고(파일이 생겼다), `cd dev_team` 뒤에는 절대 경로로 써도, 상대 경로로 써도 물었다(No로 답해서 생기지 않았다). 그러니 `cd` 뒤에 맞지 않게 되는 것은 허락 규칙 `Edit(./dev_team/**)`이고, 그때 Claude Code는 거부하지 않고 묻는다. 설정은 그대로 두었다. Claude Code는 `cd`만 있는 셸 명령은 묻지 않고 돌렸다.
 
 ## 개발자 PC (`tools/dev_pc/`)
 

@@ -18,12 +18,22 @@ export async function press(page, rec, tap, locator) {
   await rec.install();
 }
 
-/** After a press that started a job: wait until the job panel reads finished (the page reloads once when it ends) and
- * put the camera back after the reload. Returns the job's state (done, failed) and its lines. onLines(lines) is called
- * when the job's lines change while it runs (to re-frame the panel). */
+/** Whether a job the page shows has ended, as the page draws it. The page follows a job only when it was drawn
+ * running (base.html's script), and then reloads once when the job ends: so a page first drawn running has ended only
+ * after that reload and in a finished state; a page first drawn finished follows nothing and no reload will come.
+ * first: the job panel's state on the first look after the press ('' when there was none); state: now. */
+export function jobEnded({ first, state, reloaded }) {
+  if (!first) return false;
+  if (first !== 'running') return true;
+  return reloaded && !!state && state !== 'running';
+}
+
+/** After a press that started a job: wait until the job has ended as jobEnded() says, putting the camera back after
+ * the page's one reload. Returns the job's state (done, failed) and its lines. onLines(lines) is called when the
+ * job's lines change while it runs (to re-frame the panel). */
 export async function waitForJob(page, rec, { timeoutMs = 300000, onLines } = {}) {
   const t0 = Date.now();
-  let sawRunning = false, reloaded = false, lines = '';
+  let first = '', reloaded = false, lines = '';
   while (Date.now() - t0 < timeoutMs) {
     let s;
     try {
@@ -42,8 +52,8 @@ export async function waitForJob(page, rec, { timeoutMs = 300000, onLines } = {}
       reloaded = true;
       continue;
     }
-    if (s.state === 'running') sawRunning = true;
-    else if (s.state && (reloaded || !sawRunning)) return { state: s.state, lines: s.lines };
+    if (!first) first = s.state;
+    if (jobEnded({ first, state: s.state, reloaded })) return { state: s.state, lines: s.lines };
     if (s.lines !== lines) { lines = s.lines; if (onLines) await onLines(lines); }
     await page.waitForTimeout(300);
   }

@@ -6,8 +6,8 @@
 
 Every caption and card text lives here under a language key. Before anything is written, each text is checked against
 the video plugin's rules for captions (references/script.md of the plugin):
-  - at most 45 characters; no em dash, middle dot or arrow (U+2014, U+00B7, U+2192); no speed label and no note about
-    the recording;
+  - at most 45 characters; no em dash, middle dot or arrow (U+2014, U+00B7, U+2192); no speed label (a dimension such
+    as "M4 x 12 mm" is not one) and no note about the recording;
   - a caption, a chapter's title and a card's row is one sentence in the 합니다 style (it ends in 니다);
   - a stage carries no more captions than its budget (BUDGET);
   - a reel names only clips and cards defined here.
@@ -31,7 +31,8 @@ PLUGIN_URL = "https://github.com/gonsoomoon-ml/claude-extensions/tree/main/plugi
 
 LIMIT = 45
 BANNED = {"—": "an em dash", "·": "a middle dot", "→": "an arrow"}
-SPEED = re.compile(r"\d+(\.\d+)?\s*(배속|배\b|[x×]\b)|배속|빨리 감기|느리게 재생")
+# a number with 배속, 배 or x/× is a speed label, except a dimension such as "M4 x 12 mm" (x followed by a number)
+SPEED = re.compile(r"\d+(\.\d+)?\s*(배속|배\b|[x×](?!\s*\d))|배속|빨리 감기|느리게 재생")
 RECORDING = re.compile(r"녹화|촬영|재생 속도|이 영상에서는")
 STAGES = {0: "준비", 1: "1단계", 2: "2단계", 3: "3단계", 4: "4단계", 5: "5단계"}
 BUDGET = {0: 5, 1: 11, 2: 12, 3: 8, 4: 10, 5: 18}     # captions per stage, all clips of the stage together

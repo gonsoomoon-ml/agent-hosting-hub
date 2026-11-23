@@ -444,6 +444,15 @@ def test_a_caption_with_a_speed_label_or_a_recording_note_stops_the_build(tmp_pa
     assert text in capsys.readouterr().err
 
 
+def test_a_dimension_is_not_a_speed_label(tmp_path, capsys):
+    # the part's specification that 26-answers shows may be quoted in a caption; a speed label still stops the build
+    build = _build()
+    build.run(_with_beat("P-100의 규격은 M4 x 12 mm, 강철입니다"), lang="ko", out=tmp_path / "ok", check_only=True)
+    for text in ("심사를 4x로 빠르게 봅니다", "심사를 1.25× 속도로 봅니다"):
+        _refused(_with_beat(text), tmp_path, text)
+        assert text in capsys.readouterr().err
+
+
 def test_a_stage_over_its_caption_budget_stops_the_build(tmp_path, capsys):
     # 준비 may carry five captions in all; a sixth is refused
     build = _build()
@@ -620,8 +629,8 @@ def test_every_storyboard_names_its_surfaces_checks_the_hubs_state_first_and_rea
 
 
 def test_the_recording_files_name_no_host_home_folder_person_or_account():
-    files = [*SCENES.rglob("*.mjs"), *SCENES.rglob("*.py"), SCENES / "record.sh", VIDEO / "tools" / "user_shell.sh",
-             VIDEO / "scripts" / "build.py"]
+    files = [*SCENES.rglob("*.mjs"), *SCENES.rglob("*.py"), *SCENES.rglob("*.sh"), VIDEO / "tools" / "user_shell.sh",
+             VIDEO / "scripts" / "build.py", ROOT / "tests" / "claude_code_dialogs.json"]
     assert len(files) > 10
     for f in files:
         text = f.read_text(encoding="utf-8")
@@ -632,11 +641,34 @@ def test_the_recording_files_name_no_host_home_folder_person_or_account():
     assert "process.env.DEMO_VIDEO_PLUGIN" in (SCENES / "lib" / "plugin.mjs").read_text(encoding="utf-8")
 
 
+# A stand-in for the plugin's term.mjs: the page is scripted (page.next() gives the next screen's rows, the last one
+# repeats) and every key and paste is written to page.log.
+STAND_IN_TERM = """
+export const screenText = async page => page.next().join('\\n');
+export const paste = async (page, text) => { page.log.push(['paste', text]); };
+export const type = async (page, text) => { page.log.push(['type', text]); };
+export const waitPrompt = async () => true;
+export const waitFor = async () => true;
+export const rowsRect = async () => null;
+"""
+FAKE_PAGE = """
+const fakePage = screens => {
+  let i = 0;
+  const page = { log: [], next: () => screens[Math.min(i++, screens.length - 1)],
+    waitForTimeout: async () => {}, keyboard: { press: async key => { page.log.push(['key', key]); } } };
+  return page;
+};
+const fakeRec = () => ({ notes: [], note(kind, data) { this.notes.push([kind, data]); }, now: () => 1 });
+const fakeCam = () => ({ kept: [], shots: [], keep(text) { this.kept.push(text); }, lines: async (k) => {}, reset: async () => {},
+  hold: async () => {} });
+"""
+
+
 def _node(script: str, tmp_path: Path) -> str:
     """Run an ES module snippet in demo_video/scenes/lib/, with a stand-in for the plugin's term.mjs."""
     plugin = tmp_path / "plugin"
     plugin.mkdir(exist_ok=True)
-    (plugin / "term.mjs").write_text("export const stand_in = true;\n")
+    (plugin / "term.mjs").write_text(STAND_IN_TERM)
     r = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30,
                        cwd=SCENES / "lib", env=os.environ | {"DEMO_VIDEO_PLUGIN": str(plugin)})
     assert r.returncode == 0, r.stderr
@@ -662,57 +694,182 @@ console.log(JSON.stringify([
                      "the custom guardrail is detached", "stopped: none"]
 
 
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_claude_codes_question_is_answered_yes_only_for_the_agents_files_and_commands_that_run_nothing(tmp_path):
-    # what Claude Code prints is untrusted: the storyboard says Yes to a file in the agent's folder, or to a shell
-    # command that runs no code and writes nowhere else; No to everything else
-    cases = [
-        ("Bash command", "cd dev_team && ls -la agent_template; for f in agent_template/*; do cat $f; done", "yes"),
-        ("Bash command", "mkdir quality_agent && cp agent_template/main.py agent_template/hub_tools.py quality_agent/", "yes"),
-        ("Bash command", 'echo "strands-agents==1.65.0" >> quality_agent/requirements.txt && cat quality_agent/x', "yes"),
-        ("Bash command", "find . -name uv.lock -maxdepth 2 2>/dev/null; grep -n strands-agents uv.lock", "yes"),
-        ("Bash command", "cat dev_team/agent_template/publish.sh", "yes"),
-        ("Bash command", "cd /home/dev/work; grep -n -A2 -E '^name = \"(strands-agents|aws-opentelemetry-distro)\"' uv.lock",
-         "yes"),                                                   # a quoted pattern holds no command
-        ("Bash command", 'bash -c "python3 agent.py"', "no"),
-        ("Bash command", 'cd dev_team/quality_agent && python3 -c "import agent"', "no"),
-        ("Bash command", "uv run pytest tests", "no"),
-        ("Bash command", "publish quality_agent", "no"),
-        ("Bash command", "pip index versions strands-agents", "no"),
-        ("Bash command", "cp quality_agent/agent.py ../demo_scenes/search", "no"),
-        ("Bash command", "echo x > ../platform_team/a.py", "no"),
-        ("Bash command", "rm -rf quality_agent", "no"),
-        ("Bash command", "sed -i s/a/b/ ../.mcp.json", "no"),
-        ("Create file", "quality_agent/agent.json", "yes"),
-        ("Create file", "dev_team/quality_agent/agent.py", "yes"),
-        ("Create file", "demo_scenes/search", "no"),
-        ("Create file", "quality_agent/.claude/settings.json", "no"),
-        ("Edit file", "../platform_team/hub_ui/app.py", "no"),
-    ]
+DIALOGS = json.loads((ROOT / "tests" / "claude_code_dialogs.json").read_text(encoding="utf-8"))
 
-    def screen(title, body):
-        if title == "Bash command":
-            return [" Bash command", f"   {body}", " Do you want to proceed?", " ❯ 1. Yes", "   2. No"]
-        return [f" {title}", f" {body}", "  1 {", f" Do you want to create {body.rsplit('/', 1)[-1]}?", " ❯ 1. Yes"]
-    screens = [screen(a, b) for a, b, _ in cases] + [
-        # a long dialog: the shell command's first lines are hidden, so it is never a yes
-        [" Bash command", "   cat agent_template/README.md", " ↑ 43 more lines", " Do you want to proceed?", " ❯ 1. Yes"],
-        ["   cat quality_agent/agent.json", " ↑ 12 more lines", " Do you want to proceed?"],
-        # a long file preview pushed the path off the screen: the file name in the question decides
-        [" │     return _agent", " │", " Do you want to create agent.py?", " ❯ 1. Yes"],
-        [" │ {}", " Do you want to create settings.json?", " ❯ 1. Yes"],
-        [" │ x", " Do you want to create CLAUDE.md?"],
-        # a long command wrapped over two rows of the terminal's width is one command (cp's destination is on row two)
-        [" Bash command", "   mkdir quality_agent && cp agent_template/main.py agent_template/hub_tools.py agent_template/agent.json",
-         "   agent_template/requirements.txt quality_agent/ && ls quality_agent", " Do you want to proceed?"],
-        # a short row is a line of its own: the mv on the next row is a command that writes elsewhere
-        [" Bash command", "   cat quality_agent/agent.json", "   mv quality_agent ../platform_team", " Do you want to proceed?"],
-    ]
-    wants = [want for _, _, want in cases] + ["no", "no", "yes", "no", "no", "yes", "no"]
-    out = _node("import { verdict } from './claude.mjs';\nconst screens = " + json.dumps(screens)
-                + ";\nconsole.log(JSON.stringify(screens.map(r => verdict(r, r.findIndex(l => /Do you want/.test(l))))));",
-                tmp_path)
-    assert json.loads(out) == wants
+
+def _shell_screen(command_rows: list[str]) -> list[str]:
+    """The real Bash question of the recorded take (its fourth question, the one that also offered "2. Yes, and don't
+    ask again for: cd *"), with its command rows replaced: each row behind the dialog's gutter."""
+    rows = list(DIALOGS["take_ask4"])
+    first = next(i for i, r in enumerate(rows) if r.startswith(" │ "))
+    last = max(i for i, r in enumerate(rows[:rows.index(" Do you want to proceed?")]) if r.startswith(" │ ")
+               and not r.startswith(" │ Compound"))
+    return rows[:first] + [f" │ {r}" for r in command_rows] + rows[last + 1:]
+
+
+def _file_screen(path_row: str) -> list[str]:
+    """The real file question of an earlier attempt (create main.py), with its path row replaced (and the question
+    naming that path's file)."""
+    rows = list(DIALOGS["attempt4_create_main"])
+    i = rows.index(" Create file")
+    name = path_row.rsplit("/", 1)[-1]
+    return [r.replace("Do you want to create main.py?", f"Do you want to create {name}?")
+            for r in rows[:i + 1] + [f" {path_row}"] + rows[i + 2:]]
+
+
+def _verdicts(screens: list[list[str]], tmp_path) -> list[str]:
+    given = tmp_path / "screens.json"
+    given.write_text(json.dumps(screens), encoding="utf-8")
+    out = _node("import fs from 'node:fs';\nimport { verdict } from './claude.mjs';\nconst screens = JSON.parse("
+                f"fs.readFileSync({json.dumps(str(given))}, 'utf8'));\n"
+                "console.log(JSON.stringify(screens.map(r => verdict(r))));", tmp_path)
+    return json.loads(out)
+
+
+READ_ONLY = [["cat dev_team/agent_template/README.md"], ["ls -la dev_team/agent_template dev_team/release_review"],
+             ["cd /home/dev/work/dev_team; ls agent_template"], ["grep -n -A1 -E '^name = \"strands-agents\"' uv.lock"],
+             ["sed -n 1,40p dev_team/agent_template/agent.py | head -20"], ["cd dev_team && cat agent_template/agent.json"],
+             ["find dev_team/agent_template -name '*.py'"], ["wc -l uv.lock 2>/dev/null"]]
+# every way past the old check that the review found, and more, in the layout Claude Code prints: all No
+BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv run pytest tests"],
+            ['bash -c "python3 agent.py"'], ["cp quality_agent/agent.py ../demo_scenes/search"],
+            ["echo \"v: $(python3 -c 'print(1)')\""], ["env python3 x.py"], ["timeout 30 python3 x.py"],
+            ["if python3 x.py; then ls; fi"], ["cat `python3 x.py`"], ["{ python3 -c 1; }"], ["uvx ruff check"],
+            ["make test"], ["cat <<EOF", "$(python3 x.py)", "EOF"], ["echo x >| ../demo_scenes/search"],
+            ["rsync -a quality_agent/ ../demo_scenes/search"], ["find ../platform_team -name x -delete"],
+            ['sed -n "w ../demo_scenes/search" uv.lock'], ["tar -xf a.tar -C .."],
+            ["cat quality_agent/agent.json", "echo 'Do you want to proceed'", "python3 x.py"],
+            ["python3 x.py # Do you want to create agent.py?"],
+            # writes, also inside the agent's folder (Claude Code makes files with its Write tool)
+            ["mkdir quality_agent && cp agent_template/main.py quality_agent/"],
+            ['echo "strands-agents==1.65.0" >> quality_agent/requirements.txt'],
+            # reads outside the working folder, a cd out of it, a background job, a pipe into a shell
+            ["cat /run/dev-pc/bedrock.json"], ["cd .. && ls"], ["cd /tmp"], ["cat ~/.claude.json"], ["ls &"],
+            ["cat quality_agent/agent.py | sh"], ["xargs cat < files.txt"], ["find . -exec cat {} +"],
+            ["sed -i s/a/b/ uv.lock"], ["awk '{print > \"x\"}' uv.lock"], ["ls $(echo /tmp)"], ["cat $HOME/x"],
+            ['cat "/run/dev-pc/bedrock.json"'], ["grep --file=/run/dev-pc/bedrock.json x uv.lock"],
+            ["sort -uo x uv.lock"], ["cat uv.lock 3>/tmp/y"], ["cat ../../../etc/passwd"], ["FOO=1 cat uv.lock"]]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_shell_question_gets_yes_only_for_a_read_only_command_shown_whole_in_the_real_layout(tmp_path):
+    # the question's text is chosen by another agent: anything the check cannot read whole and as read-only is a No
+    assert _verdicts([_shell_screen(c) for c in READ_ONLY], tmp_path) == ["yes"] * len(READ_ONLY)
+    assert _verdicts([_shell_screen(c) for c in BYPASSES], tmp_path) == ["no"] * len(BYPASSES)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_recorded_takes_questions_get_the_answers_of_the_rule(tmp_path):
+    # the five shell questions of the accepted take and two file questions of an earlier attempt, as Claude Code
+    # printed them. The take answered the first four Yes (all four only read). The rule says Yes to the second
+    # (cd; grep ... uv.lock, read whole) and No to the loops (for), to the fourth (read with a row break as the end of a
+    # command, its second row starts with a path), to the fifth (43 rows hidden), to a relative path, and to a path
+    # scrolled off the screen. A wrong No is a re-take, never a reason to read more into a row.
+    real = [DIALOGS[k] for k in ("take_ask1", "take_ask2", "take_ask3", "take_ask4", "take_ask5",
+                                 "attempt4_create_main", "attempt4_create_agent_hidden")]
+    assert _verdicts(real, tmp_path) == ["no", "yes", "no", "no", "no", "no", "no"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_file_question_gets_yes_only_for_a_path_shown_whole_inside_the_agents_folder(tmp_path):
+    screens = [_file_screen(p) for p in (
+        "/home/dev/work/dev_team/quality_agent/agent.py", "~/work/dev_team/quality_agent/requirements.txt",
+        # a relative path is shown relative to Claude Code's folder, which follows its cd: it cannot be placed
+        "quality_agent/main.py", "dev_team/quality_agent/main.py",
+        "/home/dev/work/demo_scenes/search", "/home/dev/work/dev_team/quality_agent/../../demo_scenes/search",
+        "/home/dev/work/dev_team/quality_agent/.claude/settings.json", "/home/dev/work/dev_team/quality_agent/CLAUDE.md",
+        "/home/dev/work/dev_team/quality_agent/.mcp.json", "/home/dev/work/dev_team/quality_agent_x/agent.py")]
+    # the path scrolled off the screen ("↑ 23 more lines"): No, whatever the question names
+    screens.append(DIALOGS["attempt4_create_agent_hidden"])
+    assert _verdicts(screens, tmp_path) == ["yes", "yes"] + ["no"] * 9
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_screen_outside_the_known_layout_is_a_no(tmp_path):
+    good = _shell_screen(["cat uv.lock"])
+    no_rule = [r for r in good if not r.startswith("─")]                      # the rule above the title is gone
+    no_gutter = [r.replace(" │ cat uv.lock", " cat uv.lock") for r in good]   # a command row without the gutter
+    marker_on_2 = [r.replace(" ❯ 1. Yes", "   1. Yes").replace("   2. Yes, and", " ❯ 2. Yes, and") for r in good]
+    no_options = good[:good.index(" Do you want to proceed?") + 1]
+    hidden = good[:-1] + [" ↑ 3 more lines", good[-1]]
+    assert _verdicts([good, no_rule, no_gutter, marker_on_2, no_options, hidden], tmp_path) == ["yes"] + ["no"] * 5
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_yes_key_is_pressed_only_on_the_same_dialog_with_1_yes_highlighted(tmp_path):
+    good = _shell_screen(["cat uv.lock"])
+    marker_on_2 = [r.replace(" ❯ 1. Yes", "   1. Yes").replace("   2. Yes, and", " ❯ 2. Yes, and") for r in good]
+    other = _shell_screen(["cat dev_team/agent_template/README.md"])
+    busy = ["✻ Cooking… (2s · esc to interrupt)"]
+    done = ["✻ Cooked for 3s", "❯ "]
+    run = """import { request } from './claude.mjs';
+""" + FAKE_PAGE + """
+const out = [];
+for (const [name, screens] of Object.entries(%s)) {
+  const page = fakePage(screens), rec = fakeRec(), cam = fakeCam();
+  let error = '';
+  try { await request(page, rec, cam, 'x', { noRun: 'no', idleMs: 0 }); } catch (e) { error = e.message; }
+  out.push([name, page.log.filter(l => l[0] === 'key').map(l => l[1]), error]);
+}
+console.log(JSON.stringify(out));"""
+    cases = {"same": [busy, good, good, busy, done, done],
+             "marker_moved": [busy, good, marker_on_2, done],
+             "dialog_changed": [busy, good, other, done]}
+    got = {name: (keys, error) for name, keys, error in json.loads(_node(run % json.dumps(cases), tmp_path))}
+    assert got["same"] == (["Enter", "Enter"], "")                    # the request's Enter, then 1. Yes
+    for name in ("marker_moved", "dialog_changed"):
+        keys, error = got[name]
+        assert keys == ["Enter", "Escape"] and error.startswith("the question changed before the answer: "), name
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_every_screen_a_claude_code_session_shows_is_kept_for_the_text_check(tmp_path):
+    run = """import { request } from './claude.mjs';
+import { kit } from './take.mjs';
+""" + FAKE_PAGE + """
+const screens = [['✻ Cooking… (1s · esc to interrupt)'], ['✻ Cooking… (1s · esc to interrupt)'],
+                 ['arn:aws:iam::123456789012:role/x', '✻ Cooking… (2s · esc to interrupt)'], ['✻ Cooked for 3s']];
+const page = fakePage(screens), rec = fakeRec(), cam = fakeCam();
+await request(page, rec, cam, 'x', { idleMs: 0 });
+const k = kit({ page: { evaluate: async () => '' }, rec, option: (n, d) => ({ '--out': %s, '--name': 'take' })[n] ?? d });
+k.keep('a'); k.keep('a'); k.keep('b');
+console.log(JSON.stringify(cam.kept));""" % json.dumps(str(tmp_path))
+    kept = json.loads(_node(run, tmp_path))
+    # each screen not seen before, in order (the repeated one once)
+    assert kept == [s for s in ["✻ Cooking… (1s · esc to interrupt)",
+                                "arn:aws:iam::123456789012:role/x\n✻ Cooking… (2s · esc to interrupt)",
+                                "✻ Cooked for 3s"]]
+    text = (tmp_path / "take.texts.txt").read_text(encoding="utf-8")
+    assert text.count("\na\n") == 1 and text.count("\nb\n") == 1 and text.count("== ") == 2
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_job_is_followed_until_the_pages_one_reload_or_until_no_reload_can_come(tmp_path):
+    out = _node("""import { jobEnded } from './hub.mjs';
+const cases = [
+  { first: '', state: '', reloaded: false },                 // no job panel yet
+  { first: 'running', state: 'running', reloaded: false },   // drawn running: the page will reload when it ends
+  { first: 'running', state: 'done', reloaded: false },      // (a finished state before the reload is not possible)
+  { first: 'running', state: 'done', reloaded: true },       // the reload came
+  { first: 'running', state: 'failed', reloaded: true },
+  { first: 'done', state: 'done', reloaded: false },         // drawn finished: the page follows no job, no reload
+];
+console.log(JSON.stringify(cases.map(jobEnded)));""", tmp_path)
+    assert json.loads(out) == [False, False, False, True, True, True]
+
+
+def test_the_text_check_masks_the_containers_name_instead_of_dropping_its_line(tmp_path):
+    check = SCENES / "lib" / "check_texts.sh"
+    texts = tmp_path / "take.texts.txt"
+    texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ echo 123456789012\n== 2.0 end\ndev@dev-pc:~/work$\n")
+    r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "123456789012" not in r.stdout and "<12 digits>" in r.stdout
+    texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ ls\n== 2.0 end\nwrite to someone@example.com\n")
+    r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "someone@example.com" in r.stdout and "dev@dev-pc" not in r.stdout
+    texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ ls\n")
+    r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
+    assert (r.returncode, r.stdout) == (0, "texts: no 12-digit number and no e-mail address in 1 screens\n")
 
 
 def test_the_hubs_state_names_each_running_review_by_its_agent():

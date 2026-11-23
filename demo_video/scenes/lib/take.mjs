@@ -1,5 +1,6 @@
 // The camera of a take, with the text of the screen kept at every shot (<out>/<take>.texts.txt, next to the camlog),
-// so that a take can be checked for an account ID or an e-mail address without reading every frame.
+// and every screen a Claude Code session shows between shots (keep), so that a take can be checked for an account ID
+// or an e-mail address without reading every frame.
 //   const cam = kit({ page, rec, option });
 //   await cam.focus('steps', '#panel-steps', { pad: 16, kmax: 1.6 }, 'the seven steps');
 import fs from 'node:fs';
@@ -25,9 +26,17 @@ export function kit({ page, rec, option }) {
     }
     fs.appendFileSync(file, `== ${rec.now().toFixed(2)} ${key}\n${text}\n`);
   }
+  // a screen seen between shots (a Claude Code session's every look), kept once, for record.sh's text check
+  const kept = new Set();
+  function keep(text) {
+    if (kept.has(text)) return;
+    kept.add(text);
+    fs.appendFileSync(file, `== ${rec.now().toFixed(2)} screen\n${text}\n`);
+  }
   return {
     name,
     dump,
+    keep,
     async focus(key, selector, opts = {}, label) { const r = await rec.focus(key, selector, opts, label); await dump(key); return r; },
     async region(key, x, y, w, h, opts = {}, label) { const r = await rec.region(key, x, y, w, h, opts, label); await dump(key); return r; },
     async reset(key = 'wide', label) { const r = await rec.reset(key, label); await dump(key); return r; },

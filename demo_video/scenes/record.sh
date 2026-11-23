@@ -5,9 +5,9 @@
 # line, `export const surfaces = ['hub', 'dev', 'user'];` (the hub screen on 127.0.0.1:8300, the developer PC's
 # terminal on 127.0.0.1:7681, the user's shell on 127.0.0.1:7682); each must answer before anything is recorded.
 # The take goes to demo_video/out/raw/<take>.webm with its camlog (<take>.camlog.json) and the text of the screen at
-# each shot (<take>.texts.txt); a take recorded before is moved to demo_video/out/raw/old/ first. Then this prints the
-# shots, the notes and any shot whose selector matched nothing, and looks for a 12-digit number or an e-mail address
-# in the texts. Exit 0 when the storyboard ended well, nothing was missing and nothing was found; else 1.
+# each shot and of every screen a Claude Code session showed (<take>.texts.txt); a take recorded before is moved to
+# demo_video/out/raw/old/ first. Then this prints the shots, the notes and any shot whose selector matched nothing,
+# and looks for a 12-digit number or an e-mail address in the texts (lib/check_texts.sh). Exit 0 when the storyboard ended well, nothing was missing and nothing was found; else 1.
 # Needs DEMO_VIDEO_PLUGIN (the plugin's scripts folder) and PLAYWRIGHT_ROOT (a folder with node_modules/playwright).
 set -euo pipefail
 
@@ -69,15 +69,6 @@ jq -r '.log[] | if .kind == "shot" then "\(.t)\tshot \(.key)\(if .label then "\t
 missing="$(jq -r '[.log[] | select(.missing) | .key] | join(" ")' "$camlog")"
 [ -z "$missing" ] || { echo "missing: $missing"; status=1; }
 texts="$raw/$take.texts.txt"
-if [ -f "$texts" ]; then
-  found="$(grep -nP '(?<![0-9])[0-9]{12}(?![0-9])|[\w.+-]+@[\w-]+\.[A-Za-z]{2,}' "$texts" | grep -v -e 'dev@dev-pc' || true)"
-  if [ -n "$found" ]; then
-    echo "the screen's text at a shot holds a 12-digit number or an e-mail address:"
-    printf '%s\n' "$found" | sed -E 's/(^|[^0-9])[0-9]{12}([^0-9]|$)/\1<12 digits>\2/g'
-    status=1
-  else
-    echo "texts: no 12-digit number and no e-mail address in $(grep -c '^== ' "$texts") screens"
-  fi
-fi
+[ ! -f "$texts" ] || "$here/lib/check_texts.sh" "$texts" || status=1
 [ "$(jq -r .ok "$camlog")" = true ] || status=1
 exit "$status"
