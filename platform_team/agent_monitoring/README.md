@@ -142,4 +142,4 @@ Python에서 쓰는 함수는 셋이다(`usage_report.py`).
 | `terraform/` | SNS 주제, SQS 수신함과 그 접근 정책, 구독(SQS, 고르면 메일), 도구 호출 알람 `<prefix>-tool-calls`, 게이트웨이 둘의 로그 그룹과 로그 전달(source, destination, delivery), 그 전달을 위한 자원 정책 `<prefix>-gateway-logs`. 입력은 `prefix`, `alert_email`, `tool_gateway_arn`, `agent_gateway_arn`, `watched_tool`, `tool_calls_per_minute`. 내보내는 값은 `topic_arn`, `tool_alarm_name`. |
 | `usage_report.py` | 사용량 보고(`usage`, `tool_calls`, `session_summary`)와 그 명령. 메트릭과 span을 읽기만 한다. |
 | `usage.sh` | 사용량 보고 명령. `.env`를 `make`와 같은 규칙으로 읽고 `usage_report.py`를 돌린다. |
-| `agent_logs.py` | 에이전트의 Runtime 로그 그룹에서 가장 새 줄을 오래된 줄부터 찍는다(`demo_scenes/logs`). 로그 그룹을 `DescribeLogGroups`로 찾고 `FilterLogEvents`로 읽는다(`runtime-logs-` 스트림만. `otel-rt-logs`의 복사본은 읽지 않는다). SSM을 읽지 않는다. 단위 시험만 했고 AWS에서는 돌려 보지 않았다. |
+| `agent_logs.py` | 에이전트의 Runtime 로그 그룹에서 가장 새 줄을 오래된 줄부터 찍는다(`demo_scenes/logs`). 로그 그룹을 `DescribeLogGroups`로 찾고 `FilterLogEvents`로 읽는다(`runtime-logs-` 스트림만. `otel-rt-logs`의 복사본은 읽지 않는다). SSM을 읽지 않는다. 2026-11-23에 개발팀 역할로 AWS에서 돌렸다(`docs_adk`의 줄을 읽었고, 그 역할에 주지 않은 harness 에이전트 `spec_assistant`의 로그 그룹은 거부를 한 줄로 찍었다). |

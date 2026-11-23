@@ -28,7 +28,7 @@
 
 - 두 파일은 `demo_video/out/dev-pc/creds/`(폴더 700, 파일 600)에만 있고, 컨테이너에는 읽기 전용(`/run/dev-pc`)으로 들어간다. `run.sh creds`는 두 주체(계정은 `<ACCOUNT>`로 가린다)와 끝나는 시각만 찍고 키, 비밀 값, 토큰은 찍지 않는다. `run.sh forget`과 `run.sh down`이 두 파일을 지운다.
 - 개발팀 역할에는 Bedrock 권한이 없고, Bedrock 토큰에는 모델 호출 말고는 권한이 없다.
-- 한계: Bedrock 토큰 파일은 컨테이너의 사용자(Claude Code의 도구와 같은 사용자)가 읽을 수 있는 파일이다. Claude Code의 파일 읽기 도구는 그 폴더를 읽지 못하게 막았지만(`settings.json`의 `deny`), 셸 명령으로 읽는 것까지 막지는 못한다. 그 토큰으로 할 수 있는 것은 두 모델의 호출뿐이다.
+- 한계: Bedrock 토큰 파일은 컨테이너의 사용자(Claude Code의 도구와 같은 사용자)가 읽을 수 있는 파일이다. `settings.json`의 `deny`(`Read(//run/dev-pc/**)`)가 Claude Code의 파일 읽기 도구를 막는다. 같은 모양의 `deny`는 묻지 않고 허락한 `cat`으로 그 파일을 읽는 셸 명령도 거부했다(2026-11-23, `/etc/hostname`을 막고 시험했다. 자격 증명 폴더로는 시험하지 않았다). 그래도 셸의 다른 길로 읽는 것까지 막는다고 보장하지는 못한다. 그 토큰으로 할 수 있는 것은 두 모델의 호출뿐이다.
 - 이 PC가 EC2 인스턴스라면 컨테이너에서 인스턴스 메타데이터 서비스에 닿을 수 있다. `run.sh up`은 SDK가 그곳을 묻지 않게 하고(`AWS_EC2_METADATA_DISABLED=true`), 그 주소를 컨테이너의 네트워크에서 막는다(root가 한 번 넣는 blackhole 경로. 사용자 `dev`에게는 지울 권한이 없다).
 
 ### `run.sh`
@@ -53,4 +53,14 @@
 
 ### Claude Code가 묻지 않고 하는 일
 
-`settings.json`의 `permissions.allow`에 있는 것뿐이다. 카탈로그 MCP 서버(`hub-catalog`)의 도구, 작업 폴더의 파일 읽기와 고치기, 셸 명령 `search`, `logs`, `publish`, `ls`, `cat`, `uv run pytest`. 그 밖의 도구는 Claude Code가 화면에서 묻는다. 권한을 건너뛰는 모드나 플래그는 쓰지 않는다. `.mcp.json`의 서버는 `enabledMcpjsonServers`로 승인해 둔다.
+`settings.json`의 `permissions.allow`에 있는 것뿐이다. 카탈로그 MCP 서버(`hub-catalog`)의 도구, 작업 폴더의 파일 읽기와 고치기, 셸 명령 `search`, `logs`, `publish`, `ls`, `cat`, `uv run pytest`. 그 밖의 도구는 Claude Code가 화면에서 묻는다. 권한을 건너뛰는 모드나 플래그는 쓰지 않는다(`run.sh check`만 `claude -p`에 `--allowedTools "Bash(aws sts get-caller-identity --query Arn --output text)"`를 준다. 그 한 명령이 개발팀 역할로 도는지 보는 것이다). Claude Code 2.1.330은 따로 정하지 않으면 auto mode(Claude가 도구 호출의 위험을 스스로 판단해 낮다고 본 것은 묻지 않고 실행한다)로 시작하므로(2026-11-23에 컨테이너에서 처음 띄웠을 때 그렇게 알렸다), 설정이 묻는 모드(`permissions.defaultMode`의 `default`)를 정해 둔다. `.mcp.json`의 서버는 `enabledMcpjsonServers`로 승인해 둔다.
+
+### 2026-11-23에 확인한 것
+
+허브를 `make deploy seed preload`로 올린 뒤(`parts-tools`, `spec_assistant`, `docs_adk`가 승인되어 있었다) 이 PC에서 본 것이다.
+
+- `run.sh check`는 모두 통과했다(19~20초). `claude -p`가 4~5초에 답했다. 개발팀 역할에는 Bedrock 권한이 없으므로 그 답은 Bedrock 토큰으로 온 것이다. 인스턴스 메타데이터 서비스는 답하지 않았다. MCP 서버는 개발팀 역할로 도구 넷(`search_discoverable_registry_records`, `search_discoverable_registry_records_paginated`, `list_discoverable_registry_records`, `batch_get_discoverable_registry_record`)을 보였다. `search "part specification tool"`은 `parts-tools`(도구 둘과 그 입력 필드)와 `spec_assistant`를 찍었다. `aws sts get-caller-identity`는 셸에서도, Claude Code의 셸 도구에서도 `assumed-role/hub-dev-role/developer`였다. `awsCredentialExport`의 토큰은 Claude Code의 모델 호출에만 쓰였고 Claude Code가 띄운 도구에는 넘어가지 않았다.
+- `run.sh creds`를 컨테이너가 떠 있는 동안 다시 돌리자 컨테이너가 곧바로 새 파일을 읽었다. `run.sh up`은 처음에 `uv sync`까지 4초, 다시 돌릴 때 3초였다.
+- Claude Code를 처음 띄웠을 때 나온 화면은 넷이었다. 글자 모양(theme) 고르기(Dark mode를 골랐다), 보안 안내(Enter), 이 폴더를 믿는지 묻는 창(설정이 미리 허락한 권한 아홉 가지를 보이고 기본 선택은 "No, exit"이다. "Yes, I trust this folder"를 골랐다), 그리고 auto mode가 기본 권한 모드가 되었다는 알림이다. 답은 홈의 `~/.claude.json`과 `~/.claude/settings.json`에 남았고, 그 뒤로 `claude`는 2초 남짓에 곧바로 입력 줄로 시작했다. 머리에는 `Claude Code v2.1.330`, `Sonnet 5.5 · Amazon Bedrock`, `~/work`가 나왔고 조직, 이메일, 계정은 나오지 않았다. 처음 띄울 때 Claude Code는 공식 플러그인 마켓플레이스(`anthropics/claude-plugins-official`)의 목록을 GitHub에서 받아 두었다(`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`인데도). 설치된 플러그인은 없었다.
+- 카탈로그 검색: "부품 규격을 읽어 오는 도구가 필요합니다. 허브에 그런 도구가 있나요?"라고 묻자 Claude Code는 셸 명령 `search`를 골랐다. `search "부품 규격"`에는 맞는 record가 없었고, 검색어 넷(`part specification`, `datasheet`, `spec`, `부품`)으로 다시 찾아 `parts-tools`를 찾았다(13초). "카탈로그 MCP 서버(hub-catalog)로 부품 규격을 읽는 도구를 찾아서, 그 도구의 record를 보여 주세요."라고 하자 MCP 도구 `search_discoverable_registry_records`(검색어 `part specification read tool`)를 불러 `parts-tools`의 record(버전, 설명, Target `Parts`, 도구 둘과 입력 필드)를 보였다(7초). 두 번 다 권한을 묻지 않았다.
+- 에이전트 만들기: 같은 세션에서 "템플릿으로 검사 결과와 부품 규격에 답하는 에이전트 quality_agent를 Strands로 만들어 주세요. 도구는 방금 찾은 Parts___get_part_spec을 쓰세요. 파일만 만들고 올리지는 마세요."라고 하자 `dev_team/quality_agent/`에 다섯 파일(템플릿 그대로의 `main.py`와 `hub_tools.py`, `agent.json`, `requirements.txt`, Strands로 쓴 `agent.py`)을 만들었고 올리지 않았다. 그동안 Claude Code는 여섯 번 물었다. `for` 문으로 템플릿과 예시 에이전트의 파일을 읽는 셸 명령 둘, PyPI에서 `strands-agents`의 버전을 찾는 `pip` 명령(거절하고 "패키지 버전은 이 폴더의 uv.lock에 있는 것을 쓰고, 계속 만들어 주세요."라고 답했다), `cd`와 상대 경로의 `find`(Read의 `deny`가 있으면 묻는다), 폴더를 만들고 템플릿을 복사하는 `mkdir`와 `cp`, `requirements.txt`에 줄을 더하는 `echo >>`다. 파일 쓰기와 `grep`은 묻지 않았다. 컨테이너에 `python3` 명령이 없어서, Claude Code는 만든 코드의 문법을 확인하지 못했다고 말했다.

@@ -2,7 +2,7 @@
 
 시연 영상의 터미널 장면에서 사람이 치는 명령 넷이다. 각각 짧은 셸 파일이고, 허브의 환경 값(접두어, 리전, 모델)을 `platform_team/shared_code/hub_env.sh`로 읽은 다음 Python 모듈 하나를 부른다. 파일의 위치에서 저장소의 루트를 찾으므로 어느 폴더에서 쳐도 된다. 첫 줄에 부르는 명령을 한 줄(100칸 이내)로 찍고, 그다음에 결과를 찍는다. 기대한 실패(403, 없는 에이전트, 로그 그룹 없음)는 Python 오류 출력 없이 한 줄로 말한다. 찍는 글에서 계정 ID는 `<ACCOUNT>`로 가린다.
 
-2026-11-23 현재 이 명령들은 단위 시험(`tests/test_ask_agent.py`, `test_search_catalog.py`, `test_agent_logs.py`, `test_demo_scenes.py`)으로만 확인했고, AWS에서는 돌려 보지 않았다. 아래 "프롬프트" 열은 `make e2e`와 `make e2e-ops`가 2026-11-22와 2026-11-23의 실행에서 쓴 문장이고, 이 명령으로 보낸 것은 아니다.
+이 명령들은 단위 시험(`tests/test_ask_agent.py`, `test_search_catalog.py`, `test_agent_logs.py`, `test_demo_scenes.py`)으로 확인했다. AWS에서는 2026-11-23에 시연 영상의 개발자 PC(`demo_video/tools/dev_pc`)에서 개발팀 역할로 `search`와 `logs`를 돌렸다(아래). `ask`와 `publish`는 AWS에서 돌려 보지 않았다. 아래 "프롬프트" 열은 `make e2e`와 `make e2e-ops`가 2026-11-22와 2026-11-23의 실행에서 쓴 문장이고, 이 명령으로 보낸 것은 아니다.
 
 ## 명령
 
@@ -14,8 +14,8 @@
 | `demo_scenes/logs <에이전트> [분]` | 개발자 | 에이전트의 Runtime 로그 그룹에서 가장 새 줄 200개까지를 오래된 줄부터 보인다(분은 15가 기본) | 첫 줄 `<에이전트>: the newest <n> log lines of the last <분> minutes`, 그다음 줄부터 로그 | 로그 그룹이 없으면 `no log group for <에이전트> ...` 한 줄과 종료 값 1. 그 시간에 줄이 없으면 한 줄과 종료 값 0 |
 
 - `publish`의 변형은 `dev_team/<에이전트>/variants/` 아래의 폴더다. 지금 있는 것은 `quality_agent`의 `v1-vulnerable`(취약한 라이브러리)과 `v2-loop`(도구를 되풀이해 부르는 판)이다.
-- `logs`는 `runtime-logs-<세션 ID>` 스트림의 줄만 읽는다. `otel-rt-logs`(2026-11-22에 같은 줄의 복사본이 있었다)와 `spans`, `build-logs-*`는 읽지 않는다. 쓰는 호출은 `DescribeLogGroups`와 `FilterLogEvents`뿐이라 SSM을 읽지 않는다. 개발팀 역할(`platform_team/dev_access`)은 허브 Runtime(`<prefix>_<에이전트>`)의 로그 그룹을 읽을 수 있다. harness 에이전트 `spec_assistant`의 Runtime(`harness_<prefix>_spec_assistant`)의 로그는 그 역할에 주지 않았으므로, 그 에이전트에는 `logs`가 거부를 한 줄(`logs of spec_assistant did not finish: ...`)로 말하고 종료 값 1로 끝난다(코드가 그렇게 한다).
-- `search`와 `ask`는 허브가 SSM `/<접두어>/platform`에 적어 둔 값(카탈로그 ID, 게이트웨이 ID)을 읽는다. `search`가 record의 도구 입력 필드를 보이는 것은 검색 결과나 `GetRegistryRecord`가 record의 custom descriptor를 주는 경우다. 코드가 그렇게 하고, AWS에서는 돌려 보지 않았다.
+- `logs`는 `runtime-logs-<세션 ID>` 스트림의 줄만 읽는다. `otel-rt-logs`(2026-11-22에 같은 줄의 복사본이 있었다)와 `spans`, `build-logs-*`는 읽지 않는다. 쓰는 호출은 `DescribeLogGroups`와 `FilterLogEvents`뿐이라 SSM을 읽지 않는다. 개발팀 역할(`platform_team/dev_access`)은 허브 Runtime(`<prefix>_<에이전트>`)의 로그 그룹을 읽을 수 있다. harness 에이전트 `spec_assistant`의 Runtime(`harness_<prefix>_spec_assistant`)의 로그는 그 역할에 주지 않았으므로, 그 에이전트에는 `logs`가 거부를 한 줄로 말하고 종료 값 1로 끝난다. 2026-11-23에 개발팀 역할로 돌렸을 때 `logs docs_adk 60`은 줄 다섯을 찍었고, `logs spec_assistant 60`은 `logs of spec_assistant did not finish: AccessDeniedException: ...`(`logs:FilterLogEvents`가 거부되었다는 한 줄, 계정은 가려졌다)과 종료 값 1, `logs quality_agent`(올라와 있지 않았다)는 `no log group for quality_agent ...`와 종료 값 1이었다.
+- `search`와 `ask`는 허브가 SSM `/<접두어>/platform`에 적어 둔 값(카탈로그 ID, 게이트웨이 ID)을 읽는다. `search`가 record의 도구 입력 필드를 보이는 것은 검색 결과나 `GetRegistryRecord`가 record의 custom descriptor를 주는 경우다. 2026-11-23에 개발팀 역할로 돌린 `search "part specification tool"`은 `parts-tools`의 도구 둘과 그 입력 필드(`tool get_part_spec: part_id`, `tool get_test_result: part_id`)를 찍었다.
 
 ## 입력 파일
 
@@ -39,6 +39,6 @@
 | 원인을 로그에서 본다 | `demo_scenes/logs quality_agent` | 사고의 판이 돌았다 | 없다. 되풀이하는 줄은 `asking again (<n>)`이고 분당 23~25줄이었다(2026-11-23) |
 | 고친 판으로 돌아온다 | `demo_scenes/publish quality_agent`, 승인된 뒤 `demo_scenes/ask quality_agent "What was the result of inspection Q-1001, and what is the specification of the part it inspected?"` | 에이전트가 멈춰 있고 고친 판을 올린다. 재개한 뒤에 부른다 | 고친 판이 승인되어 돈다 |
 
-카탈로그 검색은 `demo_scenes/search "inspection results and part specifications"`가 `make e2e-ops`의 검색어이고(2026-11-23에 다섯 record를 돌려주었다), `demo_scenes/search "part specification tool"`과 `demo_scenes/search "release rules review request"`가 `make e2e`의 검색어다. 이 명령으로 낸 결과는 AWS에서 해 보지 않았다.
+카탈로그 검색은 `demo_scenes/search "inspection results and part specifications"`가 `make e2e-ops`의 검색어이고(2026-11-23에 다섯 record를 돌려주었다), `demo_scenes/search "part specification tool"`과 `demo_scenes/search "release rules review request"`가 `make e2e`의 검색어다. 2026-11-23에 개발자 PC에서 개발팀 역할로 이 명령을 돌린 검색어는 `"part specification tool"`(`parts-tools`와 `spec_assistant`가 나왔다)과, Claude Code가 이 명령으로 친 `"부품 규격"`(맞는 record가 없었다), `"part specification"`, `"datasheet"`, `"spec"`, `"부품"`이다. 뒤의 넷은 한 번에 돌았고, 그 결과에서 Claude Code는 `parts-tools`와 `spec_assistant`를 찾았다고 답했다. 넷 각각의 결과는 따로 보지 않았다.
 
 위 표에서 `P-100`의 규격을 묻는 문장은 `make e2e-ops`가 첫 확인에서 쓰는 보통의 질문(`NORMAL`)이다. 그 문장을 `quality_agent`에게 보내 200을 받은 것은 2026-11-23의 실행이고, 이 명령으로 보낸 것은 아니다.

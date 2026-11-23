@@ -16,6 +16,8 @@ Registry의 MCP endpoint(`https://agent-registry.<region>.api.aws/registry/<regi
 
 로그 권한은 읽기 둘뿐이다. `logs:DescribeLogGroups`는 IAM이 로그 그룹으로 좁힐 수 없어서(자원 종류가 없다) 계정의 모든 로그 그룹의 이름을 볼 수 있다. 줄을 읽는 `logs:FilterLogEvents`는 허브 Runtime의 로그 그룹(`/aws/bedrock-agentcore/runtimes/<prefix>_*`)에만 준다. 한계가 있다. 이 샘플에서는 개발팀 역할 하나가 모든 팀에 쓰이므로, 개발자는 자기 팀의 에이전트만이 아니라 허브의 모든 에이전트의 로그 줄을 읽을 수 있다. harness 에이전트의 Runtime(`harness_<prefix>_<에이전트>`, 지금은 `spec_assistant`)의 로그는 이 역할이 읽지 못한다. 운영 환경이라면 팀마다 역할을 두고 그 팀 에이전트의 로그 그룹만 준다.
 
+2026-11-23에 시연 영상의 개발자 PC(`demo_video/tools/dev_pc`)에서 이 역할로 본 것이다. MCP endpoint가 도구 넷(`search_discoverable_registry_records`, `search_discoverable_registry_records_paginated`, `list_discoverable_registry_records`, `batch_get_discoverable_registry_record`)을 보였고, Claude Code가 그 검색 도구로 `parts-tools`의 record를 찾았다(거부 없음). 로그는 `docs_adk`의 줄을 읽었고, `spec_assistant`(harness)의 로그 그룹에서는 `logs:FilterLogEvents`가 거부되었다. `search_discoverable_registry_records`가 아닌 MCP 도구(목록, 여러 record 읽기)를 부르는 것은 해 보지 않았다.
+
 ## 파일
 
 | 파일 | 역할 |
