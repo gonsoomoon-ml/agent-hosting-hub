@@ -552,7 +552,11 @@ def test_the_main_reel_runs_between_8_and_11_minutes():
     assert build.reel_seconds(spec, "r", "ko") == 3 + 8 + 10
     main = build.reel_seconds(build.SPEC, "main", "ko")
     assert 8 * 60 <= main <= 11 * 60
-    assert sum(build.reel_seconds(build.SPEC, f"stage-{n}", "ko") for n in range(1, 6)) < main + 60
+    # the main reel is the five stage reels (준비 inside stage 1, so counted once) plus the intro, summary and closing
+    cards = build.SPEC["cards"]["ko"]
+    stages = sum(build.reel_seconds(build.SPEC, f"stage-{n}", "ko") for n in range(1, 6))
+    ends = sum(cards[c]["seconds"] for c in ("card-intro", "card-summary", "card-closing"))
+    assert main == pytest.approx(stages + ends)
 
 
 CARDS_OF_THE_PLAN = {
@@ -562,7 +566,8 @@ CARDS_OF_THE_PLAN = {
     "card-ch2": ["2단계. 호스팅 심사", "신청이 들어오면 허브가 자동으로 심사합니다", "심사 파이프라인과 AgentCore Runtime"],
     "card-ch3": ["3단계. 전사 정책 시험", "새 전사 정책을 막지 않고 먼저 시험합니다", "Policy in AgentCore의 기록 모드"],
     "card-ch4": ["4단계. 전사 정책 적용", "전사 정책 하나가 모든 에이전트에 걸립니다", "AgentCore Gateway와 커스텀 가드레일"],
-    "card-ch5": ["5단계. 이상 대응", "문제를 일으킨 에이전트 하나만 멈춥니다", "CloudWatch 알람과 AgentCore Runtime"],
+    # the plan's row said "CloudWatch 알람"; the hub screen and every caption say 경보, so the card does too
+    "card-ch5": ["5단계. 이상 대응", "문제를 일으킨 에이전트 하나만 멈춥니다", "CloudWatch 경보와 AgentCore Runtime"],
     "card-compare": ["가드레일 두 가지", "기본 제공 가드레일과 커스텀 가드레일", "기본 제공은 설정으로 걸고 기록 모드로 먼저 시험합니다",
                      "커스텀은 사내 코드로 막고 민감 정보를 가립니다", "둘 다 게이트웨이에 걸려 모든 에이전트에 적용됩니다"],
     "card-summary": ["정리", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다", "팀은 카탈로그에서 찾고 템플릿으로 만들어 스스로 신청합니다",
@@ -639,8 +644,44 @@ def test_a_clip_with_no_beats_is_cut_without_captions(tmp_path):
 
 CAMLOG = {"log": [{"t": 3.9, "kind": "shot", "key": "wide"}, {"t": 14.91, "kind": "shot", "key": "flow1"},
                   {"t": 20.0, "kind": "asked"}, {"t": 41.93, "kind": "shot", "key": "end"}]}
+FFMPEG = shutil.which("ffmpeg") and shutil.which("ffprobe")
 
 
+@pytest.fixture(scope="module")
+def take_45s(tmp_path_factory):
+    """A real webm of 45 s (black, 64x36), so the build can measure the take as it measures a recorded one."""
+    path = tmp_path_factory.mktemp("take") / "take.webm"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x36:r=5:d=45",
+                    "-c:v", "libvpx", "-deadline", "realtime", "-b:v", "20k", str(path)], check=True, timeout=60)
+    return path
+
+
+def _cut(tmp_path, monkeypatch, take, pieces):
+    """build.run on one take (00-home, its camlog CAMLOG, its video the 45 s take) with a stand-in plugin that only
+    notes that it was called; returns the exit code (None when the build went through) and whether anything was cut."""
+    build = _build()
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"] = {"00-home": pieces}
+    spec["reels"] = {"main": ["card-intro", "00-home"]}
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+    shutil.copy(take, out / "raw" / "00-home.webm")
+    (out / "raw" / "00-home.camlog.json").write_text(json.dumps(CAMLOG))
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    for f in ("edit_demo.py", "make_cards.py"):
+        (plugin / f).write_text("import pathlib, sys\npathlib.Path(sys.argv[0]).with_suffix('.called').touch()\n")
+    monkeypatch.setenv("DEMO_VIDEO_PLUGIN", str(plugin))
+    try:
+        build.run(spec, lang="ko", out=out)
+        code = None
+    except SystemExit as stop:
+        code = stop.code
+    return code, bool(list(plugin.glob("*.called")))
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
 @pytest.mark.parametrize("at, offset, says", [
     ("shot:flow1", 0, "outside"),            # 14.91 s lies after the piece's window 3.5..12
     ("shot:wide", 0, None),                  # 3.9 s: inside
@@ -648,32 +689,39 @@ CAMLOG = {"log": [{"t": 3.9, "kind": "shot", "key": "wide"}, {"t": 14.91, "kind"
     ("asked#2", 0, "does not hold"),         # the camlog has one note asked
     ("shot:nowhere", 0, "does not hold")])
 def test_a_caption_outside_its_piece_or_off_the_camlog_stops_the_build_before_anything_is_cut(
-        tmp_path, capsys, monkeypatch, at, offset, says):
+        tmp_path, capsys, monkeypatch, take_45s, at, offset, says):
     build = _build()
-    import copy
-    spec = copy.deepcopy(build.SPEC)
     text = "허브 화면에서 흐름 1을 봅니다"
-    spec["clips"] = {"00-home": [build.piece("00-home", 3.5, 12.0, ko=[build.beat(at, text, offset=offset)])]}
-    spec["reels"] = {"main": ["card-intro", "00-home"]}
-    out = tmp_path / "out"
-    (out / "raw").mkdir(parents=True)
-    (out / "raw" / "00-home.webm").write_bytes(b"")
-    (out / "raw" / "00-home.camlog.json").write_text(json.dumps(CAMLOG))
-    plugin = tmp_path / "plugin"
-    plugin.mkdir()
-    for f in ("edit_demo.py", "make_cards.py"):         # a stand-in that only notes that it was called
-        (plugin / f).write_text("import pathlib, sys\npathlib.Path(sys.argv[0]).with_suffix('.called').touch()\n")
-    monkeypatch.setenv("DEMO_VIDEO_PLUGIN", str(plugin))
+    code, cut = _cut(tmp_path, monkeypatch, take_45s,
+                     [build.piece("00-home", 3.5, 12.0, ko=[build.beat(at, text, offset=offset)])])
     if says is None:
-        build.run(spec, lang="ko", out=out)
-        assert (plugin / "edit_demo.called").exists() and (plugin / "make_cards.called").exists()
+        assert code is None and cut
         return
-    with pytest.raises(SystemExit) as stop:
-        build.run(spec, lang="ko", out=out)
-    assert stop.value.code == 2
     err = capsys.readouterr().err
+    assert code == 2 and not cut                              # nothing was cut
     assert text in err and says in err and "00-home.1" in err
-    assert not list(plugin.glob("*.called"))                  # nothing was cut
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+@pytest.mark.parametrize("start, end, dur, says", [
+    (12.0, 12.0, None, "does not start before it ends"),     # an empty window
+    (20.0, 12.0, None, "does not start before it ends"),
+    (3.5, 50.0, None, "beyond the take"),                    # the take is 45 s long
+    (3.5, 41.5, 10.0, "runs into the next caption"),         # 0.32 s + 10 s passes the next caption at 9.13 s
+    (3.5, 41.5, 8.0, None),                                  # 8 s ends before it
+    (3.5, 45.0, None, None)])                                # up to the take's end
+def test_a_piece_beyond_its_take_or_a_caption_running_into_the_next_stops_the_build_before_anything_is_cut(
+        tmp_path, capsys, monkeypatch, take_45s, start, end, dur, says):
+    build = _build()
+    first = build.beat("shot:wide", "허브 화면 한 곳에서 허브를 봅니다", **({} if dur is None else {"dur": dur}))
+    second = build.beat("shot:flow1", "흐름 1은 허브가 심사하는 길입니다")
+    beats = [first, second] if end > 17 else []
+    code, cut = _cut(tmp_path, monkeypatch, take_45s, [build.piece("00-home", start, end, ko=beats)])
+    if says is None:
+        assert code is None and cut
+        return
+    err = capsys.readouterr().err
+    assert code == 2 and not cut and says in err and "00-home.1" in err
 
 
 # ------------------------------------------------------------------ the recording: record.sh, the user's shell, storyboards

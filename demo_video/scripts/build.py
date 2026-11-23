@@ -13,9 +13,11 @@ the video plugin's rules for captions (references/script.md of the plugin):
   - a caption is anchored to a shot or a note of its take's camlog, never to raw seconds;
   - a stage carries no more captions than its budget (BUDGET);
   - a reel names only takes and cards defined here.
-A text that breaks a rule stops the build (exit 2) with one line per text. Without --check the build then reads the
-camlogs: a caption whose anchor the camlog does not hold, or that falls outside its piece (or less than ROOM seconds
-of the finished piece before its end), stops the build the same way before anything is cut. Then it runs the plugin's
+A text that breaks a rule stops the build (exit 2) with one line per text. Without --check the build then measures the
+takes and reads their camlogs: a piece whose window does not start before it ends or ends beyond its take, a caption
+whose anchor the camlog does not hold or that falls outside its piece (or less than ROOM seconds of the finished piece
+before its end), and a caption whose "dur" runs into the next caption stop the build the same way before anything is
+cut. Then it runs the plugin's
 edit_demo.py (clip, reel) and make_cards.py, found through DEMO_VIDEO_PLUGIN (the plugin's scripts folder), with the
 Python that runs this file (make_cards.py needs Pillow). In a reel the pieces of one take are joined with hard cuts;
 the edges between takes and cards fade (0.4 s). Everything is written under demo_video/out/ (git-ignored):
@@ -58,165 +60,237 @@ def beat(at: str, text: str, **opts) -> dict:
     return {"at": at, "text": text, **opts}
 
 
-# Windows are camlog seconds; each comment names the camlog events a piece holds. A wait plays at WAIT; a long wait is
-# cut to its start or its end (a hard cut inside the take), and so is a stretch of typing in a terminal.
+# Windows are camlog seconds; the comment above each piece names the camlog events it holds. A wait plays at WAIT (a
+# job of a few seconds stays at 1.25 inside its piece); a long wait is cut to its start or its end (a hard cut inside
+# the take), and so is a stretch of typing in a terminal.
 SPEC = {
     "clips": {
         # 준비: the hub screen's home page
-        "00-home": [piece("00-home", 3.5, 41.5, ko=[      # wide 3.9, counts 9.9, flow1 14.9, flow2 21.9, platform 28.9,
-            beat("shot:wide", "허브 화면 한 곳에서 호스팅된 에이전트와 공유 도구를 봅니다"),              # catalog 35.9
-            beat("shot:flow1", "흐름 1은 팀이 에이전트를 올리면 허브가 자동으로 심사하는 길입니다"),
-            beat("shot:flow2", "흐름 2는 플랫폼팀이 게이트웨이에서 정책을 걸고 지켜보는 길입니다"),
-            beat("shot:platform", "게이트웨이 둘과 정책 엔진, 카탈로그, 심사 상태 머신을 한 번 만듭니다"),
-            beat("shot:catalog", "카탈로그에는 승인된 에이전트와 공유 도구가 올라 있습니다", pos="top")])],
+        "00-home": [
+            # wide 3.9, counts 9.9, flow1 14.9, flow2 21.9, platform 28.9, catalog 35.9
+            piece("00-home", 3.5, 41.5, ko=[
+                beat("shot:wide", "허브 화면 한 곳에서 호스팅된 에이전트와 공유 도구를 봅니다"),
+                beat("shot:flow1", "흐름 1은 팀이 에이전트를 올리면 허브가 자동으로 심사하는 길입니다"),
+                beat("shot:flow2", "흐름 2는 플랫폼팀이 게이트웨이에서 정책을 걸고 지켜보는 길입니다"),
+                beat("shot:platform", "게이트웨이 둘과 정책 엔진, 카탈로그, 심사 상태 머신을 한 번 만듭니다"),
+                beat("shot:catalog", "카탈로그에는 승인된 에이전트와 공유 도구가 올라 있습니다", pos="top")])],
         # 1단계: one Claude Code session (11-find, then 12-make from the note make_asked), then the developer's shell
-        "11-find": [piece("11-find", 15.6, 35.0, ko=[     # find_asked 16.1, record 27.3 (zoomed on the answer)
-            beat("find_asked", "개발자는 Claude Code에게 부품 규격을 읽는 사내 도구를 찾게 합니다"),
-            beat("shot:record", "카탈로그의 MCP 서버에서 공유 도구의 이름과 설명, 입력을 찾아 줍니다")])],
+        "11-find": [
+            # find_asked 16.1, record 27.3 (zoomed on the answer)
+            piece("11-find", 15.6, 35.0, ko=[
+                beat("find_asked", "개발자는 Claude Code에게 부품 규격을 읽는 사내 도구를 찾게 합니다"),
+                beat("shot:record", "카탈로그의 MCP 서버에서 공유 도구의 이름과 설명, 입력을 찾아 줍니다")])],
         "12-make": [
-            piece("11-find", 37.9, 47.0, ko=[             # make_asked 38.3, ask1 41.6 (questions 2 to 4 are left out)
+            # make_asked 38.3, ask1 41.6, the second question from 46.2 (questions 3 and 4 are left out)
+            piece("11-find", 37.9, 47.0, ko=[
                 beat("make_asked", "이어서 표준 템플릿으로 그 도구를 쓰는 에이전트를 만들게 합니다", pos="top")]),
-            piece("11-find", 71.0, 79.4, ko=[             # ask5 71.3: a long command with 43 hidden lines; No at 76
-                beat("shot:ask5", "Claude Code는 셸 명령을 실행하기 전에 개발자에게 묻습니다", dur=4.4, pos="top")]),
-            piece("11-find", 79.4, 107.0, WAIT, ko=[      # work5 79.6: the No and its sentence; then the files are written
+            # ask5 71.3: a long command with 43 hidden lines; the No closes the dialog between 75.7 and 75.8
+            piece("11-find", 71.0, 79.4, ko=[
+                beat("shot:ask5", "Claude Code는 셸 명령을 실행하기 전에 개발자에게 묻습니다", dur=3.5, pos="top")]),
+            # work5 79.6: the No and its sentence; then the files are written
+            piece("11-find", 79.4, 107.0, WAIT, ko=[
                 beat("shot:work5", "개발자는 No로 답하고 실행 없이 파일만 만들게 합니다")]),
-            piece("11-find", 107.0, 115.0, ko=[           # made 107.4
+            # made 107.4
+            piece("11-find", 107.0, 115.0, ko=[
                 beat("shot:made", "Claude Code가 파일 다섯 개를 만들고 올리지는 않았습니다")])],
         "13-submit": [
-            piece("13-submit", 10.2, 21.5, ko=[           # publish_release 10.9, release 17.3; the next command's typing
-                beat("publish_release", "개발자는 publish 한 줄로 release_review의 호스팅을 신청합니다")]),  # is cut
-            piece("13-submit", 23.8, 37.5, ko=[           # publish_quality 24.4, both 31.1
+            # publish_release 10.9, release 17.3; the next command's typing is cut
+            piece("13-submit", 10.2, 21.5, ko=[
+                beat("publish_release", "개발자는 publish 한 줄로 release_review의 호스팅을 신청합니다")]),
+            # publish_quality 24.4, both 31.1
+            piece("13-submit", 23.8, 37.5, ko=[
                 beat("shot:both", "quality_agent의 v1-vulnerable 판도 승인 대기가 됩니다")])],
         # 2단계: the reviews on the hub screen, the user's shell, the reject, the second submission
         "21-review": [
-            piece("21-review", 4.5, 11.5, ko=[            # list 4.9, cards 10.0
+            # list 4.9, cards 10.0
+            piece("21-review", 4.5, 11.5, ko=[
                 beat("shot:list", "신청이 들어오자 두 에이전트의 호스팅 심사가 저절로 시작됩니다")]),
-            piece("21-review", 30.0, 38.6, WAIT),         # Scan running; release_review's Scan passes at 33.1
-            piece("21-review", 38.6, 60.0, ko=[           # quality_failed 39.1, quality 40.6, release_card 47.6, steps 54.1
+            # Scan running; release_review's Scan passes at 33.1
+            piece("21-review", 30.0, 38.6, WAIT),
+            # quality_failed 39.1, quality 40.6, release_card 47.6, steps 54.1
+            piece("21-review", 38.6, 60.0, ko=[
                 beat("shot:quality", "quality_agent의 심사는 의존성 검사 Scan에서 실패해 멈춥니다", dur=5.0),
                 beat("shot:steps", "심사 단계마다 AWS Lambda나 AWS CodeBuild가 일을 맡습니다", pos="top")]),
-            piece("21-review", 345.0, 381.2, WAIT),       # the end of Deploy (321.0 passed), Entry 354.1, TestCall 365.2
-            piece("21-review", 381.2, 392.5, ko=[         # approved 381.3, record 382.8, steps_done 387.8 (list_end cuts a
-                beat("shot:record", "일곱 단계를 모두 통과한 release_review는 승인이 됩니다")])],    # card: left out)
+            # the end of Deploy (passed 321.0), Entry 354.1, TestCall 365.2
+            piece("21-review", 345.0, 381.2, WAIT),
+            # approved 381.3, record 382.8, steps_done 387.8 (the shot list_end cuts a card: left out)
+            piece("21-review", 381.2, 392.5, ko=[
+                beat("shot:record", "일곱 단계를 모두 통과한 release_review는 승인이 됩니다")])],
         "22-works": [
-            piece("22-works", 11.0, 15.0),                # change 11.5; the command's typing is cut
-            piece("22-works", 19.2, 36.5, ko=[            # asked 19.7, answered 28.1
-                beat("answered", "승인된 release_review는 에이전트 게이트웨이로 부르면 바로 답합니다")])],
-        "23-reject": [piece("23-reject", 8.7, 43.5, ko=[  # failed 9.2, findings 15.2, reason 23.2, reject_pressed 30.5,
-            beat("shot:findings", "플랫폼팀은 스캔이 찾은 취약한 패키지와 고쳐진 버전을 봅니다"),       # job_done 32.6,
-            beat("shot:reason", "사유를 적어 반려하면 팀은 레코드에서 그 사유를 읽습니다"),            # rejected 39.6
-            beat("job_done", "작업이 끝나자 quality_agent의 레코드가 반려로 바뀝니다")])],
-        "24-again": [piece("24-again", 11.8, 31.0, ko=[   # requirements 12.3, publish_quality 18.7, quality_pending 25.1
-            beat("shot:requirements", "개발자는 jinja2를 뺀 고친 판을 다시 신청합니다")])],
+            # change 11.5; the command's typing is cut
+            piece("22-works", 11.0, 15.0),
+            # asked 19.7, answered 28.1
+            piece("22-works", 19.2, 36.5, ko=[
+                beat("answered", "승인된 release_review는 에이전트 게이트웨이로 부르면 답합니다")])],
+        "23-reject": [
+            # failed 9.2, findings 15.2, reason 23.2, reject_pressed 30.5, job_done 32.6, rejected 39.6
+            piece("23-reject", 8.7, 43.5, ko=[
+                beat("shot:findings", "플랫폼팀은 스캔이 찾은 취약한 패키지와 고쳐진 버전을 봅니다"),
+                beat("shot:reason", "사유를 적어 반려하면 팀은 레코드에서 그 사유를 읽습니다"),
+                beat("job_done", "작업이 끝나자 quality_agent의 레코드가 반려로 바뀝니다")])],
+        "24-again": [
+            # requirements 12.3, publish_quality 18.7, quality_pending 25.1
+            piece("24-again", 11.8, 31.0, ko=[
+                beat("shot:requirements", "개발자는 jinja2를 뺀 고친 판을 다시 신청합니다")])],
         "25-approved": [
-            piece("25-approved", 4.0, 11.5),              # wide 4.5, steps 9.5
-            piece("25-approved", 40.0, 47.5, ko=[         # quality_agent_Scan_passed 41.6
+            # wide 4.5, steps 9.5
+            piece("25-approved", 4.0, 11.5),
+            # quality_agent_Scan_passed 41.6
+            piece("25-approved", 40.0, 47.5, ko=[
                 beat("quality_agent_Scan_passed", "이번에는 Scan이 취약점을 찾지 않고 통과합니다", pos="top")]),
-            piece("25-approved", 362.0, 385.3, WAIT),     # Entry passed 362.8, TestCall 367.8, approved 384.8
-            piece("25-approved", 385.3, 397.0, ko=[       # record 386.3, steps_done 391.3
+            # Entry passed 362.8, TestCall 367.8, approved 384.8
+            piece("25-approved", 362.0, 385.3, WAIT),
+            # record 386.3, steps_done 391.3
+            piece("25-approved", 385.3, 397.0, ko=[
                 beat("shot:record", "고친 판도 일곱 단계를 모두 통과해 승인이 됩니다")])],
-        "26-answers": [piece("26-answers", 11.0, 28.5, ko=[    # asked 11.9, answer 20.1
-            beat("shot:answer", "사용자가 묻자 quality_agent는 공유 도구가 돌려준 규격으로 답합니다")])],
+        "26-answers": [
+            # asked 11.9, answer 20.1
+            piece("26-answers", 11.0, 28.5, ko=[
+                beat("shot:answer", "사용자가 묻자 quality_agent는 공유 도구가 돌려준 규격으로 답합니다")])],
         # 3단계: the company policy in log-only mode
         "31-logonly": [
-            piece("31-logonly", 9.0, 17.6, ko=[           # off 9.5, logonly_pressed 16.4
+            # off 9.5, logonly_pressed 16.4
+            piece("31-logonly", 9.0, 17.6, ko=[
                 beat("shot:off", "새 전사 정책 guard_prompt를 막지 않는 기록 모드로 겁니다")]),
-            piece("31-logonly", 17.6, 36.0, WAIT),        # the job's first lines (it ends at 61.6)
-            piece("31-logonly", 61.6, 67.6, ko=[          # job_done 61.6 (the logonly shot 68.6 is left out)
+            # the job's first lines (it ends at 61.6)
+            piece("31-logonly", 17.6, 36.0, WAIT),
+            # job_done 61.6 (the shot logonly 68.6 is left out)
+            piece("31-logonly", 61.6, 67.6, ko=[
                 beat("shot:job_done", "작업이 호스팅된 에이전트마다 정책을 하나씩 붙입니다")]),
-            piece("31-logonly", 74.2, 80.5, ko=[          # rows 74.7
-                beat("shot:rows", "에이전트 게이트웨이의 세 정책이 기록 모드로 돕니다")])],
+            # rows 74.7
+            piece("31-logonly", 74.2, 80.5, ko=[
+                beat("shot:rows", "에이전트 게이트웨이의 세 정책이 기록 모드로 걸려 있습니다")])],
         "32-passes": [
-            piece("32-passes", 12.0, 19.5, ko=[           # change 12.5; the command's typing is cut
+            # change 12.5; the command's typing is cut
+            piece("32-passes", 12.0, 19.5, ko=[
                 beat("shot:change", "변경 설명 끝에 에이전트에게 내리는 지시가 들어 있습니다")]),
-            piece("32-passes", 24.2, 36.5, ko=[           # asked 24.7, answered 28.3
+            # asked 24.7, answered 28.3
+            piece("32-passes", 24.2, 36.5, ko=[
                 beat("answered", "기록 모드에서는 이 요청도 막히지 않고 답을 받습니다")])],
         "33-record": [
-            piece("33-record", 8.0, 16.0, ko=[            # report 10.2 (all zero)
+            # report 10.2 (all zero)
+            piece("33-record", 8.0, 16.0, ko=[
                 beat("shot:report", "기록 모드의 집계는 정책에 걸린 요청을 에이전트마다 셉니다")]),
-            piece("33-record", 16.0, 22.0, WAIT),         # the page redraws until the match is counted
-            piece("33-record", 22.0, 31.0, ko=[           # match_counted 22.2
+            # the page redraws until the match is counted
+            piece("33-record", 16.0, 22.0, WAIT),
+            # match_counted 22.2
+            piece("33-record", 22.0, 31.0, ko=[
                 beat("match_counted", "release_review에 간 그 요청이 막았을 요청 1건으로 잡힙니다")])],
         # 4단계: enforce, the refusals, the custom guardrail before and after
         "41-enforce": [
-            piece("41-enforce", 9.7, 19.2, ko=[           # rows_before 10.2, buttons 15.2, enforce_pressed 19.0
+            # rows_before 10.2, buttons 15.2, enforce_pressed 19.0
+            piece("41-enforce", 9.7, 19.2, ko=[
                 beat("shot:rows_before", "기록 모드로 시험한 정책을 버튼 하나로 적용 모드로 올립니다")]),
-            piece("41-enforce", 19.2, 50.0, WAIT),        # the job's first lines (it ends at 88.5)
-            piece("41-enforce", 88.4, 94.4),              # job_done 88.5 (the enforced shot 95.5 is left out)
-            piece("41-enforce", 100.9, 107.0, ko=[        # rows 101.6
+            # the job's first lines (it ends at 88.5)
+            piece("41-enforce", 19.2, 50.0, WAIT),
+            # job_done 88.5 (the shot enforced 95.5 is left out)
+            piece("41-enforce", 88.4, 94.4),
+            # rows 101.6
+            piece("41-enforce", 100.9, 107.0, ko=[
                 beat("shot:rows", "이제 세 에이전트의 정책이 모두 적용 모드로 막습니다")])],
         "42-blocked": [
-            piece("42-blocked", 12.8, 20.0, ko=[          # refused_release_review 15.0; the next command's typing is cut
+            # refused_release_review 15.0; the next command's typing is cut
+            piece("42-blocked", 12.8, 20.0, ko=[
                 beat("refused_release_review", "같은 요청을 이제 게이트웨이가 403으로 막습니다")]),
-            piece("42-blocked", 25.4, 41.5, ko=[          # refused_docs_adk 27.7, both 34.7
+            # refused_docs_adk 27.7, both 34.7
+            piece("42-blocked", 25.4, 41.5, ko=[
                 beat("refused_docs_adk", "docs_adk에도 같은 정책이 걸려 있어 똑같이 막힙니다")])],
         "43-before": [
-            piece("43-before", 12.6, 24.0, ko=[           # answered_code_name 17.8; the next command's typing is cut
+            # answered_code_name 17.8; the next command's typing is cut
+            piece("43-before", 12.6, 24.0, ko=[
                 beat("answered_code_name", "커스텀 가드레일 전에는 사내 코드명이 든 요청도 에이전트에 닿습니다")]),
-            piece("43-before", 31.5, 45.5, ko=[           # answered_inspection 37.9
+            # answered_inspection 37.9
+            piece("43-before", 31.5, 45.5, ko=[
                 beat("answered_inspection", "검사 답의 Inspector ID 줄에 사번이 그대로 나옵니다")])],
-        "44-attach": [piece("44-attach", 8.7, 35.5, ko=[  # detached 9.1, attach_pressed 16.8, job_done 22.0, attached 29.0
-            beat("shot:detached", "커스텀 가드레일을 버튼 하나로 에이전트 게이트웨이에 붙입니다"),
-            beat("shot:attached", "커스텀 가드레일이 게이트웨이의 요청과 응답을 모두 검사합니다")])],
+        "44-attach": [
+            # detached 9.1, attach_pressed 16.8, job_done 22.0 (a short job: it plays at 1.25), attached 29.0
+            piece("44-attach", 8.7, 35.5, ko=[
+                beat("shot:detached", "커스텀 가드레일을 버튼 하나로 에이전트 게이트웨이에 붙입니다"),
+                beat("shot:attached", "커스텀 가드레일이 게이트웨이의 요청과 응답을 모두 검사합니다")])],
         "45-after": [
-            piece("45-after", 12.6, 22.5, ko=[            # answered_code_name 16.4; the next command's typing is cut
+            # answered_code_name 16.4; the next command's typing is cut
+            piece("45-after", 12.6, 22.5, ko=[
                 beat("answered_code_name", "이제 코드명이 든 요청은 커스텀 가드레일이 막습니다")]),
-            piece("45-after", 29.8, 44.0, ko=[            # answered_inspection 36.4
+            # answered_inspection 36.4
+            piece("45-after", 29.8, 44.0, ko=[
                 beat("answered_inspection", "답의 Inspector ID 줄에서는 사번이 가려집니다")])],
         # 5단계: usage, the incident, the alarm, the stop, the cause, the way back
-        "51-usage": [piece("51-usage", 10.4, 31.0, ko=[   # agents 10.8, tools 18.8, alarm 24.8
-            beat("shot:agents", "플랫폼팀은 에이전트마다 호출과 세션 수를 한 화면에서 봅니다", dur=6.0),
-            beat("shot:alarm", "도구 호출 경보는 한 도구의 분당 호출이 19를 넘는지 지켜봅니다")])],
+        "51-usage": [
+            # agents 10.8, tools 18.8, alarm 24.8
+            piece("51-usage", 10.4, 31.0, ko=[
+                beat("shot:agents", "플랫폼팀은 에이전트마다 호출과 세션 수를 한 화면에서 봅니다", dur=6.0),
+                beat("shot:alarm", "도구 호출 경보는 한 도구의 분당 호출이 19를 넘는지 지켜봅니다")])],
         "52-incident": [
-            piece("52-incident", 10.8, 24.0, ko=[         # publish_loop 11.4, submitted 17.8
+            # publish_loop 11.4, submitted 17.8
+            piece("52-incident", 10.8, 24.0, ko=[
                 beat("shot:submitted", "개발자가 quality_agent의 새 판 v2-loop를 신청합니다")]),
             # its review: only its end. The note approved (376.2) came from the pills; the steps on screen read
             # SUCCEEDED from about 377.8, as the shot approved (377.7) frames the record
             piece("52-incident", 377.6, 382.6, ko=[
                 beat("shot:approved", "이 판도 일곱 단계 심사를 모두 통과해 승인이 됩니다")]),
-            piece("52-incident", 392.8, 399.0),           # incident_asked 393.1; the 60 s without an answer are cut
-            piece("52-incident", 452.8, 461.5, ko=[       # no_answer 454.3
+            # incident_asked 393.1; the 60 s without an answer are cut
+            piece("52-incident", 392.8, 399.0),
+            # no_answer 454.3
+            piece("52-incident", 452.8, 461.5, ko=[
                 beat("no_answer", "사용자가 검사 Q-1002를 물었지만 60초가 지나도 답이 없습니다")])],
         "53-alarm": [
-            piece("53-alarm", 5.3, 46.2, WAIT),           # alarm 5.7 (OK)
-            piece("53-alarm", 46.2, 52.0, ko=[            # first_bar_over 46.9
+            # alarm 5.7 (OK)
+            piece("53-alarm", 5.3, 46.2, WAIT),
+            # first_bar_over 46.9
+            piece("53-alarm", 46.2, 52.0, ko=[
                 beat("first_bar_over", "그 사이 검사 도구의 분당 호출이 임계값 19를 넘습니다")]),
             piece("53-alarm", 88.0, 94.5, WAIT),
-            piece("53-alarm", 94.5, 106.5, ko=[           # state_ALARM 95.0, bars 97.0, alarm 103.0
-                beat("state_ALARM", "넘는 호출이 이어지자 경보가 ALARM으로 바뀝니다")])],
+            # state_ALARM 95.0, bars 97.0, alarm 103.0 (one bar, 27, over the line in this take)
+            piece("53-alarm", 94.5, 106.5, ko=[
+                beat("state_ALARM", "임계값을 넘은 뒤 경보 상태가 ALARM으로 바뀝니다")])],
         "54-stop": [
-            piece("54-stop", 9.6, 19.8, ko=[              # agents 10.6, row 14.6, stop_pressed 19.6
+            # agents 10.6, row 14.6, stop_pressed 19.6
+            piece("54-stop", 9.6, 19.8, ko=[
                 beat("shot:agents", "플랫폼팀은 문제를 일으킨 quality_agent 하나만 멈춥니다")]),
-            piece("54-stop", 19.8, 41.6, WAIT),           # the job's lines
-            piece("54-stop", 41.6, 55.5, ko=[             # job_done 41.6, stopped 49.6
+            # the job's lines
+            piece("54-stop", 19.8, 41.6, WAIT),
+            # job_done 41.6, stopped 49.6
+            piece("54-stop", 41.6, 55.5, ko=[
                 beat("shot:job_done", "멈추기는 그 에이전트의 진입을 정책으로 막고 세션을 끝냅니다", dur=6.0)])],
         "55-neighbours": [
-            piece("55-neighbours", 11.4, 19.0, ko=[       # quality_agent_HTTP_403 14.0; each next typing is cut
+            # quality_agent_HTTP_403 14.0; each next command's typing is cut
+            piece("55-neighbours", 11.4, 19.0, ko=[
                 beat("quality_agent_HTTP_403", "멈춘 quality_agent에 가는 요청은 막힙니다")]),
-            piece("55-neighbours", 23.8, 31.5),           # release_review_HTTP_200 28.8
-            piece("55-neighbours", 38.4, 58.0, ko=[       # docs_adk_HTTP_200 44.7, all 51.7
+            # release_review_HTTP_200 28.8
+            piece("55-neighbours", 23.8, 31.5),
+            # docs_adk_HTTP_200 44.7, all 51.7
+            piece("55-neighbours", 38.4, 58.0, ko=[
                 beat("docs_adk_HTTP_200", "이웃 에이전트 release_review와 docs_adk는 그대로 답합니다")])],
         "56-cause": [
-            piece("56-cause", 15.8, 31.6, ko=[            # cause_asked 16.8, ask1 24.9 (answered No), the No sentence
+            # cause_asked 16.8, ask1 24.9 (answered No), the No sentence
+            piece("56-cause", 15.8, 31.6, ko=[
                 beat("cause_asked", "개발자는 Claude Code에게 같은 도구를 계속 부른 이유를 찾게 합니다")]),
-            piece("56-cause", 31.6, 42.2, WAIT),          # work1 33.2: Claude Code reads with its own tools
+            # work1 33.2: Claude Code reads with its own tools
+            piece("56-cause", 31.6, 42.2, WAIT),
             # the answer's first line stands still at the top only from 42.2 to 43.0 (cause_done 47.7 less 5.45 s):
             # those real frames play slower, so the line can be read
             piece("56-cause", 42.2, 43.0, 0.13, ko=[
                 beat("cause_done", "Claude Code는 로그와 코드를 읽고 재시도에 횟수 제한이 없다고 짚습니다", offset=-5.45)]),
-            piece("56-cause", 43.0, 58.0, ko=[            # cause 47.7: the reasons, the way to fix it
+            # cause 47.7: the reasons, the way to fix it
+            piece("56-cause", 43.0, 58.0, ko=[
                 beat("shot:cause", "근거와 함께 고칠 방향을 알려 주고 파일은 고치지 않습니다")])],
         "57-back": [
-            piece("57-back", 10.6, 23.0, ko=[             # publish_fixed 11.1, submitted 17.8
+            # publish_fixed 11.1, submitted 17.8
+            piece("57-back", 10.6, 23.0, ko=[
                 beat("shot:submitted", "개발자는 원인을 고친 판을 다시 신청합니다")]),
-            piece("57-back", 356.5, 369.0, ko=[           # its review: only its end (approved 357.0, the shot 358.5,
-                beat("approved", "에이전트가 멈춘 동안에도 고친 판의 심사는 끝까지 통과합니다")]),     # steps_done 363.5)
-            piece("57-back", 373.0, 382.5, ko=[           # stopped 373.3, row 378.3, resume_pressed 382.3
+            # its review: only its end (approved 357.0, the shot approved 358.5, steps_done 363.5)
+            piece("57-back", 356.5, 369.0, ko=[
+                beat("approved", "에이전트가 멈춘 동안에도 고친 판의 심사는 끝까지 통과합니다")]),
+            # stopped 373.3, row 378.3, resume_pressed 382.3
+            piece("57-back", 373.0, 382.5, ko=[
                 beat("shot:stopped", "승인이 끝나도 멈춤은 그대로이고, 재개 버튼으로 다시 엽니다")]),
-            piece("57-back", 382.5, 394.0, WAIT),         # the resume job
-            piece("57-back", 394.0, 404.5),               # job_done 394.1, running 400.1
-            piece("57-back", 419.2, 436.5, ko=[           # asked 419.6, answered 429.6 (the command's typing is cut)
-                beat("answered", "같은 질문에 다시 답하고, 사번은 여전히 가려져 있습니다")])],
+            # the resume job
+            piece("57-back", 382.5, 394.0, WAIT),
+            # job_done 394.1, running 400.1
+            piece("57-back", 394.0, 404.5),
+            # asked 419.6 (stage 4's inspection question, Q-1001), answered 429.6; the command's typing is cut
+            piece("57-back", 419.2, 436.5, ko=[
+                beat("answered", "재개한 quality_agent가 다시 답하고, 사번은 여전히 가려집니다")])],
     },
     # a card: kicker, title, and either rows (sentences; "accent" = the index of the accented row) or, for a chapter
     # card, "where" (the place the chapter happens, a name rather than a sentence)
@@ -235,7 +309,7 @@ SPEC = {
             "card-ch4": {"seconds": 3, "kicker": "4단계. 전사 정책 적용", "title": "전사 정책 하나가 모든 에이전트에 걸립니다",
                          "where": "AgentCore Gateway와 커스텀 가드레일"},
             "card-ch5": {"seconds": 3, "kicker": "5단계. 이상 대응", "title": "문제를 일으킨 에이전트 하나만 멈춥니다",
-                         "where": "CloudWatch 알람과 AgentCore Runtime"},
+                         "where": "CloudWatch 경보와 AgentCore Runtime"},
             "card-compare": {"seconds": 8, "kicker": "가드레일 두 가지", "title": "기본 제공 가드레일과 커스텀 가드레일",
                              "rows": ["기본 제공은 설정으로 걸고 기록 모드로 먼저 시험합니다",
                                       "커스텀은 사내 코드로 막고 민감 정보를 가립니다",
@@ -344,13 +418,30 @@ def anchor_seconds(at: str, log: list[dict]) -> float | None:
     return float(hits[n - 1]["t"]) if len(hits) >= n else None
 
 
+def take_seconds(path: Path) -> float:
+    """The length of a raw take as ffprobe reads it (the camlog runs on a little after the video ends)."""
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         check=True, capture_output=True, text=True).stdout
+    return float(out)
+
+
 def window_problems(spec: dict, lang: str, raw: Path, takes: set[str]) -> list[str]:
-    """Each caption of the given takes against its camlog: the anchor is there, and it falls inside its piece with at
-    least ROOM seconds of the finished piece after it."""
-    found, logs = [], {}
+    """Each piece of the given takes against its take, and each caption against the take's camlog: the window starts
+    before it ends and ends inside the take; the anchor is there, it falls inside its piece with at least ROOM seconds
+    of the finished piece after it, and an explicit "dur" ends before the next caption starts."""
+    found, logs, lengths = [], {}, {}
     for take in sorted(takes):
         pieces = spec["clips"][take]
         for name, part in zip(piece_names(take, pieces), pieces):
+            if not part["start"] < part["end"]:
+                found.append(f"{name}: its window {part['start']}..{part['end']} does not start before it ends")
+                continue
+            if part["raw"] not in lengths:
+                lengths[part["raw"]] = take_seconds(raw / f"{part['raw']}.webm")
+            if part["end"] > lengths[part["raw"]] + 0.01:
+                found.append(f"{name}: its window ends at {part['end']} s, beyond the take {part['raw']} "
+                             f"({lengths[part['raw']]:.2f} s)")
+            starts = []                                   # each caption's start in the finished piece, and its beat
             for b in part["beats"].get(lang, []):
                 if part["raw"] not in logs:
                     logs[part["raw"]] = json.loads((raw / f"{part['raw']}.camlog.json").read_text())["log"]
@@ -363,6 +454,13 @@ def window_problems(spec: dict, lang: str, raw: Path, takes: set[str]) -> list[s
                 if not part["start"] <= t or (part["end"] - t) / part["speed"] < ROOM:
                     found.append(f"{name}: {b['text']!r} falls at {t:.2f} s, outside its piece {part['start']}.."
                                  f"{part['end']} or less than {ROOM} s of the piece before its end")
+                    continue
+                starts.append(((t - part["start"]) / part["speed"], b))
+            starts.sort(key=lambda x: x[0])
+            for (t0, b), (t1, _) in zip(starts, starts[1:]):
+                if "dur" in b and t0 + float(b["dur"]) > t1:
+                    found.append(f"{name}: {b['text']!r} runs into the next caption (it ends at {t0 + float(b['dur']):.2f}"
+                                 f" s of the piece, the next starts at {t1:.2f} s)")
     return found
 
 
