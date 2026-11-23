@@ -645,7 +645,7 @@ def test_the_recording_files_name_no_host_home_folder_person_or_account():
 # repeats) and every key and paste is written to page.log.
 STAND_IN_TERM = """
 export const screenText = async page => page.next().join('\\n');
-export const paste = async (page, text) => { page.log.push(['paste', text]); };
+export const paste = async (page, text) => { page.log.push(['paste', text, page.looked()]); };
 export const type = async (page, text) => { page.log.push(['type', text]); };
 export const waitPrompt = async () => true;
 export const waitFor = async () => true;
@@ -653,11 +653,13 @@ export const rowsRect = async () => null;
 """
 FAKE_PAGE = """
 const fakePage = screens => {
-  let i = 0, last = [];
+  let i = 0, last = null;
   const page = { log: [], next: () => (last = screens[Math.min(i++, screens.length - 1)]),
+    // the screen the driver had looked at last (null before its first look)
+    looked: () => (last === null ? null : last.join('\\n')),
     waitForTimeout: async () => {},
-    // each key is logged with the screen the driver had looked at last
-    keyboard: { press: async key => { page.log.push(['key', key, last.join('\\n')]); } } };
+    // each key (and each paste, in term.mjs) is logged with the screen the driver had looked at last
+    keyboard: { press: async key => { page.log.push(['key', key, page.looked()]); } } };
   return page;
 };
 const fakeRec = () => ({ notes: [], note(kind, data) { this.notes.push([kind, data]); }, now: () => 1 });
@@ -756,7 +758,6 @@ FILE_PATHS = ["/home/dev/work/dev_team/quality_agent/agent.py", "~/work/dev_team
               "quality_agent/main.py", "dev_team/quality_agent/main.py", "/home/dev/work/demo_scenes/search",
               "/home/dev/work/dev_team/quality_agent/../../demo_scenes/search",
               "/home/dev/work/dev_team/quality_agent/.claude/settings.json"]
-OPTION_ROW = re.compile(r"^\s*(❯\s*)?\d\.\s+(Yes|No)\b", re.M)
 
 
 def _every_dialog_screen() -> list[list[str]]:
@@ -780,7 +781,8 @@ for (const [name, screens] of Object.entries(cases)) {
   let error = '';
   try { await request(page, rec, cam, 'the request', { noRun: 'files only', idleMs: 0 }); } catch (e) { error = e.message; }
   out[name] = { keys: page.log.filter(l => l[0] === 'key').map(l => [l[1], l[2]]),
-                pastes: page.log.filter(l => l[0] === 'paste').map(l => l[1]), notes: rec.notes, error };
+                pastes: page.log.filter(l => l[0] === 'paste').map(l => l[1]),
+                pasted_on: page.log.filter(l => l[0] === 'paste').map(l => l[2]), notes: rec.notes, error };
 }
 console.log(JSON.stringify(out));"""
     return json.loads(_node(run, tmp_path))
@@ -790,25 +792,93 @@ BUSY = ["✻ Cooking… (2s · esc to interrupt)"]
 DONE = ["✻ Cooked for 3s", "❯"]
 
 
+def _answered_with_escape_only(g: dict, dialog: list[str], name) -> None:
+    """Every key sent while the dialog was the screen looked at last is Escape, and nothing was pasted onto it: each
+    paste follows a look, and that look did not find the dialog."""
+    shown = "\n".join(dialog)
+    for key, screen in g["keys"]:
+        if screen == shown:
+            assert key == "Escape", (name, key)                  # never Enter, nor any other key, on a dialog
+    for screen in g["pasted_on"]:
+        assert screen is not None and screen != shown, name
+
+
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_while_a_dialog_is_on_the_screen_the_only_key_is_escape_and_enter_never_meets_an_option_row(tmp_path):
     # the storyboard never answers Yes: whatever the question (every kept real one, every command and path of both
     # reviews), it presses Escape, then sends the take's sentence; Enter goes out only after a look that finds no
-    # option row (here the dialog is still there at that look: Escape again, look again)
+    # option row (here the dialog is still there at the look before the sentence: Escape again, look again)
     screens = _every_dialog_screen()
     assert len(screens) == 7 + len(READS) + len(BYPASSES) + len(FILE_PATHS)
-    got = _requests({str(i): [BUSY, s, s, BUSY, DONE] for i, s in enumerate(screens)}, tmp_path)
+    got = _requests({str(i): [BUSY, BUSY, s, s, BUSY, BUSY, DONE] for i, s in enumerate(screens)}, tmp_path)
     for i, s in enumerate(screens):
         g = got[str(i)]
         assert g["error"] == "", (i, g["error"])
-        for key, screen in g["keys"]:
-            if OPTION_ROW.search(screen):
-                assert key == "Escape", (i, key)                 # never Enter, nor any other key, on a dialog
+        _answered_with_escape_only(g, s, i)
         assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"], i
         assert g["pastes"] == ["the request", "files only"], i
         assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": n[1]["kind"]}]
                                                                    for n in g["notes"] if n[0] == "permission"]
         assert len([n for n in g["notes"] if n[0] == "permission"]) == 1, i
+
+
+# A question Claude Code draws itself, whose option texts the other agent writes (they read neither Yes nor No).
+OWN_QUESTION = ["────────────────────────────────────────────────────────────────────────────────────────────────────",
+                " ☐ 실행 방식", "", "파일을 만든 뒤 어떻게 할까요?", "",
+                "❯ 1. 네, 실행합니다", "     지금 셸에서 돌려 봅니다", "  2. 아니요", "     파일만 둡니다",
+                "  3. Type something.", "", "Enter to select · ↑/↓ to navigate · Esc to cancel"]
+# An answer of Claude Code with a plain numbered list: no marker, and no row that reads Yes or No.
+PLAIN_LIST = ["● 읽은 파일입니다.", "  1. agent.py를 읽었습니다", "  2. hub_tools.py에는 도구 호출이 있습니다", "",
+              "✻ Cooked for 3s", "❯"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_dialog_whose_options_read_neither_yes_nor_no_gets_escape_and_a_plain_numbered_list_does_not(tmp_path):
+    got = _requests({"during": [BUSY, BUSY, OWN_QUESTION, OWN_QUESTION, BUSY, BUSY, DONE],
+                     "left_open": [OWN_QUESTION, BUSY, BUSY, BUSY, DONE],
+                     "plain": [PLAIN_LIST, PLAIN_LIST, BUSY, DONE]}, tmp_path)
+    during, left_open, plain = got["during"], got["left_open"], got["plain"]
+    assert [n for n in during["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": "unknown"}]]
+    assert [k for k, _ in during["keys"]] == ["Enter", "Escape", "Escape", "Enter"]
+    assert [k for k, _ in left_open["keys"]] == ["Escape", "Enter"]       # the open dialog first, then the request
+    for name in ("during", "left_open"):
+        assert got[name]["error"] == "", name
+        _answered_with_escape_only(got[name], OWN_QUESTION, name)
+    # an answer's numbered list is not a dialog: the request goes out with Enter, nothing is answered
+    assert [k for k, _ in plain["keys"]] == ["Enter"] and plain["error"] == ""
+    assert not [n for n in plain["notes"] if n[0] == "permission"]
+
+
+def _wrapped_question() -> list[str]:
+    """The real file question (create main.py) for a file whose long name wraps the asking row over two rows."""
+    name = "inspection_retry_notes_for_the_quality_agent_written_while_reading_its_log_lines_today.py"
+    rows = _file_screen(f"/home/dev/work/dev_team/quality_agent/{name}")
+    i = rows.index(f" Do you want to create {name}?")
+    return rows[:i] + [" Do you want to create", f" {name}?"] + rows[i + 1:]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_permission_question_whose_asking_row_wraps_is_still_answered_with_escape(tmp_path):
+    wrapped = _wrapped_question()
+    g = _requests({"wrapped": [BUSY, BUSY, wrapped, wrapped, BUSY, BUSY, DONE]}, tmp_path)["wrapped"]
+    assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": "file"}]]
+    assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"]
+    assert g["error"] == ""
+    _answered_with_escape_only(g, wrapped, "wrapped")
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_nothing_is_pasted_onto_an_open_dialog(tmp_path):
+    # a dialog still open when the request is to be pasted, and one still open when the take's sentence is to be
+    # pasted after the Escape: each paste waits for a look that finds no dialog
+    dialog = DIALOGS["take_ask1"]
+    got = _requests({"request": [dialog, BUSY, BUSY, BUSY, DONE],
+                     "sentence": [BUSY, BUSY, dialog, dialog, BUSY, BUSY, DONE]}, tmp_path)
+    for name, g in got.items():
+        assert g["error"] == "", name
+        _answered_with_escape_only(g, dialog, name)
+    assert got["request"]["pastes"] == ["the request"]
+    assert got["sentence"]["pastes"] == ["the request", "files only"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -822,7 +892,7 @@ def test_a_row_that_only_resembles_a_question_does_not_start_the_answering_branc
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_an_option_row_in_claude_codes_answer_holds_back_enter_and_stops_the_take_when_it_stays(tmp_path):
     answer = ["● 확인한 것:", "  1. Yes, agent.json is there", "  2. No requirements.txt yet", "❯"]
-    got = _requests({"stays": [answer], "goes": [answer, DONE, BUSY, DONE]}, tmp_path)
+    got = _requests({"stays": [answer], "goes": [answer, DONE, DONE, BUSY, DONE]}, tmp_path)
     assert [k for k, _ in got["stays"]["keys"]] == ["Escape"]
     assert got["stays"]["error"].startswith("an option row stays on the screen")
     assert [k for k, _ in got["goes"]["keys"]] == ["Escape", "Enter"] and got["goes"]["error"] == ""
