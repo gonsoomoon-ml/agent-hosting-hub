@@ -7,7 +7,7 @@
 # The take goes to demo_video/out/raw/<take>.webm with its camlog (<take>.camlog.json) and the text of the screen at
 # each shot and of every screen a Claude Code session showed (<take>.texts.txt); a take recorded before is moved to
 # demo_video/out/raw/old/ first. Then this prints the shots, the notes and any shot whose selector matched nothing,
-# and looks for a 12-digit number or an e-mail address in the texts (lib/check_texts.sh). Exit 0 when the storyboard ended well, nothing was missing and nothing was found; else 1.
+# and looks for a 12-digit number, an e-mail address or an access key ID in the texts (lib/check_texts.sh). Exit 0 when the storyboard ended well, nothing was missing and nothing was found; else 1.
 # Needs DEMO_VIDEO_PLUGIN (the plugin's scripts folder) and PLAYWRIGHT_ROOT (a folder with node_modules/playwright).
 set -euo pipefail
 

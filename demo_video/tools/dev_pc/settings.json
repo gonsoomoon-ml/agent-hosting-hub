@@ -27,9 +27,14 @@
       "Edit(./.mcp.json)",
       "Edit(./pyproject.toml)",
       "Edit(./uv.lock)",
+      "Edit(./dev_team/.claude/**)",
+      "Edit(./dev_team/.mcp.json)",
+      "Edit(./dev_team/CLAUDE.md)",
       "Edit(./dev_team/**/.claude/**)",
       "Edit(./dev_team/**/.mcp.json)",
-      "Edit(./dev_team/**/CLAUDE.md)"
+      "Edit(./dev_team/**/CLAUDE.md)",
+      "Edit(~/.claude/**)",
+      "Edit(~/.claude.json)"
     ]
   },
   "enabledMcpjsonServers": ["hub-catalog"]

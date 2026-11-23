@@ -1,9 +1,10 @@
 // Claude Code in the developer PC, driven like a person at the keyboard. What it prints is untrusted: the text of a
 // permission question is chosen by another agent, so the storyboard does not judge it. It never answers Yes: when
 // Claude Code asks, the storyboard frames the question, holds it for the camera and presses Escape (No), then sends
-// the take's sentence that says how to go on. The only key it sends while a dialog is on the screen is Escape; text
-// is pasted, and Enter pressed (to send what was pasted, or to start claude at the shell), only after a look that
-// finds no option row of a dialog anywhere on the screen.
+// the take's sentence that says how to go on. The only key it sends to a dialog it has seen is Escape; text is
+// pasted, and Enter pressed (to send what was pasted, or to start claude at the shell), only when the look just
+// before found no option row of a dialog anywhere on the screen. A dialog that appears between that look and the key
+// gets the key (Enter takes its marked option); that is how the code is, and the recordings did not show it happen.
 import { term } from './plugin.mjs';
 
 const BUSY = 'esc to interrupt';

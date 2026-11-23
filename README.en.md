@@ -175,7 +175,7 @@ The video file is not in this repository. The sources of the video are in `demo_
 
 ## Commands typed in the video
 
-Four short commands that a person types in the video's terminal scenes are in `demo_scenes/`: `ask` (call an agent), `publish` (put an agent up), `search` (search the catalog), `logs` (an agent's recent logs). Each command, prompt and the order of the scenes are in [`demo_scenes/README.md`](demo_scenes/README.md). `search` and `logs` were run on 2026-11-23 on the developer PC (below) with the development team's role, and `ask` and `publish` were only unit-tested.
+Four short commands that a person types in the video's terminal scenes are in `demo_scenes/`: `ask` (call an agent), `publish` (put an agent up), `search` (search the catalog), `logs` (an agent's recent logs). Each command, prompt and the order of the scenes are in [`demo_scenes/README.md`](demo_scenes/README.md). `search` and `logs` were run on 2026-11-23 on the developer PC (below) with the development team's role, and on the same day, in the recordings of the demo video, `publish` was run on the developer PC and `ask` in the user's shell.
 
 The PC on which the developer scenes were recorded is a Docker container and is described in [`demo_video/README.md`](demo_video/README.md). Claude Code runs on an Amazon Bedrock model, and the container gets only the development team's role's temporary credentials and a temporary token that can call only two Claude models. On 2026-11-23 the Claude Code inside it found `parts-tools` through the catalog's MCP endpoint and made an agent's files from the template.
 

@@ -33,8 +33,10 @@ def test_no_account_values_in_repo():
         for m in re.findall(r"(?<![0-9])[0-9]{12}(?![0-9])", text):
             if m not in ALLOWED:
                 bad.append((str(f.relative_to(ROOT)), m))
-        if re.search(r"AKIA[0-9A-Z]{16}", text):            # no key-shaped string, not even a documented example:
-            bad.append((str(f.relative_to(ROOT)), "access key"))   # a secret scan of this repo needs no exception
+        # no key-shaped string (a long-term AKIA or a temporary ASIA key ID), not even a documented example: a secret
+        # scan of this repo needs no exception
+        if re.search(r"(AKIA|ASIA)[0-9A-Z]{16}", text):
+            bad.append((str(f.relative_to(ROOT)), "access key"))
     assert bad == []
 
 

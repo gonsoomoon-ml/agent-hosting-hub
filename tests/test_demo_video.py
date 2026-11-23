@@ -27,8 +27,12 @@ ALLOWED = [f"mcp__{SERVER}__*", "Edit(./dev_team/**)", "Bash(search:*)", "Bash(l
 DENIED = ["Read(//run/dev-pc/**)", "Edit(./demo_scenes/**)", "Edit(./platform_team/**)", "Edit(./.claude/**)",
           "Edit(./.mcp.json)", "Edit(./pyproject.toml)", "Edit(./uv.lock)",
           # under dev_team/, where edits need no question: no Claude Code folder (skills, hooks, settings), MCP server
-          # list or instructions file that a later session would load
-          "Edit(./dev_team/**/.claude/**)", "Edit(./dev_team/**/.mcp.json)", "Edit(./dev_team/**/CLAUDE.md)"]
+          # list or instructions file that a later session would load; directly under dev_team/ by name (so that no
+          # reading of **/ decides it), and in any folder below it
+          "Edit(./dev_team/.claude/**)", "Edit(./dev_team/.mcp.json)", "Edit(./dev_team/CLAUDE.md)",
+          "Edit(./dev_team/**/.claude/**)", "Edit(./dev_team/**/.mcp.json)", "Edit(./dev_team/**/CLAUDE.md)",
+          # Claude Code's own files in the container's home, which run.sh up keeps
+          "Edit(~/.claude/**)", "Edit(~/.claude.json)"]
 SKIP_WORDS = ("--dangerously-skip-permissions", "dangerously", "--permission-mode", "bypassPermissions", "acceptEdits")
 
 
@@ -67,7 +71,7 @@ def test_the_settings_hold_no_credential_and_allow_only_the_listed_tools():
     assert not re.search(r"(AKIA|ASIA)[0-9A-Z]{16}", text)
 
 
-def test_no_pre_allowed_rule_is_broader_than_the_list_or_reaches_a_denied_file():
+def test_no_pre_allowed_rule_is_broader_than_the_list():
     allow = _settings()["permissions"]["allow"]
     # each Bash rule is one command word, each Edit rule stays under dev_team/, the MCP rule names the one server
     assert sorted(re.fullmatch(r"Bash\((\w+):\*\)", a).group(1) for a in allow if a.startswith("Bash(")) == [
@@ -75,23 +79,53 @@ def test_no_pre_allowed_rule_is_broader_than_the_list_or_reaches_a_denied_file()
     assert [a for a in allow if a.startswith("Edit(")] == ["Edit(./dev_team/**)"]
     assert [a for a in allow if a.startswith("mcp__")] == [f"mcp__{SERVER}__*"]
     assert not [a for a in allow if a.startswith(("Read(", "Write(", "WebFetch", "WebSearch", "Agent", "Task"))]
-    edits = [a[len("Edit("):-1] for a in allow if a.startswith("Edit(")]
+
+
+def _named_by(path: str, rules: list[str]) -> list[str]:
+    """The Edit rules that name a path without any pattern: the path itself, or a folder of it followed by a closing
+    /** (a rule with any other * is skipped, so no reading of a pattern decides it)."""
+    named = []
+    for rule in (r for r in rules if r.startswith("Edit(")):
+        p = rule[len("Edit("):-1]
+        if "*" in p.removesuffix("/**"):
+            continue
+        if p == path or (p.endswith("/**") and path.startswith(p.removesuffix("**"))):
+            named.append(rule)
+    return named
+
+
+def test_every_file_a_later_session_loads_from_dev_team_or_the_home_is_named_by_a_deny_rule():
+    # Edit(./dev_team/**) lets Claude Code write under dev_team/ without a question. A Claude Code folder (a skill, a
+    # hook, settings), an MCP server list or an instructions file directly under dev_team/ would be loaded by a later
+    # session, and so would Claude Code's own files in the container's home, which run.sh up keeps. Each is named by a
+    # deny rule as it is written, with no pattern but a closing /**: how Claude Code reads **/ does not decide it.
+    deny = _settings()["permissions"]["deny"]
+    for path in ("./dev_team/CLAUDE.md", "./dev_team/.mcp.json", "./dev_team/.claude/settings.json",
+                 "./dev_team/.claude/skills/y/SKILL.md", "~/.claude.json", "~/.claude/settings.json",
+                 "~/.claude/skills/y/SKILL.md"):
+        assert _named_by(path, deny), path
+    for path in ("./dev_team/quality_agent/agent.py", "./dev_team/CLAUDE.md.txt", "./dev_team/.claude-notes/x"):
+        assert not _named_by(path, deny), path
+
+
+def test_in_the_tests_own_fnmatch_reading_the_patterns_are_written_as_meant():
+    # fnmatchcase is this test's own reading of the patterns ('*' also crosses '/'), not Claude Code's matcher: it
+    # shows that the allow rule misses every denied file and that the nested denies cover nested files as written,
+    # not what the tool does with them. What the tool did on 2026-11-23 (a write to one nested path,
+    # dev_team/x/.claude/skills/y/SKILL.md, refused) is in demo_video/README.md.
+    allow = [a[len("Edit("):-1] for a in _settings()["permissions"]["allow"] if a.startswith("Edit(")]
     for path in ("./demo_scenes/search", "./demo_scenes/logs", "./platform_team/shared_code/hub_env.sh",
-                 "./.claude/settings.json", "./.mcp.json", "./pyproject.toml", "./uv.lock", "./CLAUDE.md"):
-        assert not [e for e in edits if fnmatchcase(path, e)], path
-    assert fnmatchcase("./dev_team/quality_agent/agent.py", edits[0])
-
-
-def test_no_claude_code_folder_mcp_list_or_instructions_may_be_written_under_dev_team():
-    # Edit(./dev_team/**) lets Claude Code write there without a question; a nested .claude/ (a skill, a hook), a
-    # .mcp.json or a CLAUDE.md there would be read by a later session, so each is denied
-    deny = [d[len("Edit("):-1] for d in _settings()["permissions"]["deny"] if d.startswith("Edit(./dev_team/")]
-    assert deny == ["./dev_team/**/.claude/**", "./dev_team/**/.mcp.json", "./dev_team/**/CLAUDE.md"]
+                 "./.claude/settings.json", "./.mcp.json", "./pyproject.toml", "./uv.lock", "./CLAUDE.md",
+                 "~/.claude/settings.json", "~/.claude.json"):
+        assert not [e for e in allow if fnmatchcase(path, e)], path
+    assert fnmatchcase("./dev_team/quality_agent/agent.py", allow[0])
+    nested = [d[len("Edit("):-1] for d in _settings()["permissions"]["deny"] if d.startswith("Edit(./dev_team/**/")]
+    assert nested == ["./dev_team/**/.claude/**", "./dev_team/**/.mcp.json", "./dev_team/**/CLAUDE.md"]
     for path in ("./dev_team/x/.claude/skills/y/SKILL.md", "./dev_team/quality_agent/.claude/settings.json",
                  "./dev_team/x/.mcp.json", "./dev_team/quality_agent/CLAUDE.md"):
-        assert [d for d in deny if fnmatchcase(path, d)], path
+        assert [d for d in nested if fnmatchcase(path, d)], path
     for path in ("./dev_team/quality_agent/agent.py", "./dev_team/quality_agent/requirements.txt"):
-        assert not [d for d in deny if fnmatchcase(path, d)], path
+        assert not [d for d in nested if fnmatchcase(path, d)], path
 
 
 def test_the_readme_and_the_projects_claude_md_say_what_the_settings_say():
@@ -100,7 +134,8 @@ def test_the_readme_and_the_projects_claude_md_say_what_the_settings_say():
         assert f"`{rule}`" in readme, rule
     claude_md = (DEV_PC / "CLAUDE.md").read_text(encoding="utf-8")
     assert "`dev_team/` 아래에만" in claude_md and "개발자가 직접" in claude_md
-    for folder in ("`demo_scenes/`", "`platform_team/`", "`.claude/`", "`.mcp.json`", "`pyproject.toml`", "`uv.lock`"):
+    for folder in ("`demo_scenes/`", "`platform_team/`", "`.claude/`", "`.mcp.json`", "`pyproject.toml`", "`uv.lock`",
+                   "`CLAUDE.md`", "`~/.claude/`", "`~/.claude.json`"):
         assert folder in claude_md, folder
 
 
@@ -244,8 +279,12 @@ elif "CapEff" in line:
     print("CapEff:\t0000000000000000")
 elif "curl" in line:
     sys.exit(7)
-elif os.environ.get("FAKE_STDERR"):
-    print(os.environ["FAKE_STDERR"], file=sys.stderr)
+elif args[-2:-1] == ["ls"] and "FAKE_LS" in os.environ:
+    sys.stdout.write(os.environ["FAKE_LS"])
+else:
+    sys.stdout.write(os.environ.get("FAKE_STDOUT", ""))
+    if os.environ.get("FAKE_STDERR"):
+        print(os.environ["FAKE_STDERR"], file=sys.stderr)
 '''
 
 
@@ -288,8 +327,10 @@ def fake_pc(tmp_path):
         "PATH": f"{bin_}:/usr/bin:/bin", "FAKE_LOG": str(tmp_path / "docker.log"), "FAKE_STDIN": str(tmp_path / "stdin")}
 
     def run(*args, **extra):
-        return subprocess.run([str(repo / "demo_video/tools/dev_pc/run.sh"), *args], capture_output=True, text=True,
-                              env=env | extra, timeout=60)
+        r = subprocess.run([str(repo / "demo_video/tools/dev_pc/run.sh"), *args], capture_output=True,
+                           env=env | extra, timeout=60)
+        # decoded here, not with text=True, so that a carriage return run.sh lets through stays one
+        return subprocess.CompletedProcess(r.args, r.returncode, r.stdout.decode(), r.stderr.decode())
 
     def calls():
         log = tmp_path / "docker.log"
@@ -377,6 +418,30 @@ def test_check_masks_standard_error_and_shows_that_dev_holds_no_capability(fake_
     assert "234567890123" not in r.stdout + r.stderr and "<ACCOUNT>" in r.stdout + r.stderr
     assert "CapEff:\t0000000000000000 (the user dev holds no effective capability)" in r.stdout
     assert "the user dev cannot delete the route: RTNETLINK answers: Operation not permitted" in r.stdout
+
+
+# text a program in the container chose: a title and a screen clear, colours, a bell, a carriage return, an 8-bit CSI
+# (U+009B), a tab, and one long line
+CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")                       # every control but tab and newline
+CHOSEN = "\x1b]0;title\x07\x1b[2J\x1b[31mred\x1b[0m\ttab\r\x9b1mc1 " + "y" * 400 + "\n"
+
+
+def test_up_shows_the_containers_listing_without_control_characters_and_cut_short(fake_pc):
+    r = fake_pc["run"]("up", FAKE_LS="agent_template\n\x1b[2J\x1b]0;x\x07planted\n" + "z" * 400 + "\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not CONTROLS.search(r.stdout + r.stderr), repr(r.stdout + r.stderr)
+    listing = r.stdout.split("(dev_team: ", 1)[1].split("), quality_agent comes with", 1)[0]
+    assert "agent_template" in listing and "planted" in listing and listing.endswith(" [cut]")
+    assert len(listing) <= 300 + len(" [cut]")
+
+
+def test_check_shows_the_containers_output_without_control_characters_and_cut_short(fake_pc):
+    r = fake_pc["run"]("check", FAKE_STDOUT=CHOSEN, FAKE_STDERR="\x1b[2Jarn:aws:iam::234567890123:role/x\x07 denied")
+    out = r.stdout + r.stderr
+    assert not CONTROLS.search(out), repr(out)
+    assert "red" in out and "\ttab" in out and "[cut]" in out                  # the text stays, the tab too
+    assert "234567890123" not in out and "<ACCOUNT>" in out
+    assert max(len(line) for line in out.splitlines()) <= 300 + len(" [cut]")
 
 
 # ------------------------------------------------------------------ the build script: captions, cards, clips and reels
@@ -559,34 +624,34 @@ def test_the_main_reel_runs_between_8_and_11_minutes():
     assert main == pytest.approx(stages + ends)
 
 
-CARDS_OF_THE_PLAN = {
+CARDS_OF_THE_SCRIPT = {
     "card-intro": ["AI 에이전트 호스팅 허브 on Amazon Bedrock AgentCore", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다"],
     "card-ch0": ["준비", "플랫폼팀이 허브를 한 번 만들어 둡니다", "허브 화면의 홈"],
     "card-ch1": ["1단계. 호스팅 신청", "팀은 플랫폼팀 없이 찾고, 만들고, 신청합니다", "Claude Code와 AWS Agent Registry"],
     "card-ch2": ["2단계. 호스팅 심사", "신청이 들어오면 허브가 자동으로 심사합니다", "심사 파이프라인과 AgentCore Runtime"],
     "card-ch3": ["3단계. 전사 정책 시험", "새 전사 정책을 막지 않고 먼저 시험합니다", "Policy in AgentCore의 기록 모드"],
     "card-ch4": ["4단계. 전사 정책 적용", "전사 정책 하나가 모든 에이전트에 걸립니다", "AgentCore Gateway와 커스텀 가드레일"],
-    # the plan's row said "CloudWatch 알람"; the hub screen and every caption say 경보, so the card does too
+    # 경보, not 알람: the hub screen and every caption say 경보, so the card does too
     "card-ch5": ["5단계. 이상 대응", "문제를 일으킨 에이전트 하나만 멈춥니다", "CloudWatch 경보와 AgentCore Runtime"],
     "card-compare": ["가드레일 두 가지", "기본 제공 가드레일과 커스텀 가드레일", "기본 제공은 설정으로 걸고 기록 모드로 먼저 시험합니다",
                      "커스텀은 사내 코드로 막고 민감 정보를 가립니다", "둘 다 게이트웨이에 걸려 모든 에이전트에 적용됩니다"],
     "card-summary": ["정리", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다", "팀은 카탈로그에서 찾고 템플릿으로 만들어 스스로 신청합니다",
                      "허브가 자동으로 심사하고 통과한 것만 올립니다", "전사 정책은 게이트웨이에 한 번 걸면 모두에 적용됩니다",
                      "이상 에이전트 하나만 멈추고 이웃은 계속 답합니다"],
-    # the script's one row "AgentCore는 Runtime, Gateway, Policy, Registry, 관측을 줍니다" is 54 characters: the same
-    # words in two rows of at most 45
+    # one row "AgentCore는 Runtime, Gateway, Policy, Registry, 관측을 줍니다" would be 54 characters: the same words in
+    # two rows of at most 45
     "card-closing": ["누가 무엇을 맡나", "AgentCore가 주는 것과 플랫폼팀이 만드는 것", "AgentCore는 Runtime, Gateway, Policy를 줍니다",
                      "AgentCore는 Registry와 관측도 줍니다", "플랫폼팀은 심사 파이프라인과 운영 명령, 허브 화면을 만듭니다"],
 }
-SECONDS_OF_THE_PLAN = {"card-intro": 4, "card-compare": 8, "card-summary": 9, "card-closing": 7}
+SECONDS_OF_THE_SCRIPT = {"card-intro": 4, "card-compare": 8, "card-summary": 9, "card-closing": 7}
 
 
-def test_the_cards_of_the_plan_pass_the_rules(tmp_path):
+def test_the_cards_of_the_script_pass_the_rules(tmp_path):
     build = _build()
     cards = build.SPEC["cards"]["ko"]
-    assert {name: build.card_texts(card) for name, card in cards.items()} == CARDS_OF_THE_PLAN
-    assert {n: cards[n]["seconds"] for n in SECONDS_OF_THE_PLAN} == SECONDS_OF_THE_PLAN
-    # the whole build file passes its own rules: the plan's cards, and every caption of every piece
+    assert {name: build.card_texts(card) for name, card in cards.items()} == CARDS_OF_THE_SCRIPT
+    assert {n: cards[n]["seconds"] for n in SECONDS_OF_THE_SCRIPT} == SECONDS_OF_THE_SCRIPT
+    # the whole build file passes its own rules: these cards, and every caption of every piece
     r = subprocess.run([sys.executable, str(BUILD), "--check", "--lang", "ko", "--out", str(tmp_path / "out")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -1197,7 +1262,31 @@ def test_the_text_check_masks_the_containers_name_instead_of_dropping_its_line(t
     assert "<12 digits>,<12 digits>" in r.stdout
     texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ ls\n")
     r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
-    assert (r.returncode, r.stdout) == (0, "texts: no 12-digit number and no e-mail address in 1 screens\n")
+    assert (r.returncode, r.stdout) == (
+        0, "texts: no 12-digit number, no e-mail address and no access key ID in 1 screens\n")
+
+
+def test_the_text_check_finds_a_long_term_or_temporary_key_id_and_prints_it_masked(tmp_path):
+    check = SCENES / "lib" / "check_texts.sh"
+    texts = tmp_path / "take.texts.txt"
+    # made up, and put together here so that no file of this repo holds the shape of a key
+    for prefix in ("AKIA", "ASIA"):
+        key = prefix + "ABCDEFGHIJ012345"
+        texts.write_text(f"== 1.0 shell\ndev@dev-pc:~/work$ cat x\naws_access_key_id = {key}\n")
+        r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 1 and key not in r.stdout and "aws_access_key_id = <access key ID>" in r.stdout, prefix
+
+
+def test_the_text_check_prints_a_found_line_without_control_characters_and_cut_short(tmp_path):
+    texts = tmp_path / "take.texts.txt"
+    # a bell splits a 12-digit number: dropping the bell must not print the joined number unmasked
+    texts.write_bytes(("== 1.0 shell\nids 123456\x07789012 to someone@example.com " + CHOSEN).encode())
+    r = subprocess.run([str(SCENES / "lib" / "check_texts.sh"), str(texts)], capture_output=True, timeout=30)
+    out = r.stdout.decode()
+    assert r.returncode == 1 and not CONTROLS.search(out), repr(out)
+    assert "123456789012" not in out and "ids <12 digits> to someone@example.com" in out
+    assert "red" in out and "\ttab" in out and out.rstrip("\n").endswith(" [cut]")
+    assert max(len(line) for line in out.splitlines()) <= 300 + len(" [cut]")
 
 
 def test_the_hubs_state_names_each_running_review_by_its_agent():
