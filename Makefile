@@ -92,8 +92,10 @@ e2e-ops:
 
 # The hub screen (platform_team/hub_ui) from end to end, on the hub make e2e-ops leaves (four agents hosted, guard_prompt
 # off, the custom guardrail detached, nothing stopped): it starts the screen on a free port of this PC, reads its pages
-# and presses its buttons, and leaves the hub as it found it. The log goes to e2e_checks/last-run-ui.log (not
-# committed: *.log).
+# and presses its buttons. What a check that stopped halfway left, the end puts back with the repo's commands: the
+# company policy guard_prompt, the custom guardrail, a stopped agent. quality_agent's record it does not put back: the
+# end prints the command that does (publish.sh dev_team/quality_agent). The log goes to e2e_checks/last-run-ui.log
+# (not committed: *.log).
 e2e-ui:
 	bash -o pipefail -c 'uv run --group ui python e2e_checks/e2e_hub_ui.py 2>&1 | tee e2e_checks/last-run-ui.log'
 

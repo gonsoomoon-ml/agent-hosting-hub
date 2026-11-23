@@ -140,7 +140,7 @@ harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추�
 7. `quality_agent` 멈추기 뒤에 페이지가 멈춤을 보이고, 에이전트 게이트웨이로 부르면 403이고 `release_review`는 200이다. 재개 뒤에 페이지가 동작 중을 보이고 부르면 200이다.
 8. 작업이 도는 동안 버튼을 다시 누르면 받지 않는다(303과 `err=busy`, 그리고 페이지의 문장).
 
-바꾼 것은 확인마다 되돌리므로(취약한 버전은 반려하고 고친 버전을 다시 승인, `guard_prompt`는 꺼짐, 가드레일은 떨어짐, `quality_agent`는 재개) 같은 허브에서 다시 돌릴 수 있다. 확인이 중간에 멈추면, 끝에서 남은 것을 리포의 명령(`rollout.sh guard_prompt off`, `guardrail.sh detach`, `resume.sh`)으로 되돌린다. `E2E_UI_HOLD=<초>`를 주면 네 페이지(실패한 심사, 집계가 요청을 센 기록 모드, 붙은 가드레일, 멈춘 `quality_agent`)를 그만큼 그대로 둔 뒤에 다음 버튼을 누른다. 화면을 보거나 녹화하기 위한 것이다. 기록은 `e2e_checks/last-run-ui.log`에 남는다.
+바꾼 것은 확인마다 되돌리므로(취약한 버전은 반려하고 고친 버전을 다시 승인, `guard_prompt`는 꺼짐, 가드레일은 떨어짐, `quality_agent`는 재개) 같은 허브에서 다시 돌릴 수 있다. 확인이 중간에 멈추면, 끝에서 남은 것 가운데 전사 정책 `guard_prompt`, 커스텀 가드레일, 멈춘 에이전트를 리포의 명령(`rollout.sh guard_prompt off`, `guardrail.sh detach`, `resume.sh`)으로 되돌린다. `quality_agent`의 레코드는 되돌리지 않는다. 4번이 중간에 멈춰 그 레코드가 `APPROVED`가 아니면, 끝에 그것을 되돌리는 명령(`dev_team/agent_template/publish.sh dev_team/quality_agent`, 그다음 호스팅 심사 페이지나 `make e2e-ui`의 0번 줄이 `APPROVED`로 읽을 때까지 기다린다)을 한 줄로 찍고, 다음 실행의 0번 줄도 같은 명령을 말한다. `E2E_UI_HOLD=<초>`를 주면 네 페이지(실패한 심사, 집계가 요청을 센 기록 모드, 붙은 가드레일, 멈춘 `quality_agent`)를 그만큼 그대로 둔 뒤에 다음 버튼을 누른다. 화면을 보거나 녹화하기 위한 것이다. 기록은 `e2e_checks/last-run-ui.log`에 남는다.
 
 2026-11-23에 빈 계정에서 `make deploy seed e2e`와 `make e2e-ops`를 돌린 허브(`us-west-2`, 접두어 `hub`)에서 `E2E_UI_HOLD=20`으로 두 번 돌렸고, 두 번 모두 8개 통과했다(774초와 851초. 기다린 80초씩이 들어 있다). 첫 번째에서는 취약점 줄이 같은 줄을 두 번씩 보였다(pip-audit의 표가 그랬다. 위의 "실행 기록과 로그의 모양을 어디서 가져왔나"). 그것을 고친 뒤의 두 번째에서는 다섯 줄이었다. 본 것은 다음과 같다.
 

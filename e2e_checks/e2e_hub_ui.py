@@ -13,7 +13,8 @@ spec_assistant), no company policy on, the custom guardrail detached, no agent s
 what is not so, and the script stops. Each check that changes the hub changes it back (the vulnerable version rejected
 and the fixed one approved again, guard_prompt off, the guardrail detached, quality_agent resumed), so the script can
 run again; when a check stops halfway, the end runs the repo's commands that undo what is left (rollout.sh guard_prompt
-off, guardrail.sh detach, resume.sh).
+off, guardrail.sh detach, resume.sh). quality_agent's record it does not put back: when check 4 left it not APPROVED,
+the end prints the command that does (publish.sh dev_team/quality_agent), and line 0 of the next run names it too.
 
 Eight checks, one [PASS] / [FAIL] line each, [INFO] lines for what was observed, then
 `== N checks passed, M failed, K observations (...s)`. Exit code 1 if a check failed.
@@ -73,6 +74,7 @@ from platform_team.shared_code.hub_state import NotDeployed, Platform, load     
 
 T = STRINGS["ko"]                       # the screen runs in Korean (HUB_UI_LANG=ko): the words the pages show
 FOUR = ops.FOUR                         # the agents make e2e-ops leaves hosted
+DEV_AGENTS = (RELEASE, QUALITY)         # of those, the ones publish.sh puts on the hub from dev_team/<agent>
 POLICY = "guard_prompt"
 NAMES = [name for name, _ in STEPS]     # the seven steps of a review
 REASON = "jinja2 2.11.2 has published advisories (hub screen check)"
@@ -390,17 +392,33 @@ def after_state(events: list[dict], state: str) -> list[str]:
     return [] if start is None else [e["type"] for e in ordered[start:]]
 
 
+def put_back(agent: str) -> str:
+    """The command that makes a dev team agent's record APPROVED again (its code published once more, which starts a
+    review), and what to wait for."""
+    return (f"`dev_team/agent_template/publish.sh dev_team/{agent}`, then wait until the hosting review page or "
+            "`make e2e-ui`'s line 0 reads it APPROVED")
+
+
+def record_left(agent: str, status: str) -> str:
+    """What the end says about an agent's record a check left (check 4 publishes, rejects and publishes quality_agent
+    again): "" when it is APPROVED, else its status and the command that puts it back. The end says the command and
+    does not run it."""
+    return "" if status == "APPROVED" else f"{status}, not APPROVED: put it back with {put_back(agent)}"
+
+
 def start_refusal(state: dict) -> str:
     """Line 0: "" when the hub is as make e2e-ops leaves it (state: "hosted" [agents], "records" {agent: status},
     "mode" (guard_prompt's in SSM, None when off), "policies" [guard_prompt_* policies], "attached" (the custom
-    guardrail), "stopped" [agents]), else what is not so and how to get there."""
+    guardrail), "stopped" [agents]), else what is not so and how to get there. A record of a dev team agent that is not
+    APPROVED is put back with publish.sh (make e2e-ops refuses such a hub at its own line 0); the rest, make e2e-ops
+    sets right."""
     wrong = []
     missing = [a for a in FOUR if a not in state["hosted"]]
     if missing:
         wrong.append(f"not hosted: {', '.join(missing)}")
-    left = [f"{a} {state['records'].get(a, 'absent')}" for a in FOUR if state["records"].get(a) != "APPROVED"]
+    left = [a for a in FOUR if state["records"].get(a) != "APPROVED"]
     if left:
-        wrong.append(f"records not APPROVED: {', '.join(left)}")
+        wrong.append("records not APPROVED: " + ", ".join(f"{a} {state['records'].get(a, 'absent')}" for a in left))
     if state["mode"] or state["policies"]:
         wrong.append(f"{POLICY} is on ({state['mode'] or 'no SSM value'}; policies {state['policies'] or 'none'})")
     if state["attached"]:
@@ -409,8 +427,13 @@ def start_refusal(state: dict) -> str:
         wrong.append(f"stopped: {', '.join(state['stopped'])}")
     if not wrong:
         return ""
-    return (f"[FAIL] 0 the hub is as make e2e-ops leaves it: {'; '.join(wrong)}: run `make e2e-ops` first (it ends "
-            f"with guard_prompt off, the guardrail detached and nothing stopped)")
+    republish = [a for a in left if a in DEV_AGENTS]
+    rest = (missing or len(left) > len(republish) or state["mode"] or state["policies"] or state["attached"]
+            or state["stopped"])
+    steps = [f"put {a}'s record back with {put_back(a)}" for a in republish]
+    if rest:
+        steps.append("run `make e2e-ops` (it ends with guard_prompt off, the guardrail detached and nothing stopped)")
+    return f"[FAIL] 0 the hub is as make e2e-ops leaves it: {'; '.join(wrong)}: {'; then '.join(steps)}"
 
 
 # ================================================================== the screen as a child process
@@ -718,6 +741,12 @@ def _modes(o: Run, html: str, agents: list[str]) -> tuple[dict, dict]:
              else None for a in agents})
 
 
+def read_as(page: dict, engine: dict, agents: list[str], mode: str) -> bool:
+    """Every agent's guard_prompt policy reads `mode` on the page and in the policy engine, and there is an agent (no
+    agent: nothing was read)."""
+    return bool(agents) and all(page[a] == mode == engine[a] for a in agents)
+
+
 def scene_policies(o: Run) -> None:
     name = ("Turn on in log-only: the page and the policy engine read LOG_ONLY, and the report counts a match; Enforce: "
             "ACTIVE; Turn off: no policy")
@@ -738,7 +767,7 @@ def scene_policies(o: Run) -> None:
     _, html, _ = o.screen.get(path)
     page, engine = _modes(o, html, agents)
     log_only = (buttons.get("log-only") and job.get("state") == "done" and company_mode(html) == "LOG_ONLY"
-                and all(page[a] == "LOG_ONLY" == engine[a] for a in agents))
+                and read_as(page, engine, agents, "LOG_ONLY"))
     hidden_at = time.time()
     code, body, _ = call_agent(o.s, o.p, RELEASE, ops.HIDDEN, tries=1)
     polls, report = [], {}
@@ -759,7 +788,7 @@ def scene_policies(o: Run) -> None:
     _, html, _ = o.screen.get(path)
     page_a, engine_a = _modes(o, html, agents)
     active = (enforced["job"].get("state") == "done" and company_mode(html) == "ACTIVE"
-              and all(page_a[a] == "ACTIVE" == engine_a[a] for a in agents))
+              and read_as(page_a, engine_a, agents, "ACTIVE"))
     info("Enforce", job_line(enforced))
     off = o.screen.run(press, path, mode="off")
     _, html, _ = o.screen.get(path)
@@ -873,6 +902,14 @@ def leave_as_found(c: Clients, s: Settings, p: Platform) -> None:
     info("the hub at the end (before the undo, if any)", state)
 
 
+def tell_record_left(c: Clients, p: Platform) -> None:
+    """After leave_as_found: quality_agent's record as it is now, and when check 4 left it not APPROVED, one line with
+    the command that puts it back (record_left)."""
+    line = record_left(QUALITY, record_status(c, p, QUALITY)[1])
+    if line:
+        info(f"{QUALITY}'s record at the end", line)
+
+
 def main() -> int:
     # .env by the rule make and the commands follow (README, ".env"); the screen and the commands inherit the values
     os.environ.update(env_file_updates(os.environ, REPO / ".env"))
@@ -911,6 +948,7 @@ def main() -> int:
         lines = screen.stop()
         info("the hub screen stopped", f"exit {screen.proc.returncode}; its output: {' | '.join(lines)[-800:] or 'none'}")
         ops.observe("the hub at the end", lambda: leave_as_found(c, s, p))
+        ops.observe(f"{QUALITY}'s record at the end", lambda: tell_record_left(c, p))
     failed = [f"{n} {name}" for n, name, ok in hosting.RESULTS if not ok]
     say(f"== {len(hosting.RESULTS) - len(failed)} checks passed, {len(failed)} failed, {hosting.OBSERVED[0]} "
         f"observations ({time.monotonic() - t0:.0f}s)" + (f": {failed}" if failed else ""))

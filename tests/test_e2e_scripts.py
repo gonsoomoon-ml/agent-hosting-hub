@@ -507,7 +507,7 @@ def test_the_screen_check_reads_the_policy_modes_the_report_and_the_guardrail():
     from tests.fakes import PLATFORM
     from tests.test_hub_ui_policies import INTERCEPTOR, fleet, screen
     c = fleet("LOG_ONLY")
-    c.statistics = {("LogOnlyMatches", "guard_prompt_quality_agent"): 3}
+    c.statistics = {("LogOnlyMatches", "guard_prompt_quality_agent-id"): 3}       # by the policy's ID, as the fake keys it
     page = screen(c).get("/policies").text
     found = ui.policy_rows(page)
     assert found["guard_prompt_quality_agent"] == {"status": "ACTIVE", "mode": "LOG_ONLY"}
@@ -516,6 +516,7 @@ def test_the_screen_check_reads_the_policy_modes_the_report_and_the_guardrail():
     assert ui.mode_buttons(page) == {"log-only": False, "active": True, "off": True}    # the mode it is in: not pressable
     report = ui.report_rows(page)
     assert report["quality_agent"]["mode"] == "기록 모드" and report["quality_agent"]["flips"] == 0
+    assert report["quality_agent"]["matches"] == 3                    # the number check 5 passes on
     assert ui.guardrail_panel(page) == {"word": "떨어져 있음", "points": [], "press": "/guardrail/attach"}
     c.gateways[PLATFORM.agent_gw["id"]]["interceptorConfigurations"] = [INTERCEPTOR]
     assert ui.company_mode(screen(fleet(None)).get("/policies").text) is None             # off
@@ -571,3 +572,42 @@ def test_line_0_of_the_screen_check_says_what_is_not_as_e2e_ops_leaves_it():
     for part in ("not hosted: spec_assistant", "quality_agent PENDING_APPROVAL", "guard_prompt is on (LOG_ONLY",
                  "guard_prompt_docs_adk", "the custom guardrail is attached", "stopped: quality_agent"):
         assert part in said, part
+    # make e2e-ops refuses a hub whose quality_agent is not APPROVED: the record is put back first, then make e2e-ops
+    assert said.index("dev_team/agent_template/publish.sh dev_team/quality_agent") < said.index("run `make e2e-ops`")
+
+
+def test_line_0_names_the_command_that_puts_a_record_back_not_make_e2e_ops():
+    """What a check 4 that stopped halfway leaves (quality_agent REJECTED or PENDING_APPROVAL, nothing else) is told
+    with the one command that puts the record back, and the wait for its review; make e2e-ops would refuse that hub."""
+    from e2e_checks import e2e_hub_ui as ui
+    four = ["docs_adk", "quality_agent", "release_review", "spec_assistant"]
+    left = {"hosted": four, "records": dict.fromkeys(four, "APPROVED"), "mode": None, "policies": [], "attached": False,
+            "stopped": []}
+    for status in ("REJECTED", "PENDING_APPROVAL"):
+        said = ui.start_refusal({**left, "records": {**left["records"], "quality_agent": status}})
+        assert said.startswith("[FAIL] 0 ") and f"quality_agent {status}" in said
+        assert ("`dev_team/agent_template/publish.sh dev_team/quality_agent`, then wait until the hosting review page "
+                "or `make e2e-ui`'s line 0 reads it APPROVED") in said
+        assert "run `make e2e-ops`" not in said
+    said = ui.start_refusal({**left, "records": {**left["records"], "release_review": "REJECTED"}})
+    assert "publish.sh dev_team/release_review" in said and "run `make e2e-ops`" not in said
+    said = ui.start_refusal({**left, "records": {**left["records"], "docs_adk": "REJECTED"}})    # make preload's agent
+    assert "publish.sh" not in said and "run `make e2e-ops`" in said
+
+
+def test_the_end_of_the_screen_check_names_the_command_for_a_record_left_not_approved():
+    from e2e_checks import e2e_hub_ui as ui
+    assert ui.record_left("quality_agent", "APPROVED") == ""
+    for status in ("REJECTED", "PENDING_APPROVAL", "absent"):
+        said = ui.record_left("quality_agent", status)
+        assert said.startswith(f"{status}, not APPROVED: put it back with ")
+        assert said.endswith("`dev_team/agent_template/publish.sh dev_team/quality_agent`, then wait until the hosting "
+                             "review page or `make e2e-ui`'s line 0 reads it APPROVED")
+
+
+def test_check_5_needs_at_least_one_agent_to_read_the_mode():
+    from e2e_checks import e2e_hub_ui as ui
+    assert ui.read_as({"a": "LOG_ONLY"}, {"a": "LOG_ONLY"}, ["a"], "LOG_ONLY")
+    assert not ui.read_as({"a": "LOG_ONLY"}, {"a": "ACTIVE"}, ["a"], "LOG_ONLY")
+    assert not ui.read_as({"a": None}, {"a": None}, ["a"], "LOG_ONLY")
+    assert not ui.read_as({}, {}, [], "LOG_ONLY")                    # no agent: nothing was read, so it does not pass
