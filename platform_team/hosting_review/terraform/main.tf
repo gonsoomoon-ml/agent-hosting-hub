@@ -4,8 +4,10 @@
 # their roles hold no action that grants. Scan only reads. Deploy can create a Runtime and its endpoint: the policy
 # allows both creates on runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so
 # it does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload
-# identity named after its ID, and the role reaches workload identities only for <prefix>_* names), and a condition
-# key was not looked into. Deploy can update and read the hub's Runtimes, pass a Runtime a role named
+# identity named after its ID, and the role reaches workload identities only for <prefix>_* names). The Service
+# Authorization Reference (read on 2026-11-22) lists no condition key on a Runtime's name for either create (only tag,
+# authorizer and network keys; the hub uses none of them).
+# Deploy can update and read the hub's Runtimes, pass a Runtime a role named
 # <prefix>-agent-*-role, and write an agent's Runtime ARN to SSM (the policy allows /<prefix>/agents/<agent>/runtime_arn
 # and no other parameter); it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
 # name only under the agent boundary; a role of that name made outside the hub would not be bounded, and making one

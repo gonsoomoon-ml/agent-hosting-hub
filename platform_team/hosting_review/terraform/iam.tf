@@ -4,7 +4,9 @@
 # that grants. Scan only reads. Deploy can create a Runtime and its endpoint: the policy allows both creates on
 # runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so it does not hold a
 # create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after
-# its ID, and the role reaches workload identities only for <prefix>_* names), and a condition key was not looked into.
+# its ID, and the role reaches workload identities only for <prefix>_* names). The Service Authorization Reference
+# (read on 2026-11-22) lists no condition key on a Runtime's name for either create (only tag, authorizer and network
+# keys; the hub uses none of them).
 # Deploy can update and read the hub's Runtimes, pass a Runtime a role named <prefix>-agent-*-role, and write an
 # agent's Runtime ARN to SSM (the policy allows /<prefix>/agents/<agent>/runtime_arn and no other parameter); it
 # cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that name only under the agent
@@ -105,12 +107,12 @@ data "aws_iam_policy_document" "read" {
     resources = ["${var.registry_arn}/record/*"]
   }
   statement {
-    sid       = "ListTheReviews" # reject_agent.running_reviews: the RUNNING executions of this state machine. An ARN built from the name (main.tf names the machine ${var.prefix}-review): the machine refers to this step's function, so a reference back would be a cycle. Not tried on AWS
+    sid       = "ListTheReviews" # reject_agent.running_reviews: the RUNNING executions of this state machine. An ARN built from the name (main.tf names the machine ${var.prefix}-review): the machine refers to this step's function, so a reference back would be a cycle. On AWS on 2026-11-22 Read listed the executions with it and nothing was denied
     actions   = ["states:ListExecutions"]
     resources = ["arn:aws:states:${local.region}:${local.account}:stateMachine:${var.prefix}-review"]
   }
   statement {
-    sid       = "ReadTheReviews" # describe_execution: the record each running review was started for (its input). Built from the name like ListTheReviews. Not tried on AWS
+    sid       = "ReadTheReviews" # describe_execution: the record each running review was started for (its input). Built from the name like ListTheReviews. On AWS on 2026-11-22 Read read their input with it and nothing was denied
     actions   = ["states:DescribeExecution"]
     resources = ["arn:aws:states:${local.region}:${local.account}:execution:${var.prefix}-review:*"]
   }
@@ -260,7 +262,7 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (perhaps because the new Runtime has no ID yet; not checked), and denies both on runtime/<prefix>_*. So this statement does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after its ID, which TheAgentsRuntime reaches only for <prefix>_* names); a condition key was not looked into
+    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (perhaps because the new Runtime has no ID yet; not checked), and denies both on runtime/<prefix>_*. So this statement does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after its ID, which TheAgentsRuntime reaches only for <prefix>_* names). The Service Authorization Reference (read on 2026-11-22) lists no condition key on a Runtime's name for these two actions (only tag, authorizer and network keys; the hub uses none of them)
     actions   = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateAgentRuntimeEndpoint"]
     resources = ["${local.agentcore}:runtime/*"]
   }
@@ -355,7 +357,7 @@ data "aws_iam_policy_document" "approve" {
     resources = ["${aws_cloudwatch_log_group.step["approve"].arn}:*"]
   }
   statement {
-    sid       = "CompanyPolicyModes" # get_parameters_by_path /<prefix>/policies (policy_rollout.deployed). The resource is the path as the call passes it, as the dev role's denial for /<prefix>/platform named it; not tried for this role
+    sid       = "CompanyPolicyModes" # get_parameters_by_path /<prefix>/policies (policy_rollout.deployed). The resource is the path as the call passes it, as the dev role's denial for /<prefix>/platform named it. On AWS on 2026-11-22 Approve read the modes with this role
     actions   = ["ssm:GetParametersByPath"]
     resources = ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
   }

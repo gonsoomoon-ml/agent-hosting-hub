@@ -15,7 +15,7 @@
 
 가리는 것은 형식이 있는 값, 곧 정규식에 맞는 값뿐이다. 사람의 이름처럼 형식이 없는 값은 가리지 않는다. 금지어는 guardrail의 낱말 필터로 찾는다. 대소문자가 다르거나 띄어쓰기가 다른 표기를 어떻게 다루는지는 확인하지 않았다.
 
-요청은 본문이 JSON 객체이고 그 안에 글자인 `prompt`가 있으면 `prompt`만 검사한다. 다른 필드는 검사하지 않는다. 그 밖의 본문(base64가 아니거나, JSON이 아니거나, 객체가 아니거나, `prompt`가 없는 것)은 본문 전체를 글로 검사하고, 가렸으면 본문 전체를 가린 모양으로 넘긴다. 답은 언제나 전체를 검사한다. Lambda의 로그에는 어느 지점(`REQUEST`, `RESPONSE`)인지, 막았는지, 가렸는지만 남고 글은 남지 않는다. 이 동작은 코드와 단위 시험(`tests/test_interceptor.py`)이 정한 것이다.
+요청은 본문이 JSON 객체이고 그 안에 글자인 `prompt`가 있으면 `prompt`만 검사한다. 다른 필드는 검사하지 않는다. 그 밖의 본문(base64가 아니거나, JSON이 아니거나, 객체가 아니거나, `prompt`가 없는 것)은 본문 전체를 글로 검사하고, 가렸으면 본문 전체를 가린 모양으로 넘긴다. 답은 언제나 전체를 검사한다. Lambda의 로그에는 어느 지점(`REQUEST`, `RESPONSE`)인지, 답이면 에이전트의 답이 가진 상태 코드(`status`), 막았는지, 가렸는지만 남고 글은 남지 않는다. 이 동작은 코드와 단위 시험(`tests/test_interceptor.py`)이 정한 것이다.
 
 규칙을 바꾸려면 `terraform/variables.tf`의 두 변수를 바꿔 `make deploy`를 다시 돌린다. interceptor는 guardrail의 작업본(`DRAFT`)이 아니라 고정된 버전을 적용한다. 규칙이 바뀌면 Terraform은 이 순서로 바꾸도록 짜여 있다. guardrail의 작업본을 고치고, 새 버전을 만들고, Lambda의 환경 변수 `GUARDRAIL_VERSION`을 새 버전으로 바꾸고, 그다음에 옛 버전을 지운다(`replace_triggered_by`와 `create_before_destroy`). 그래서 Lambda가 지워진 버전을 가리키는 때가 없다. 옛 버전을 먼저 지우면, 그 사이에 interceptor가 실패하고 에이전트 게이트웨이는 모든 요청을 거부한다. 2026-11-22에 AWS에서 규칙 하나를 바꿔(`code_names`에 지어낸 코드명 하나를 더했다) `make deploy`를 돌렸을 때 Terraform은 이 순서로 바꿨다. guardrail을 그 자리에서 고치고(1초), 새 버전 `2`를 만들고(1초), Lambda의 `GUARDRAIL_VERSION`을 `2`로 바꾸고(6초), 그다음에 옛 버전 `1`을 지웠다(0초). 계획에 든 자원은 이 셋뿐이었다(`1 to add, 2 to change, 1 to destroy`). 그 뒤 Lambda가 가리킨 버전 `2`는 `READY`였고 두 코드명을 모두 담았으며, guardrail에 남은 버전은 작업본과 `2`였다. 그때 interceptor는 게이트웨이에 붙어 있지 않았으므로, 바꾸는 동안 지나가는 호출은 보지 않았다. 같은 날 바뀐 것 없이 `make deploy`를 다시 돌렸을 때는 guardrail을 포함해 아무것도 바뀌지 않았다(`0 added, 0 changed, 0 destroyed`).
 
@@ -35,7 +35,7 @@
 
 ## Lambda가 실패하면
 
-interceptor Lambda가 오류를 내거나 제한 시간(8초)을 넘기면 에이전트 게이트웨이는 그 요청을 거부한다. 그래서 Lambda가 실패하는 동안에는 모든 에이전트로 들어가는 요청이 막힌다. 같은 interceptor를 앞서 돌린 실행(2026-11-21/22)에서, Lambda가 예외를 내면 0초 만에, 시간을 넘기면 8초 뒤에 게이트웨이가 `400 {"success":false,"error":"The request failed. Set the gateway's exceptionLevel to DEBUG to return the error details."}`를 돌려줬다. 이 리포의 코드로는 확인하지 않았다.
+interceptor Lambda가 오류를 내거나 제한 시간(8초)을 넘기면 에이전트 게이트웨이는 그 요청을 거부한다. 그래서 Lambda가 실패하는 동안에는 모든 에이전트로 들어가는 요청이 막힌다. 이 interceptor의 앞선 판(이 리포에 없는 코드)을 돌린 실행(2026-11-21/22)에서, Lambda가 예외를 내면 0초 만에, 시간을 넘기면 8초 뒤에 게이트웨이가 `400 {"success":false,"error":"The request failed. Set the gateway's exceptionLevel to DEBUG to return the error details."}`를 돌려줬다. 이 리포의 코드로는 확인하지 않았다.
 
 그래서 Terraform이 알람 `<prefix>-guardrail-errors`를 만든다. 네임스페이스 `AWS/Lambda`의 메트릭 `Errors`(차원 `FunctionName=<prefix>-guardrail`)의 1분 합계가 1 이상이면 알림 주제 `<prefix>-alerts`([모니터링](../agent_monitoring/README.md))로 알린다. 알람이 실제로 울리는지는 확인하지 않았다. 게이트웨이가 Lambda를 부르지도 못한 경우(예: 권한)는 Lambda가 실행되지 않았으므로 이 메트릭에 들지 않는다고 본다. 확인하지 않았다.
 
@@ -49,7 +49,7 @@ platform_team/custom_guardrail/guardrail.sh detach   # 뗀다
 
 어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([README의 `.env`](../../README.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍는다. 플랫폼팀의 자격 증명으로 돈다.
 
-- `attach`: `UpdateGateway`는 게이트웨이의 설정 전체를 바꾼다. 주지 않은 선택 필드는 초기화된다(서비스 모델의 `UpdateGateway` 설명, botocore 1.44.9). 그래서 먼저 `GetGateway`로 게이트웨이를 읽고, `UpdateGateway`가 받는 설정(이름, 설명, 역할, 인증 방식과 그 설정, protocol과 그 설정, KMS 키, custom transform, policy engine, exception level, WAF, domain)을 읽은 그대로 다시 넘기며 interceptor만 더한다. 다른 interceptor가 있으면 그것도 그대로 둔다. interceptor는 요청(`REQUEST`)과 답(`RESPONSE`) 두 지점에 걸고, 요청의 헤더는 넘기지 않는다(`passRequestHeaders: false`). 그다음 게이트웨이가 `READY`가 되고 바뀐 것이 보일 때까지 300초까지 기다리고, policy engine의 설정과 target의 이름들이 앞과 같은지 본다. 다르면 오류로 끝난다(되돌리지는 않는다). 이미 붙어 있으면 아무것도 바꾸지 않는다.
+- `attach`: `UpdateGateway`는 게이트웨이의 설정 전체를 바꾼다. 주지 않은 선택 필드는 초기화된다(서비스 모델의 `UpdateGateway` 설명, botocore 1.44.9). 여기서 이것을 본 것은 interceptor 필드 하나다(아래 "확인한 것과 하지 않은 것"의 `detach`). 다른 필드가 초기화되는 것은 확인하지 않았다. 그래서 먼저 `GetGateway`로 게이트웨이를 읽고, `UpdateGateway`가 받는 설정(이름, 설명, 역할, 인증 방식과 그 설정, protocol과 그 설정, KMS 키, custom transform, policy engine, exception level, WAF, domain)을 읽은 그대로 다시 넘기며 interceptor만 더한다. 다른 interceptor가 있으면 그것도 그대로 둔다. interceptor는 요청(`REQUEST`)과 답(`RESPONSE`) 두 지점에 걸고, 요청의 헤더는 넘기지 않는다(`passRequestHeaders: false`). 그다음 게이트웨이가 `READY`가 되고 바뀐 것이 보일 때까지 300초까지 기다리고, policy engine의 설정과 target의 이름들이 앞과 같은지 본다. 다르면 오류로 끝난다(되돌리지는 않는다). target의 이름은 고치기 직전과 기다린 뒤에 읽으므로, 그 몇 초 사이에 심사의 Entry가 target을 더하거나 반려가 target을 지우면, 고치기가 아무것도 빼지 않았어도 `the agent gateway <이름> changed in the update`로 실패한다(`detach`도 같다). 그때 고치기는 이미 된 것이다. `status`로 target을 보고, 같은 명령을 다시 돌려도 된다. 이미 붙어 있으면(`detach`면 이미 떼어져 있으면) 아무것도 바꾸지 않는다. 코드가 그렇게 하고, 이 겹침은 해 보지 않았다.
 - `detach`: 같은 방법으로 이 interceptor만 뺀다. 붙어 있지 않거나, 허브가 올라와 있지 않거나, 게이트웨이가 없으면 아무것도 하지 않고 성공한다.
 - `status`: 게이트웨이의 상태, interceptor가 붙었는지와 그 지점, policy engine과 그 모드, target의 이름들을 찍는다.
 
@@ -70,7 +70,7 @@ platform_team/custom_guardrail/guardrail.sh detach   # 뗀다
 - `guardrail.sh detach`가 interceptor를 뗐다(5초). 그 뒤의 `status`는 `attached: False`였고 policy engine은 그대로 `ENFORCE`였다. interceptor 필드를 빼고 보낸 `UpdateGateway`가 interceptor를 없앤 것이다.
 - `AUTO_APPROVE=1 make destroy`는 가장 먼저 interceptor를 떼는 단계를 돌렸고(이미 뗀 뒤라 `attached: False (nothing changed)`), 마지막 줄이 `still present: nothing`이었다(128초). Amazon Bedrock Guardrails의 guardrail(`Bedrock guardrails: none`)과 Lambda `hub-guardrail`, 알람, 역할이 남지 않은 것을 목록으로도 확인했다.
 
-같은 interceptor를 앞서 돌린 실행(2026-11-21/22)에서는 에이전트를 둔 게이트웨이를 지나는 호출로 이렇게 봤다. 금지어가 든 요청은 위의 403으로 막혔다. 도구의 답에 든 사번은 에이전트의 답에서 `{employee_id}`로 가려졌다. 요청의 사번은 가려진 모양으로 에이전트에 닿았다. interceptor를 붙인 뒤에도 policy engine이 남았다. 요청 지점의 interceptor는 정책 결정보다 먼저 돌았다.
+이 interceptor의 앞선 판(이 리포에 없는 코드)을 돌린 실행(2026-11-21/22)에서는 에이전트를 둔 게이트웨이를 지나는 호출로 이렇게 봤다. 금지어가 든 요청은 위의 403으로 막혔다. 도구의 답에 든 사번은 에이전트의 답에서 `{employee_id}`로 가려졌다. 요청의 사번은 가려진 모양으로 에이전트에 닿았다. interceptor를 붙인 뒤에도 policy engine이 남았다. 요청 지점의 interceptor는 정책 결정보다 먼저 돌았다.
 
 2026-11-22의 운영 확인(`make e2e-ops`, 같은 리전과 접두어)에서는 에이전트 둘(`release_review`, `quality_agent`)을 둔 게이트웨이에 이 리포의 명령으로 붙이고 뗐다.
 

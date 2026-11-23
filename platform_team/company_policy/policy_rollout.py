@@ -8,7 +8,9 @@ The mode a company policy is in is kept in SSM, /<prefix>/policies/<policy> = LO
 The hosting review's Approve step reads it there and gives a newly approved agent every deployed company policy in
 its mode (apply_to_agent). So rollout writes the mode first and lists the agents after: an agent approved before
 the write has its entry target already, so rollout finds it and gives it the policy; one approved after the write
-reads the new mode itself. For the same reason remove deletes the value first, then the policies.
+reads the new mode itself. remove deletes the value first, then the policies: an approval that reads the mode after
+the delete gives no policy, but one that read it just before can still make the policy after remove listed the
+agents, and running remove again deletes that one.
 
 A hosted agent has a value under /<prefix>/agents/<agent>/ and an entry target on the agent gateway (the review's
 Entry step makes it). A harness has no entry target, so no company policy reaches it.
@@ -138,8 +140,9 @@ def _with_policy(c, p: Platform, policy: CompanyPolicy) -> dict[str, dict]:
 
 
 def remove(c, s: Settings, p: Platform, key: str, say=print) -> dict:
-    """Turn a company policy off: delete its SSM value first (an agent approved from now on is not given it), then
-    the policy of every agent that has it, hosted or not. Returns {"policy", "agents": {agent: "removed"}}."""
+    """Turn a company policy off: delete its SSM value first (an approval that reads the mode from now on gives no
+    policy; see the module docstring for one that read it just before), then the policy of every agent that has it,
+    hosted or not. Returns {"policy", "agents": {agent: "removed"}}."""
     policy = _policy(key)
     _delete_parameter(c, s.ssm("policies", key))
     out = {}

@@ -15,7 +15,7 @@ platform_team/agent_stop/resume.sh <에이전트>                         # 다�
 
 어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([README의 `.env`](../../README.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍는다. 플랫폼팀의 자격 증명으로 돈다. 인자가 맞지 않으면 사용법을 찍고 아무것도 바꾸지 않는다. 실패하면 이유를 한 줄로 찍고(계정 ID는 `<ACCOUNT>`로 가린다) 0이 아닌 값으로 끝난다.
 
-이 문서가 적는 두 명령의 동작은 코드와 단위 시험(`tests/test_agent_stop.py`, `tests/test_aws_calls.py`)이 정한 것이다. AWS에서 본 것으로 적은 것은 2026-11-22의 확인 시험(`e2e_checks/spikes/spike_operations.py`, 두 번)이 같은 정책 문장과 같은 호출로 본 것과, 같은 날 운영 확인(`make e2e-ops`)이 두 명령을 돌려 본 것이다([확인 시험](../../e2e_checks/spikes/README.md), 아래 "운영 확인에서 본 것").
+이 문서가 적는 두 명령의 동작은 코드와 단위 시험(`tests/test_agent_stop.py`, `tests/test_aws_calls.py`)이 정한 것이다. AWS에서 본 것으로 적은 것은 2026-11-22의 확인 시험(`e2e_checks/spikes/spike_operations.py`, 두 번)이 같은 정책 문장과 같은 호출로 본 것과, 같은 날 운영 확인(`make e2e-ops`)이 두 명령을 돌려 본 것이다([확인 시험](../../e2e_checks/spikes/README.md), 아래 "운영 확인에서 본 것"). 하나만 다르다. 아래 "한계"의 첫 항목은 이 허브를 만들기 전 2026-11-21의 확인 실행(따로 만든 에이전트, 다른 정책 문장)에서 본 것이고, 그 실행의 코드는 이 리포에 없다.
 
 ## 멈춤이 하는 일과 순서
 
@@ -88,9 +88,9 @@ Runtime의 ARN은 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에서 읽는
 - 게이트웨이의 진입만 막는다. Runtime을 직접 부르는 길은 남는다. 이 허브를 만들기 전 2026-11-21의 확인 실행(따로 만든 echo 에이전트, 예외가 없는 forbid)에서, 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었다. Runtime의 resource-based policy로 직접 호출을 막는 것은 해 보지 않았다.
 - harness 에이전트는 에이전트 게이트웨이에 진입 target이 없어 이 명령으로 멈출 수 없다. `stop.sh`는 진입 target이 없는 에이전트를 거부한다.
 - 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있다(위의 "세션을 어디서 찾나").
-- 멈춘 동안 `stop.sh`를 다시 돌리면 그때 찾은 세션마다 `StopRuntimeSession`을 부른다. 그사이에 심사의 시험 호출이 연 세션도 그 stream이 지난 30분 안의 것이면 그 안에 든다.
+- `stop.sh`는 그때 찾은 세션마다 `StopRuntimeSession`을 부른다. 심사의 시험 호출이 연 세션도 그 stream이 지난 30분 안의 것이면 그 안에 든다. 처음 멈출 때(지난 30분 안에 심사가 돌았을 때)와, 멈춘 동안 다시 돌릴 때 모두 그렇다.
 - AWS에서 해 보지 않은 것: 한 번도 없던 세션 ID에 `StopRuntimeSession`, 30분보다 오래 도는 세션. 에이전트가 모델의 답을 기다리던 때에 멈췄는지 도구를 부르던 때에 멈췄는지는 보지 않았다(운영 확인의 되풀이는 둘을 번갈아 한다).
-- 명령이 부르는 API는 `ListGatewayTargets`, `GetParameter`(SSM), `ListPolicies`, `CreatePolicy`, `GetPolicy`, `DeletePolicy`, `DescribeLogStreams`, `StopRuntimeSession`이다. 이것에 필요한 IAM 권한은 확인하지 않았다. 확인 시험과 운영 확인은 관리자 권한의 자격 증명으로 돌았다.
+- 명령이 부르는 API는 `ListGatewayTargets`, `GetParameter`(SSM), `ListPolicies`, `CreatePolicy`, `GetPolicy`, `UpdatePolicy`(멈춤 정책이 다른 적용 모드로 있을 때), `DeletePolicy`, `DescribeLogStreams`, `StopRuntimeSession`이다. 이것에 필요한 IAM 권한은 확인하지 않았다. 확인 시험과 운영 확인은 관리자 권한의 자격 증명으로 돌았다.
 
 ## 파일
 

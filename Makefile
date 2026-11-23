@@ -44,7 +44,8 @@ seed:
 
 # The two agents there from the start (dev_team/preloaded_agents), with the platform team's credentials: the managed
 # harness spec_assistant (role, tool permits, harness, approved record) and docs_adk, published like a team's agent;
-# it waits for docs_adk's review to end. What is there already is kept, so running it again makes nothing new.
+# it waits for docs_adk's review to end. What is there already is kept, so running it again makes nothing new: a
+# harness that is there keeps its role and tool permits as they are, also when agent.json or MODEL_ID changed.
 preload:
 	$(PRELOAD)
 
@@ -53,7 +54,8 @@ preload:
 # each agent (policies, gateway target, harness, Runtime and its logs, code packages, execution role, SSM values), the agents'
 # catalog records and the seeded record. The interceptor is detached first, so the gateway never points at a deleted
 # Lambda; on a hub that is not deployed, or without its agent gateway, that step does nothing. The modes go next, so
-# a review that still approves an agent while the cleanup runs gives it no company policy. An agent role keeps the
+# a review that reads them after this step gives the agent it approves no company policy (one that read them just
+# before can still make it). An agent role keeps the
 # boundary policy from being deleted, and a registry with records cannot be deleted: they all go first, the agents
 # before the seed. Then `agent_cleanup --records` deletes any record still in the hub's registry (another type, a name
 # the rules refuse) and prints each one. If a step fails, terraform destroy does not run.

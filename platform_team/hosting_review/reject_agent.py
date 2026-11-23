@@ -10,7 +10,8 @@ things again, so a review of the record that is still running stops reject befor
 A new version of an approved agent uses the same role, Runtime, target and permits as the version that runs. So when
 the agent's entry permit is there, reject marks the record REJECTED and removes nothing. Only Approve makes that
 permit, and when Approve fails after making it, it takes back the one its review made; the permit stays only when
-that delete fails too, or when the Lambda is stopped (its time limit) between making it and the end of the step.
+that delete fails too, or when the Lambda is cut off between making it and the end of the step (its time limit, or a
+crash) and no later attempt of Approve takes it back.
 Reject sees the permit, not whether the record was ever approved, and says so. A record the team changed while its
 review ran is a DRAFT: reject keeps it as it is and removes what the review made.
 """
