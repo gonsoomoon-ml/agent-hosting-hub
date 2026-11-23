@@ -58,7 +58,7 @@ Step Functions 콘솔 링크는 `/reviews/<에이전트>/console`을 거친다. 
 
 ### 실행 기록과 로그의 모양을 어디서 가져왔나
 
-이 페이지는 올라와 있는 허브에서 아직 띄워 보지 않았다(가짜 AWS 값으로만 확인했다). 실행 기록의 사건 모양(`stateEnteredEventDetails.name`, `taskFailedEventDetails`의 `error`와 `cause` 등)은 Step Functions의 서비스 모델(boto3)에서 가져왔다. 그 가운데 state에 들어간 사건과 그 이름은 2026-11-22의 실행에서 e2e가 단계마다 걸린 시간을 낼 때 읽었다(`e2e_checks/last-run.log`의 `steps Read 1s, Reviewable 0s, Scan 41s, ...`). 실패한 Task state에 나온 사건이 없고 다음이 `Notify`라는 것은 코드가 그렇게 가정한다(AWS에서 확인하지 않았다. 나온 사건이 있어도 같은 결과가 되게 썼다). Scan이 실패했을 때 원인이 build 기록(`Build`의 `Id`, `BuildStatus`, `Phases`, `Logs.GroupName`, `Logs.StreamName`)이라는 것과 pip-audit 표의 줄 모양(`jinja2 2.11.2  PYSEC-2021-66   2.11.3`)은 2026-11-22의 실행에서 본 것이다(`e2e_checks/last-run.log`. 그 실행은 알림에 든 오류로 봤다). 읽는 곳은 `reviews.py`의 `steps_of`, `scan_log`, `scan_findings` 셋뿐이다.
+실행 기록의 사건 모양(`stateEnteredEventDetails.name`, `taskFailedEventDetails`의 `error`와 `cause` 등)은 Step Functions의 서비스 모델(boto3)에서 가져왔고, 2026-11-23에 올라와 있는 허브에서 이 페이지를 띄워(`make e2e-ui`) 진짜 실행과 맞춰 봤다. 단계마다 보인 시간은 실행 기록의 들어간 사건과 나온 사건 사이의 시간과 같았다(`quality_agent`와 `release_review`의 승인된 심사). Scan에서 실패한 심사에서 AWS는 Scan에 `TaskSubmitted`, `TaskFailed` 다음에 나온 사건(`TaskStateExited`)을 적고 `Notify`로 갔다. 코드는 나온 사건이 없다고 가정하고 쓰였지만 나온 사건이 있어도 같은 결과가 되게 썼으므로, 페이지는 Scan을 실패(32초)로 보였다. `TaskFailed`의 cause는 build 기록이었다(6,419자, 맨 위의 키 `Build`, `SdkHttpMetadata`, `SdkResponseMetadata`. `Build.Logs`에 `GroupName`, `StreamName`, `CloudWatchLogs` 등). build의 마지막 로그 줄은 build가 끝나기 0.1초 전에 CloudWatch Logs에 들어갔고 실행은 build가 끝나고 6.4초 뒤에 멈췄으므로, 실패를 본 뒤 첫 페이지(1초)에 취약점 줄이 나왔다. 그 로그의 pip-audit 표(`jinja2 2.11.2  PYSEC-2021-66   2.11.3` 모양의 줄)는 권고 다섯을 줄마다 두 번 찍었고, 페이지는 같은 줄을 한 번만 보인다. Lambda 단계의 cause(`errorMessage`)는 Lambda 단계가 실패한 심사가 없어 보지 못했다. 읽는 곳은 `reviews.py`의 `steps_of`, `scan_log`, `scan_findings` 셋뿐이다.
 
 ## 전사 정책
 
@@ -100,7 +100,7 @@ harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추�
 
 멈추기는 끝내지 못한 세션이 있으면 명령처럼 실패로 끝난다. 에이전트 이름이 신청서의 이름 규칙에 맞지 않거나 호스팅된 에이전트가 아니면 작업을 시작하지 않고 빨간 칸에 문장을 보인다.
 
-두 페이지는 2026-11-23에 가짜 AWS 값으로 확인했다. 올라와 있는 허브에서는 아직 띄워 보지 않았다.
+두 페이지는 2026-11-23에 가짜 AWS 값으로 확인했고, 같은 날 올라와 있는 허브에서 `make e2e-ui`가 버튼을 눌러 확인했다(아래 "시험과 확인").
 
 ## 작업(버튼)
 
@@ -127,6 +127,29 @@ harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추�
 
 ## 시험과 확인
 
-동작은 단위 시험이 정한다(`tests/test_hub_ui_app.py`, `tests/test_hub_ui_jobs.py`, `tests/test_hub_ui_home.py`, `tests/test_hub_ui_reviews.py`, `tests/test_hub_ui_policies.py`, `tests/test_hub_ui_agents.py`). 시험은 `tests/fakes.py`의 가짜 AWS 클라이언트로 돌고 AWS를 부르지 않는다. 2026-11-23에 허브가 올라와 있지 않은 계정(`us-west-2`, 접두어 `hub`)에서 `python -m platform_team.hub_ui`로 띄워 봤다. 첫 페이지가 200으로 "이 계정과 리전에 허브가 배포되어 있지 않습니다"와 읽은 곳(`/hub/platform/`)을 보였고, `Host: evil.example:8300`인 요청은 403이었다. 올라와 있는 허브에서는 아직 띄워 보지 않았다.
+동작은 단위 시험이 정한다(`tests/test_hub_ui_app.py`, `tests/test_hub_ui_jobs.py`, `tests/test_hub_ui_home.py`, `tests/test_hub_ui_reviews.py`, `tests/test_hub_ui_policies.py`, `tests/test_hub_ui_agents.py`). 시험은 `tests/fakes.py`의 가짜 AWS 클라이언트로 돌고 AWS를 부르지 않는다. 2026-11-23에 허브가 올라와 있지 않은 계정(`us-west-2`, 접두어 `hub`)에서 `python -m platform_team.hub_ui`로 띄워 봤다. 첫 페이지가 200으로 "이 계정과 리전에 허브가 배포되어 있지 않습니다"와 읽은 곳(`/hub/platform/`)을 보였고, `Host: evil.example:8300`인 요청은 403이었다.
+
+`make e2e-ui`(`e2e_checks/e2e_hub_ui.py`)는 올라와 있는 허브에서 화면을 확인한다. `make e2e-ops`가 끝난 허브(에이전트 넷이 호스팅되고 `APPROVED`, `guard_prompt` 꺼짐, 커스텀 가드레일 떨어짐, 멈춘 에이전트 없음, 도는 심사 없음)에서만 시작하고, 아니면 0번 줄에 무엇이 다른지 찍고 멈춘다. 화면을 이 PC의 빈 포트에 자식 프로세스(`python -m platform_team.hub_ui`)로 띄우고, 페이지를 읽고 브라우저처럼 버튼을 누른다(페이지에서 읽은 토큰과 화면의 `Origin`). 끝나면 실패했을 때도 자식을 멈춘다. 페이지에서 읽은 값은 스크립트가 boto3로 읽은 값과 맞춰 본다. 확인 여덟을 한 줄씩 찍고(`[PASS]`, `[FAIL]`, 관찰은 `[INFO]`), 끝 줄은 `== N checks passed, M failed, K observations (…s)`다.
+
+1. 모든 페이지가 200이고 `샘플 화면`이 있고 계정 ID가 없다. 페이지마다 캐시가 지난 첫 읽기와 바로 뒤의 둘째 읽기에 걸린 시간을 찍는다.
+2. 홈의 수와 알람이 카탈로그와 CloudWatch가 주는 것과 같고, 플랫폼 구성의 여섯 줄이 저마다 상태를 보인다.
+3. 호스팅 심사 페이지에서 `quality_agent`와 `release_review`가 `APPROVED`이고, 가장 최근 심사의 일곱 단계가 모두 통과이며, 단계마다의 시간이 Step Functions의 실행 기록과 같다(1초 안).
+4. `quality_agent`의 취약한 변형을 제출하면 페이지가 Scan에서의 실패와 취약점 줄을 하나 이상 보인다. 사유와 함께 반려를 누르면 레코드의 상태가 작업이 찍은 상태와 같다. 고친 버전을 다시 제출하면 페이지가 `APPROVED`를 보인다.
+5. 기록 모드로 걸기 뒤에 페이지와 정책 엔진이 호스팅된 Runtime 에이전트마다 `LOG_ONLY`를 읽고, 숨은 지시 하나를 보내면 페이지의 집계가 그것을 센다. 적용 모드로 올리기 뒤에는 `ACTIVE`이고, 끄기 뒤에는 정책이 없다.
+6. 커스텀 가드레일 붙이기 뒤에 페이지와 `guardrail_attach.status`가 붙어 있다고 읽고, 코드명이 줄바꿈 바로 뒤에 오는 요청이 interceptor에서 403이다. 떼기 뒤에는 둘 다 떨어져 있다고 읽는다.
+7. `quality_agent` 멈추기 뒤에 페이지가 멈춤을 보이고, 에이전트 게이트웨이로 부르면 403이고 `release_review`는 200이다. 재개 뒤에 페이지가 동작 중을 보이고 부르면 200이다.
+8. 작업이 도는 동안 버튼을 다시 누르면 받지 않는다(303과 `err=busy`, 그리고 페이지의 문장).
+
+바꾼 것은 확인마다 되돌리므로(취약한 버전은 반려하고 고친 버전을 다시 승인, `guard_prompt`는 꺼짐, 가드레일은 떨어짐, `quality_agent`는 재개) 같은 허브에서 다시 돌릴 수 있다. 확인이 중간에 멈추면, 끝에서 남은 것을 리포의 명령(`rollout.sh guard_prompt off`, `guardrail.sh detach`, `resume.sh`)으로 되돌린다. `E2E_UI_HOLD=<초>`를 주면 네 페이지(실패한 심사, 집계가 요청을 센 기록 모드, 붙은 가드레일, 멈춘 `quality_agent`)를 그만큼 그대로 둔 뒤에 다음 버튼을 누른다. 화면을 보거나 녹화하기 위한 것이다. 기록은 `e2e_checks/last-run-ui.log`에 남는다.
+
+2026-11-23에 빈 계정에서 `make deploy seed e2e`와 `make e2e-ops`를 돌린 허브(`us-west-2`, 접두어 `hub`)에서 `E2E_UI_HOLD=20`으로 두 번 돌렸고, 두 번 모두 8개 통과했다(774초와 851초. 기다린 80초씩이 들어 있다). 첫 번째에서는 취약점 줄이 같은 줄을 두 번씩 보였다(pip-audit의 표가 그랬다. 위의 "실행 기록과 로그의 모양을 어디서 가져왔나"). 그것을 고친 뒤의 두 번째에서는 다섯 줄이었다. 본 것은 다음과 같다.
+
+- 페이지의 시간(캐시가 지난 첫 읽기 / 바로 뒤의 둘째 읽기): 홈 2.6초/0.0초, 호스팅 심사 3.2초와 3.3초/0.0초, 에이전트마다의 심사 0.3초/0.0초, 전사 정책 0.7초/0.0초, 에이전트 1.9초와 2.0초/0.0초. 둘째 읽기는 모두 0.1초 안이었다. 호스팅 심사의 첫 읽기가 가장 길었다. 앱을 띄운 뒤 처음 읽을 때 끝난 실행마다 입력과 기록을 읽기 때문이다(앱이 그것을 쥐므로 그 뒤의 자세한 페이지는 0.3초였다).
+- 홈: 플랫폼 구성의 여섯 줄이 저마다 상태를 보였다(게이트웨이 둘과 카탈로그 `READY`, 정책 엔진과 상태 머신 `ACTIVE`, 알림 토픽은 확인된 구독 1). 수(호스팅 4, 심사 중 0, 승인된 도구 1)와 알람 둘(`OK`)이 boto3로 읽은 것과 같았다.
+- 실패한 심사: Scan이 실패(32초, 40초)로 보였고, 실패를 본 뒤 첫 페이지(1초)에 취약점 줄이 나왔다. 반려 작업은 2초에 끝났고 `record quality_agent: REJECTED`와 `entry_permit_quality_agent is there: …; nothing was removed`를 찍었다(승인된 버전이 돌고 있으므로 지운 것이 없다). boto3로 읽은 레코드도 `REJECTED`였다.
+- 전사 정책: 기록 모드로 걸기가 40초(에이전트 셋에 `created`), 적용 모드로 올리기가 62초와 54초(`switched`), 끄기가 24초와 26초(`removed`)였고, 작업 칸의 마지막 줄들이 다시 읽은 모드를 보였다. 숨은 지시 하나를 `release_review`에 보내자 페이지의 집계가 35초와 66초 뒤에 그 에이전트의 `LogOnlyMatches` 1, `LogOnlyDecisionFlips` 1을 보였다.
+- 커스텀 가드레일: 붙이기와 떼기는 4초였다. 붙인 동안 코드명이 줄바꿈 바로 뒤에 오는 요청은 첫 호출에서 403 `{"error": "Blocked by the company guardrail (interceptor)."}`였다.
+- 에이전트: 멈추기는 12초와 16초였고, 지난 30분의 세션 일곱과 다섯을 찾아 넷과 둘을 끝냈다(나머지는 이미 끝난 세션이었다). 그 뒤 첫 호출부터 `quality_agent`는 403, `release_review`는 200이었다. 재개는 8초와 6초였고 7초와 8초 뒤에 200이었다. 사용량 표에는 에이전트 넷의 호출, 세션, 오류, vCPU-시간, GB-시간이 있었다(첫 번째의 `quality_agent`는 호출 12, 오류 1). 첫 번째의 도구 호출 경보 막대는 `make e2e-ops`의 사고가 있었던 두 분을 24와 24로 임계값 19 위에 보였다.
+- 두 번째 누름: 기록 모드로 걸기가 도는 동안 같은 버튼을 다시 누르자 303 `/policies?err=busy`였고, 페이지가 "다른 작업이 진행 중이라 이번 누름은 받지 않았습니다. …"를 보였다.
 
 화면의 틀(색, 밝은 테마와 어두운 테마, 메뉴, 단계 띠, 폼 스크립트), 글 표, 시각 형식은 [ai-governance-hub](https://github.com/gonsoomoon-ml/ai-governance-hub)(MIT-0)에서 가져와 고쳤다. 리포 루트의 `NOTICE`에 적었다.
