@@ -6,6 +6,8 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 > 들어 있는 것은 두 흐름이다. 흐름 1은 호스팅(신청, 심사, 승인, 반려와 재신청)이고, 흐름 2는 운영(전사 정책의 기록 모드와 적용, 커스텀 가드레일, 승인된 에이전트의 새 버전, 도구 호출 알람, 에이전트 하나의 멈춤과 재개, 사용량 보고, 처음부터 올라와 있는 에이전트 둘)이다. 두 흐름 모두 실제 AWS에서 끝에서 끝까지 확인하는 스크립트가 있다(`make e2e`, `make e2e-ops`). Omni 조회와 AWS 콘솔의 화면은 들어 있지 않다. 개발자가 Claude Code에서 카탈로그를 검색하는 것은 시연 영상의 개발자 PC(`demo_video/`)에서 2026-11-23에 해 봤다.
 
+시연 영상의 순서대로 자기 계정에서 직접 해 보려면 [영상처럼 따라 하기](docs/demo-guide.md)를 본다.
+
 ## 무엇이 들어 있나
 
 폴더는 쓰는 사람에 따라 나뉜다. 아래는 두 번째 단계까지의 구조다. 그 밑의 표는 폴더마다 무엇이 들어 있는지 적고 각 README로 이어진다.
@@ -36,6 +38,7 @@ agent-hosting-hub/
 │   ├── quality_agent/    #   예시 에이전트(Strands). variants/에 데모를 위한 버전 둘
 │   └── preloaded_agents/ #   처음부터 올라와 있는 에이전트 둘(docs_adk, spec_assistant)
 │
+├── docs/                 # 영상처럼 따라 하는 안내
 ├── e2e_checks/           # 실제 AWS에서 돌리는 확인 스크립트. spikes/는 가정을 확인한 기록
 ├── tests/                # 단위 시험. AWS를 부르지 않는다
 ├── demo_scenes/          # 시연 영상의 터미널에서 치는 명령 넷(ask, publish, search, logs)
