@@ -56,6 +56,11 @@ def _catalog_tools() -> set[str]:
     return {f"{target}___{t['name']}" for target, tools in TARGETS.items() for t in tools}
 
 
+def record_description(app: dict) -> str:
+    """The description an application's catalog record gets: its own, or "<name>: agent of team <team>"."""
+    return app.get("description") or f"{app['name']}: agent of team {app['team']}"
+
+
 class PublishFailed(Exception):
     """A step failed. The message says which one, why, what already succeeded and what to do."""
 
@@ -74,7 +79,7 @@ def publish(agent_dir: Path, s: Settings, variant: str | None = None, c: Clients
     if not form.is_file():
         raise ValueError(f"missing: {form}")
     app = json.loads(form.read_text(encoding="utf-8"))
-    problems = validate(app, _catalog_tools(), s)
+    problems = validate(app, _catalog_tools())
     if problems:
         raise ValueError("; ".join(problems))
     code = bundle(agent_dir, variant)
@@ -93,9 +98,8 @@ def publish(agent_dir: Path, s: Settings, variant: str | None = None, c: Clients
     except Exception as e:
         raise failed("upload", e, "Nothing was changed; run again.") from e
     done = f"code uploaded as version {version}"
-    description = app.get("description") or f"{app['name']}: agent of team {app['team']}"
     try:
-        record_id = put_record(c, p.registry_id, app["name"], "AGENT", description,
+        record_id = put_record(c, p.registry_id, app["name"], "AGENT", record_description(app),
                                {**app, "code_key": key, "code_version": version})
         status = records(c, p.registry_id)[app["name"]]["status"]
     except Exception as e:

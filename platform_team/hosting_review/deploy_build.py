@@ -1,47 +1,58 @@
 """The deploy step of the hosting review. Runs in CodeBuild (buildspec_deploy.yml), after the Grant step made the
-agent's execution role. Puts the team's code on AgentCore Runtime with the pinned AgentCore CLI and writes the
-Runtime ARN to SSM, where the Entry step reads it.
+agent's execution role. Packages the team's code with its dependencies, creates or updates the agent's AgentCore
+Runtime from that package (CreateAgentRuntime, UpdateAgentRuntime), and writes the Runtime ARN to SSM, where the
+Entry step reads it.
 
     python -m platform_team.hosting_review.deploy_build
 
-The team supplies code and requirements.txt only; the platform owns the deploy configuration:
+The team supplies code and requirements.txt only; the platform decides what is installed and how the Runtime runs:
   1 read the submission at the object version the catalog record names, unpack it, and check its layout and its
-    requirements.txt with the scan's rules (submission_check)
-  2 `agentcore create` makes a CDK project; its app/agent/ becomes the submission without its own build settings
-    (prepare_code), and the platform writes app/agent/pyproject.toml and agentcore/agentcore.json
-    (runtime_skeleton/agentcore.json.tmpl)
-  3 `agentcore deploy`. The stack is AgentCore-<project>-default; when it exists, the Runtime gets a new version
-  4 the Runtime ARN from the deploy output goes to SSM /<prefix>/agents/<agent>/runtime_arn
+    requirements.txt with the scan's rules (submission_check). The submission's own build settings (PLATFORM_OWNED)
+    are deleted, and the platform writes the requirement lines into its own requirements file with the function
+    that wrote the file the scan audited (submission_check.requirements_from), so the same lines are installed
+  2 uv installs those requirements as wheels for the Runtime's platform (install_command); the package is what uv
+    installed plus the submission's top-level .py files (package), uploaded to the inbox at Settings.package_key
+  3 the Runtime <prefix>_<agent> (Settings.runtime_name) is created the first time and updated after that; the
+    build waits until the version the call returns is READY (deploy)
+  4 the Runtime ARN goes to SSM /<prefix>/agents/<agent>/runtime_arn
 
 Environment: AGENT, CODE_KEY, CODE_VERSION, ROLE_ARN per run; BUCKET, PREFIX, TOOL_GW_URL, MODEL_ID on the
-project; AWS_REGION from CodeBuild; AGENTCORE_CLI (the CLI's path) and UV_NO_CONFIG=1 from the buildspec.
-The pure parts (render_config, template_values, pyproject_from, prepare_code, runtime_arn) have unit tests; main()
-wires them to the shell commands, S3 and SSM. Nothing calls AWS at import time.
+project; AWS_REGION from CodeBuild; UV_NO_CONFIG=1 from the buildspec, so uv reads no config file at all.
+The pure parts (drop_build_settings, install_command, package, runtime_config) and deploy() have unit tests; main()
+wires them to uv, S3, AgentCore and SSM. Nothing calls AWS at import time.
 """
 import json
 import os
-import re
 import shutil
-import string
 import subprocess
 import tempfile
+import time
+import zipfile
 from pathlib import Path
 
 from botocore.exceptions import ClientError
 
-from platform_team.hosting_review.submission_check import check_layout, check_requirements, parse_requirements, unpack
-from platform_team.shared_code.aws_helpers import Clients
+from platform_team.hosting_review.submission_check import check_layout, check_requirements, requirements_from, unpack
+from platform_team.shared_code.aws_helpers import Clients, all_items, wait_status
 from platform_team.shared_code.config import Settings
 
-TEMPLATE = Path(__file__).with_name("runtime_skeleton") / "agentcore.json.tmpl"
-CLI_TEMPLATE = "agent-python-minimal"     # the CDK app is what the build takes from it; the code is replaced
-CODE_LOCATION = Path("app", "agent")      # the template's codeLocation
 REQUIRED_ENV = ("AGENT", "CODE_KEY", "CODE_VERSION", "ROLE_ARN", "BUCKET", "PREFIX", "TOOL_GW_URL", "MODEL_ID",
                 "AWS_REGION")
-ARN_KEY = "RuntimeArnOutput"              # the stack output key is ...RuntimeArnOutput<CDK hash>
-# Files in the code location that would change what uv installs or with which Python. The buildspec also sets
+# Files of the submission that would change what uv installs or with which Python. The buildspec also sets
 # UV_NO_CONFIG=1, so uv reads no config file at all.
 PLATFORM_OWNED = ("pyproject.toml", "uv.lock", "uv.toml", ".python-version")
+# What the Runtime runs (runtime_config): CPython 3.13 on Linux arm64, so the wheels are for that platform.
+RUNTIME_PLATFORM, RUNTIME_PYTHON, RUNTIME_VERSION = "aarch64-manylinux2014", "3.13", "PYTHON_3_13"
+# main.py started under the OpenTelemetry wrapper, so the agent sends traces: the entry point of the AWS guide's
+# direct code deployment for Python ("Direct code deployment for Python", AgentCore developer guide, read on
+# 2026-11-22). The wrapper comes from the ADOT package (aws-opentelemetry-distro), which the agent template's
+# requirements.txt pins; the service model takes at most two items.
+ENTRY_POINT = ("opentelemetry-instrument", "main.py")
+CREATE_TRIES, CREATE_STEP = 8, 15      # the execution role Grant made a moment ago may not be usable yet
+READY_WAIT, READY_STEP = 900, 10       # s, until the new Runtime version is READY
+# An AccessDeniedException whose message holds one of these: the deploy role itself lacks the action (an AgentCore
+# action, or passing the execution role). Trying again won't help.
+OWN_ROLE_DENIED = ("is not authorized to perform: bedrock-agentcore:", "is not authorized to perform: iam:PassRole")
 
 
 # ================================================================== pure parts
@@ -50,104 +61,118 @@ def _settings(env: dict) -> Settings:
     return Settings(region=env["AWS_REGION"], prefix=env["PREFIX"], model_id=env["MODEL_ID"])
 
 
-def template_values(env: dict) -> dict[str, str]:
-    """The values that fill agentcore.json.tmpl, from the build's environment."""
-    agent = env["AGENT"]
-    s = _settings(env)
-    return {"PROJECT": s.project_name(agent), "ROLE_ARN": env["ROLE_ARN"], "HUB_REGION": s.region,
-            "TOOL_GATEWAY_URL": env["TOOL_GW_URL"], "MODEL_ID": s.model_id, "AGENT_NAME": agent}
-
-
-def render_config(template: str, values: dict[str, str]) -> str:
-    """agentcore.json from the template. The template is JSON whose strings may hold ${NAME} placeholders;
-    values fill those strings only, so a value can never change the structure."""
-    def fill(node):
-        if isinstance(node, str):
-            try:
-                return string.Template(node).substitute(values)
-            except KeyError as e:
-                raise ValueError(f"the template needs a value for {e.args[0]}") from None
-        if isinstance(node, list):
-            return [fill(n) for n in node]
-        if isinstance(node, dict):
-            return {k: fill(v) for k, v in node.items()}
-        return node
-    return json.dumps(fill(json.loads(template)), indent=2) + "\n"
-
-
-def pyproject_from(requirements: str, name: str) -> str:
-    """A minimal pyproject.toml whose dependencies are the requirement lines of requirements.txt.
-    The CLI's CodeZip packager installs the dependencies of the pyproject.toml it finds in the code location.
-    The lines follow the scan's rule (submission_check.parse_requirements); a line it refuses raises ValueError."""
-    deps, problems = parse_requirements(requirements)
-    if problems:
-        raise ValueError("; ".join(problems))
-    lines = ["# Written by the deploy build from the submission's requirements.txt. The platform owns this file.",
-             "[project]", f"name = {json.dumps(name)}", 'version = "0.1.0"', 'requires-python = ">=3.13"',
-             "dependencies = [", *(f"    {json.dumps(d)}," for d in deps), "]"]
-    return "\n".join(lines) + "\n"
-
-
-def prepare_code(src: Path, code: Path, pyproject: str) -> list[str]:
-    """Make the code location the unpacked submission plus the platform's pyproject.toml. The submission's own
-    build settings (PLATFORM_OWNED: what uv would read in that folder) are deleted, not refused: the platform
-    decides what is installed and from where. Returns the names deleted."""
-    shutil.rmtree(code, ignore_errors=True)
-    shutil.copytree(src, code)
+def drop_build_settings(src: Path) -> list[str]:
+    """Delete the submission's own build settings (PLATFORM_OWNED: what uv would read in that folder). They are
+    deleted, not refused: the platform decides what is installed and from where. Returns the names deleted."""
     dropped = []
     for name in sorted(PLATFORM_OWNED):
-        path = code / name
-        if path.is_dir():
+        path = Path(src) / name
+        if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
-        elif path.exists():
+        elif path.exists() or path.is_symlink():
             path.unlink()
         else:
             continue
         dropped.append(name)
-    (code / "pyproject.toml").write_text(pyproject)
     return dropped
 
 
-def _json_documents(text: str) -> list:
-    """Every JSON object in the text that starts at the beginning of a line (the CLI prints progress lines too)."""
-    decoder, docs, end = json.JSONDecoder(), [], 0
-    for m in re.finditer(r"^[ \t]*\{", text, re.M):
-        if m.start() < end:
-            continue
-        try:
-            doc, end = decoder.raw_decode(text, m.end() - 1)
-        except ValueError:
-            continue
-        docs.append(doc)
-    return docs
+def install_command(requirements: Path, target: Path) -> list[str]:
+    """uv installs the requirements into `target` as wheels only (no sdist, so no setup.py runs), for the Runtime's
+    platform and Python, without compiling bytecode."""
+    return ["uv", "pip", "install", "--quiet", "--no-compile", "--only-binary", ":all:",
+            "--python-platform", RUNTIME_PLATFORM, "--python-version", RUNTIME_PYTHON,
+            "--target", str(target), "-r", str(requirements)]
 
 
-def _pairs(node):
-    if isinstance(node, dict):
-        for k, v in node.items():
-            yield k, v
-            yield from _pairs(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _pairs(v)
+def package(src: Path, site: Path, out: Path) -> int:
+    """Zip the Runtime's code: every file under `site` (what uv installed) and the submission's top-level .py files,
+    names in sorted order, no __pycache__. A submitted .py file replaces an installed file of the same name.
+    Returns the zip's size in bytes."""
+    site, src, out = Path(site), Path(src), Path(out)
+    files = {f.relative_to(site).as_posix(): f for f in site.rglob("*")
+             if f.is_file() and "__pycache__" not in f.relative_to(site).parts}
+    files.update({f.name: f for f in src.iterdir() if f.is_file() and f.suffix == ".py"})
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in sorted(files):
+            z.write(files[name], name)
+    return out.stat().st_size
 
 
-def runtime_arn(cli_output: str) -> str:
-    """The Runtime ARN from the output of `agentcore deploy --json`."""
-    found = sorted({v for doc in _json_documents(cli_output) for k, v in _pairs(doc)
-                    if ARN_KEY in k and isinstance(v, str)})
-    if not found:
-        raise ValueError(f"no {ARN_KEY} in the agentcore deploy output (see the output above)")
-    if len(found) > 1:
-        raise ValueError(f"more than one Runtime ARN in the agentcore deploy output: {found}")
-    return found[0]
+def runtime_config(env: dict, key: str) -> dict:
+    """The arguments that create and update the Runtime alike: the package at `key` in the inbox, started with
+    tracing on (ENTRY_POINT), the execution role Grant made, a public network, HTTP, and the hub's four environment
+    variables."""
+    s = _settings(env)
+    return {
+        "agentRuntimeArtifact": {"codeConfiguration": {"code": {"s3": {"bucket": env["BUCKET"], "prefix": key}},
+                                                       "runtime": RUNTIME_VERSION, "entryPoint": list(ENTRY_POINT)}},
+        "roleArn": env["ROLE_ARN"],
+        "networkConfiguration": {"networkMode": "PUBLIC"},
+        "protocolConfiguration": {"serverProtocol": "HTTP"},
+        "environmentVariables": {"HUB_REGION": s.region, "TOOL_GATEWAY_URL": env["TOOL_GW_URL"],
+                                 "MODEL_ID": s.model_id, "AGENT_NAME": env["AGENT"]},
+        "description": "hosted agent",
+    }
 
 
-# ================================================================== wiring (CodeBuild)
+# ================================================================== the Runtime (takes the clients)
 
 def say(msg: str) -> None:
     print(msg, flush=True)
 
+
+def _create(c, name: str, config: dict) -> dict:
+    """create_agent_runtime, tried again (CREATE_TRIES, CREATE_STEP apart) while the new execution role settles: the
+    service answers ValidationException or AccessDeniedException until it can use the role. A denial of this step's
+    own role (a message with one of OWN_ROLE_DENIED) and any other error raise at once."""
+    for attempt in range(CREATE_TRIES):
+        try:
+            return c.ctl.create_agent_runtime(agentRuntimeName=name, **config)
+        except ClientError as e:
+            err = e.response["Error"]
+            own = any(text in err.get("Message", "") for text in OWN_ROLE_DENIED)
+            if attempt == CREATE_TRIES - 1 or own or err["Code"] not in ("ValidationException", "AccessDeniedException"):
+                raise
+            say(f"create_agent_runtime: {err['Code']}: {err.get('Message', '')[:160]} (try {attempt + 1} of "
+                f"{CREATE_TRIES}, again in {CREATE_STEP}s)")
+            time.sleep(CREATE_STEP)
+
+
+def _version_status(c, rid: str, version: str) -> dict:
+    """The Runtime's status as wait_status reads it. Until GetAgentRuntime shows `version`, the status names the
+    version it shows, so an older version that is READY is not taken for the new one."""
+    r = c.ctl.get_agent_runtime(agentRuntimeId=rid)
+    shown = r.get("agentRuntimeVersion")
+    status = r["status"] if shown == version else f"{r['status']} at version {shown}, waiting for {version}"
+    return {**r, "status": status, "statusReason": r.get("failureReason")}
+
+
+def deploy(c, env: dict, key: str, wait: int = READY_WAIT) -> dict:
+    """Create the agent's Runtime from the package at `key`, or update it when one of its name exists (every page of
+    ListAgentRuntimes is read). Wait until the version made is READY: a status ending in FAILED raises RuntimeError
+    with the Runtime's failureReason, and no READY within `wait` seconds raises TimeoutError. Then write the Runtime
+    ARN to SSM. Returns runtimeArn, runtimeId, version, created and readySeconds."""
+    s, agent = _settings(env), env["AGENT"]
+    name, config = s.runtime_name(agent), runtime_config(env, key)
+    found = next((r for r in all_items(c.ctl.list_agent_runtimes, maxResults=100) if r["agentRuntimeName"] == name), None)
+    if found:
+        made = c.ctl.update_agent_runtime(agentRuntimeId=found["agentRuntimeId"], **config)
+        say(f"Runtime {name} updated: {made['agentRuntimeId']} version {made['agentRuntimeVersion']}")
+    else:
+        made = _create(c, name, config)
+        say(f"Runtime {name} created: {made['agentRuntimeId']} version {made['agentRuntimeVersion']}")
+    rid, version, t0 = made["agentRuntimeId"], made["agentRuntimeVersion"], time.monotonic()
+    ready = wait_status(lambda: _version_status(c, rid, version), ("READY",), f"Runtime {name}", timeout=wait,
+                        step=READY_STEP)
+    seconds = int(time.monotonic() - t0)
+    param = s.ssm("agents", agent, "runtime_arn")
+    c.ssm.put_parameter(Name=param, Value=ready["agentRuntimeArn"], Type="String", Overwrite=True)
+    return {"runtimeArn": ready["agentRuntimeArn"], "runtimeId": rid, "version": version, "created": not found,
+            "readySeconds": seconds}
+
+
+# ================================================================== wiring (CodeBuild)
 
 def run(cmd: list[str], cwd: Path) -> str:
     """Run a command, print its output as it comes, and return the output. A non-zero exit stops the build."""
@@ -171,16 +196,16 @@ def _aws(call, what: str):
         raise SystemExit(f"deploy failed: {what}: {err['Code']}: {err['Message']}") from None
 
 
-def main() -> None:
-    env = dict(os.environ)
+def main(env: dict | None = None, c=None) -> dict:
+    """The deploy build: steps 1 to 4 above. `env` and `c` default to the process environment and real clients."""
+    env = dict(os.environ if env is None else env)
     missing = [k for k in REQUIRED_ENV if not env.get(k)]
     if missing:
         raise SystemExit(f"deploy refused: environment variables not set: {', '.join(missing)}")
     agent, s = env["AGENT"], _settings(env)
-    project, cli = s.project_name(agent), env.get("AGENTCORE_CLI", "agentcore")
-    c = Clients.for_settings(s)
+    c = c or Clients.for_settings(s)
     work = Path(tempfile.mkdtemp(prefix="hub-deploy-"))
-    say(f"deploy {agent}: CLI project {project}, stack {s.stack_name(agent)}, Runtime {s.runtime_name(agent)}")
+    say(f"deploy {agent}: Runtime {s.runtime_name(agent)}")
 
     # 1 the submission, at the version the catalog record names (the scan step checked the same version)
     where = f"s3://{env['BUCKET']}/{env['CODE_KEY']} version {env['CODE_VERSION']}"
@@ -195,29 +220,31 @@ def main() -> None:
     problems = check_layout(src) + check_requirements(src)        # the scan's rules, checked again here
     if problems:
         raise SystemExit(f"deploy refused: {'; '.join(problems)}")
-    pyproject = pyproject_from((src / "requirements.txt").read_text(), project)
+    for name in drop_build_settings(src):
+        say(f"the submission's {name} is deleted: the platform decides what is installed")
+    requirements = work / "requirements.txt"                # the lines the scan audited (submission_check.main)
+    requirements.write_text(requirements_from((src / "requirements.txt").read_text(encoding="utf-8")), encoding="utf-8")
     say(f"submission unpacked: {where}")
 
-    # 2 the CDK project from the pinned CLI; the submission is its code; the platform writes the configuration
-    run([cli, "create", "--name", project, "--template", CLI_TEMPLATE, "--skip-install", "--skip-git", "--json"], work)
-    root = work / project
-    for name in prepare_code(src, root / CODE_LOCATION, pyproject):
-        say(f"the submission's {name} is deleted: the platform decides what is installed")
-    (root / "agentcore" / "agentcore.json").write_text(render_config(TEMPLATE.read_text(), template_values(env)))
-    say(f"{CODE_LOCATION}/pyproject.toml and agentcore/agentcore.json written by the platform")
+    # 2 the dependencies as wheels for the Runtime, and the package with the submitted .py files
+    site = work / "site"
+    run(install_command(requirements, site), work)
+    size = package(src, site, work / "package.zip")
+    key = s.package_key(agent, env["CODE_VERSION"])
+    with open(work / "package.zip", "rb") as body:
+        _aws(lambda: c.s3.put_object(Bucket=env["BUCKET"], Key=key, Body=body), f"upload the package {key}")
+    say(f"package uploaded: s3://{env['BUCKET']}/{key} ({size} bytes)")
 
-    # 3 deploy: a new stack the first time, a new Runtime version after that
-    run(["npm", "install", "--no-audit", "--no-fund", "--loglevel=error"], root / "agentcore" / "cdk")
-    out = run([cli, "deploy", "--region", s.region, "--json", "--skip-bootstrap"], root)
+    # 3, 4 the Runtime, its READY version, and its ARN in SSM for the Entry step
     try:
-        arn = runtime_arn(out)
-    except ValueError as e:
+        out = deploy(c, env, key)
+    except ClientError as e:
+        err = e.response["Error"]
+        raise SystemExit(f"deploy failed: Runtime {s.runtime_name(agent)}: {err['Code']}: {err['Message']}") from None
+    except (RuntimeError, TimeoutError) as e:
         raise SystemExit(f"deploy failed: {e}") from None
-
-    # 4 the Entry step reads the Runtime ARN here
-    name = s.ssm("agents", agent, "runtime_arn")
-    _aws(lambda: c.ssm.put_parameter(Name=name, Value=arn, Type="String", Overwrite=True), f"write {name}")
-    say(f"runtime ARN written to {name}: {arn}")
+    say(json.dumps(out))
+    return out
 
 
 if __name__ == "__main__":

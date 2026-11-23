@@ -1,6 +1,6 @@
-"""The hub's settings outside Python: one rule for .env (make, publish.sh, reject.sh, e2e_hosting.py), the prefix
-rule, the model ID default, and the Makefile's destroy. Each test runs on a copy of the files in a temporary folder,
-so it never reads or writes a real .env."""
+"""The hub's settings outside Python: one rule for .env (make, publish.sh, reject.sh, rollout.sh, guardrail.sh, stop.sh,
+resume.sh, usage.sh, e2e_hosting.py), the prefix rule, the model ID default, and the Makefile's destroy and test. Each
+test runs on a copy of the files in a temporary folder, so it never reads or writes a real .env."""
 import os
 import pathlib
 import re
@@ -12,17 +12,21 @@ from platform_team.shared_code import config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PUBLISH, REJECT = "dev_team/agent_template/publish.sh", "platform_team/hosting_review/reject.sh"
-RULE = "platform_team/shared_code/hub_env.sh"                  # both commands source it
+ROLLOUT = "platform_team/company_policy/rollout.sh"
+GUARDRAIL = "platform_team/custom_guardrail/guardrail.sh"
+STOP, RESUME = "platform_team/agent_stop/stop.sh", "platform_team/agent_stop/resume.sh"
+USAGE = "platform_team/agent_monitoring/usage.sh"
+RULE = "platform_team/shared_code/hub_env.sh"                  # every command sources it
 SHOWN = "prefix=$DEMO_PREFIX region=$AWS_REGION model=$MODEL_ID loaded=${HUB_ENV_LOADED:-no} key=${AWS_ACCESS_KEY_ID:-none} token=${SOME_TOKEN:-none}"
 DOTENV = ("DEMO_PREFIX=fromdotenv\nMODEL_ID=model-from-dotenv\nAWS_ACCESS_KEY_ID=key-of-the-dotenv\n"
           "SOME_TOKEN=do-not-export\n")
 
 
 def _copy(tmp_path) -> tuple[pathlib.Path, dict]:
-    """A copy of the Makefile and both commands, a stub uv that prints what it was given, and a clean environment:
+    """A copy of the Makefile and the seven commands, a stub uv that prints what it was given, and a clean environment:
     the shell sets the prefix, the region and an access key, and nothing says .env was read already."""
     repo = tmp_path / "repo"
-    for name in ("Makefile", PUBLISH, REJECT, RULE):
+    for name in ("Makefile", PUBLISH, REJECT, ROLLOUT, GUARDRAIL, STOP, RESUME, USAGE, RULE):
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_bytes((ROOT / name).read_bytes())
         (repo / name).chmod(0o755)
@@ -47,6 +51,11 @@ def _run(cmd, repo, env, cwd=None):
 
 COMMANDS = {"publish.sh": lambda repo: [str(repo / PUBLISH), str(repo / "dev_team" / "some_agent")],
             "reject.sh": lambda repo: [str(repo / REJECT), "quality_agent", "a reason"],
+            "rollout.sh": lambda repo: [str(repo / ROLLOUT), "guard_prompt", "report"],
+            "guardrail.sh": lambda repo: [str(repo / GUARDRAIL), "status"],
+            "stop.sh": lambda repo: [str(repo / STOP), "quality_agent", "--session", "a" * 36],
+            "resume.sh": lambda repo: [str(repo / RESUME), "quality_agent"],
+            "usage.sh": lambda repo: [str(repo / USAGE), "30"],
             "make publish": lambda repo: ["make", "-s", "publish", "AGENT=some_agent"]}
 
 
@@ -73,7 +82,8 @@ def test_a_value_on_the_make_command_line_wins_and_the_command_does_not_read_env
     assert "prefix=fromcmdline" in out and "model=model-from-dotenv" in out and "loaded=1" in out
 
 
-@pytest.mark.parametrize("command", ["publish.sh", "reject.sh"])
+@pytest.mark.parametrize("command", ["publish.sh", "reject.sh", "rollout.sh", "guardrail.sh", "stop.sh", "resume.sh",
+                                     "usage.sh"])
 def test_a_command_told_env_was_read_already_does_not_read_it(tmp_path, command):
     repo, env = _copy(tmp_path)
     (repo / ".env").write_text(DOTENV)
@@ -91,13 +101,43 @@ def test_the_e2e_script_reads_env_by_the_same_rule(tmp_path):
     assert config.env_file_updates({**shell, "HUB_ENV_LOADED": "1"}, dotenv) == {}     # make (or a caller) read it
 
 
+def test_an_empty_line_in_the_env_file_is_no_value_for_any_reader(tmp_path):
+    """shell DEMO_PREFIX=fromshell, .env line `DEMO_PREFIX=`: make, publish.sh, reject.sh, rollout.sh, guardrail.sh,
+    stop.sh, resume.sh, usage.sh and env_file_updates all use fromshell."""
+    repo, env = _copy(tmp_path)
+    (repo / ".env").write_text("DEMO_PREFIX=\nMODEL_ID=model-from-dotenv\n")
+    for command in COMMANDS:
+        out = _run(COMMANDS[command](repo), repo, env, cwd=tmp_path if command != "make publish" else repo)
+        assert "prefix=fromshell" in out and "model=model-from-dotenv" in out, command
+    updates = config.env_file_updates(env, repo / ".env")
+    assert "DEMO_PREFIX" not in updates and updates["MODEL_ID"] == "model-from-dotenv"
+    # an empty line after a filled one does not erase it: an empty line is the same as no line
+    (repo / ".env").write_text("DEMO_PREFIX=fromdotenv\nDEMO_PREFIX=\n")
+    assert config.env_file_updates(env, repo / ".env")["DEMO_PREFIX"] == "fromdotenv"
+    for command in COMMANDS:
+        out = _run(COMMANDS[command](repo), repo, env, cwd=tmp_path if command != "make publish" else repo)
+        assert "prefix=fromdotenv" in out, command
+
+
+def test_nothing_else_from_the_env_file_reaches_stdout_or_stderr(tmp_path):
+    """.env holds SOME_TOKEN=do-not-export: the value is in neither stream of publish.sh, reject.sh, rollout.sh,
+    guardrail.sh, stop.sh, resume.sh, usage.sh or `make publish`."""
+    repo, env = _copy(tmp_path)
+    (repo / ".env").write_text(DOTENV)
+    for command in COMMANDS:
+        r = subprocess.run(COMMANDS[command](repo), cwd=tmp_path if command != "make publish" else repo, env=env,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "do-not-export" not in r.stdout + r.stderr, command
+
+
 def test_the_e2e_script_applies_the_rule_before_it_reads_its_settings():
     text = (ROOT / "e2e_checks" / "e2e_hosting.py").read_text()
     main = text[text.index("def main()"):]
     assert main.index("env_file_updates(") < main.index("Settings.from_env()")
 
 
-# ------------------------------------------------------------------ the prefix, the model ID, make destroy
+# ------------------------------------------------------------------ the prefix, the model ID, make destroy, make test
 
 @pytest.mark.parametrize("prefix", ["my-hub", "hub_1", "Hub", "h", "abcdefghijk", "1hub", "", "hub "])
 def test_a_prefix_the_names_cannot_carry_is_refused(prefix):
@@ -136,3 +176,68 @@ def test_make_destroy_initialises_terraform_before_it_plans_or_destroys(approve)
     init = next(i for i, line in enumerate(lines) if "init -input=false" in line)
     first_tf = next(i for i, line in enumerate(lines) if re.search(r"terraform -chdir=\S+ (plan|destroy)", line))
     assert init < first_tf
+
+
+def test_make_destroy_asks_about_the_catalog_records_too():
+    r = subprocess.run(["make", "-n", "destroy", "AUTO_APPROVE=0"], cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
+    assert "and every other record left in the catalog" in r.stdout
+
+
+def _destroy_lines(approve):
+    r = subprocess.run(["make", "-n", "destroy", f"AUTO_APPROVE={approve}"], cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
+    return r.stdout.splitlines()
+
+
+@pytest.mark.parametrize("approve", ["1", "0"])
+def test_make_destroy_forgets_the_company_policy_modes_before_it_cleans_the_agents(approve):
+    """An approval after the cleanup started gives the agent no company policy: the modes go first. A failure stops
+    the destroy, and without AUTO_APPROVE=1 the question comes before it."""
+    lines = _destroy_lines(approve)
+    forget = next(i for i, line in enumerate(lines) if "platform_team.company_policy.policy_rollout --forget" in line)
+    clean = next(i for i, line in enumerate(lines) if "platform_team.hosting_review.agent_cleanup ||" in line)
+    assert forget < clean and "|| {" in lines[forget] and "exit 1" in lines[forget]
+    asked = [i for i, line in enumerate(lines) if "read answer" in line]
+    assert asked == ([] if approve == "1" else [asked[0]]) and all(i < forget for i in asked)
+
+
+def test_make_destroy_asks_about_the_company_policy_modes_too():
+    assert "the modes of the company policies" in "\n".join(_destroy_lines("0"))
+
+
+def test_make_test_runs_the_unit_tests_with_every_warning_an_error():
+    r = subprocess.run(["make", "-n", "test"], cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k not in ("MAKEFLAGS", "MFLAGS")})
+    assert r.stdout.splitlines() == ["uv run pytest tests -q -W error"]
+
+
+@pytest.mark.parametrize("approve", ["1", "0"])
+def test_make_destroy_detaches_the_custom_guardrail_before_anything_else_changes(approve):
+    """The gateway never points at a deleted Lambda: the interceptor is detached before terraform destroy (on a hub
+    that is not deployed the command does nothing and succeeds). A failure stops the destroy; without AUTO_APPROVE=1
+    the question comes before it."""
+    lines = _destroy_lines(approve)
+    detach = next(i for i, line in enumerate(lines) if "platform_team.custom_guardrail.guardrail_attach detach" in line)
+    forget = next(i for i, line in enumerate(lines) if "platform_team.company_policy.policy_rollout --forget" in line)
+    destroy = next(i for i, line in enumerate(lines) if re.search(r"terraform -chdir=\S+ destroy", line))
+    assert detach < forget < destroy and "|| {" in lines[detach] and "exit 1" in lines[detach]
+    asked = [i for i, line in enumerate(lines) if "read answer" in line]
+    assert all(i < detach for i in asked)
+    if approve == "0":
+        assert "Detach the custom guardrail from the agent gateway" in lines[asked[0]]
+
+
+def test_the_guardrail_command_says_its_usage_without_arguments(tmp_path):
+    repo, env = _copy(tmp_path)
+    r = subprocess.run([str(repo / GUARDRAIL)], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert r.returncode == 2 and "usage: guardrail.sh attach|detach|status" in r.stderr
+
+
+@pytest.mark.parametrize("argv, usage", [([STOP], "usage: stop.sh <agent> [--session <ID> ...]"),
+                                         ([RESUME], "usage: resume.sh <agent>"),
+                                         ([RESUME, "quality_agent", "now"], "usage: resume.sh <agent>")])
+def test_the_stop_and_resume_commands_say_their_usage_for_other_arguments(tmp_path, argv, usage):
+    repo, env = _copy(tmp_path)
+    r = subprocess.run([str(repo / argv[0]), *argv[1:]], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert r.returncode == 2 and usage in r.stderr and "prefix=" not in r.stdout          # uv was not run

@@ -45,9 +45,19 @@ module "agent_catalog" {
 }
 
 module "agent_monitoring" {
-  source      = "../agent_monitoring/terraform"
-  prefix      = var.prefix
-  alert_email = var.alert_email
+  source            = "../agent_monitoring/terraform"
+  prefix            = var.prefix
+  alert_email       = var.alert_email
+  tool_gateway_arn  = module.tool_gateway.gateway_arn
+  agent_gateway_arn = module.agent_gateway.gateway_arn
+}
+
+# The interceptor Lambda and its guardrail. guardrail.sh attaches it to the agent gateway during operation.
+module "custom_guardrail" {
+  source    = "../custom_guardrail/terraform"
+  prefix    = var.prefix
+  code_zip  = local.code_zip
+  topic_arn = module.agent_monitoring.topic_arn
 }
 
 module "dev_access" {

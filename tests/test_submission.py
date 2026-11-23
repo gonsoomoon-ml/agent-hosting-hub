@@ -1,4 +1,4 @@
-# tests/test_submission.py  (Review Focus 4)
+# tests/test_submission.py
 import zipfile, pytest
 from platform_team.hosting_review.submission_check import unpack, check_layout
 
@@ -16,7 +16,7 @@ def test_bad_submission_is_refused(tmp_path):
     assert check_layout(tmp_path / "out2") == ["missing: main.py", "missing: requirements.txt"]
 
 
-# final review I-5 (Review Focus 4): every kind of unsafe name _unsafe handles, not only ../
+# every kind of unsafe name _unsafe handles, not only ../
 import stat
 
 @pytest.mark.parametrize("name", ["../evil.py", "app/../../evil.py", "/etc/evil.py", "C:\\evil.py", "C:/evil.py",
@@ -88,14 +88,69 @@ def test_requirements_with_an_environment_marker_are_refused(tmp_path):
 
 def test_the_command_line_refuses_bad_requirements(tmp_path, capsys):
     z = make(tmp_path, {"main.py": "x", "requirements.txt": "pkg @ https://example.com/pkg.whl\n"})
-    assert submission_check.main([str(z), str(tmp_path / "out")]) == 1
+    audit = tmp_path / "audit" / "requirements.txt"
+    assert submission_check.main([str(z), str(tmp_path / "out"), str(audit)]) == 1
     assert "submission refused: requirements.txt: direct references are not allowed" in capsys.readouterr().out
+    assert not audit.exists()                                 # nothing to audit: the scan stops here
 
 def test_the_scan_runs_no_python_from_the_submission_folder():
     commands = buildspec_commands(SCAN)
     [check] = [c for c in commands if "submission_check" in c]
-    src = check.split()[-1]                                   # the folder the submission is unpacked into
+    src, audit_file = check.split()[-2:]                      # where the submission is unpacked, and the audit file
     [audit] = [c for c in commands if "pip_audit -r" in c]
-    assert src.startswith("/") and "python3 -I -m pip_audit" in audit and f"-r {src}/requirements.txt" in audit
+    assert src.startswith("/") and "python3 -I -m pip_audit" in audit and f"-r {audit_file} " in audit
+    assert not audit_file.startswith(f"{src}/")               # the platform's file, not one of the submission
     assert not any(re.search(rf"\bcd {re.escape(src)}(/|\s|$)", c) for c in commands)   # never works inside it
     assert "PIP_ONLY_BINARY=:all: python3" in audit           # no sdist's setup.py runs, as in the deploy
+
+
+# The scan audits the lines the deploy installs: both come from submission_check.requirements_from.
+import io, types
+from platform_team.hosting_review import deploy_build
+
+DEPLOY = SCAN.with_name("buildspec_deploy.yml")
+DEPLOY_ENV = {"AGENT": "quality_agent", "PREFIX": "hub", "AWS_REGION": "us-west-2", "MODEL_ID": "m",
+              "ROLE_ARN": "arn:aws:iam::123456789012:role/hub-agent-quality_agent-role", "TOOL_GW_URL": "https://x",
+              "BUCKET": "hub-123456789012-us-west-2", "CODE_KEY": "submissions/quality_agent/agent.zip",
+              "CODE_VERSION": "v1"}
+
+
+class _AtInstall(Exception):
+    """Stops the deploy build at its install command."""
+
+
+def deploy_installs(tmp_path, monkeypatch, zip_path) -> list[str]:
+    """The lines of the file the deploy build hands uv (install_command's -r) for the submission at zip_path."""
+    seen = {}
+    def install(cmd, cwd):
+        seen["lines"] = Path(cmd[cmd.index("-r") + 1]).read_text().splitlines()
+        raise _AtInstall
+    work = tmp_path / "deploy"
+    work.mkdir()
+    monkeypatch.setattr(deploy_build, "run", install)
+    monkeypatch.setattr(deploy_build.tempfile, "mkdtemp", lambda prefix: str(work))
+    s3 = types.SimpleNamespace(get_object=lambda **kw: {"Body": io.BytesIO(zip_path.read_bytes())})
+    with pytest.raises(_AtInstall):
+        deploy_build.main(DEPLOY_ENV, types.SimpleNamespace(s3=s3))
+    return seen["lines"]
+
+
+def test_the_scan_audits_exactly_the_lines_the_deploy_installs(tmp_path, monkeypatch):
+    """For a requirements.txt with a comment ending in a backslash before `jinja2==2.11.2`, the audit file's lines
+    equal the lines of the file the deploy build installs from. No line is in one and not the other."""
+    text = "boto3==1.40.0\n# the template's pin \\\njinja2==2.11.2\nrequests[socks] >=2,<3  # http\n"
+    z = make(tmp_path, {"main.py": "x", "requirements.txt": text})
+    audit = tmp_path / "audit" / "requirements.txt"
+    assert submission_check.main([str(z), str(tmp_path / "src"), str(audit)]) == 0
+    audited = audit.read_text().splitlines()
+    assert audited == deploy_installs(tmp_path, monkeypatch, z)
+    # The continuation joins the jinja2 line to the comment for both (pip, given the team's own file, would not
+    # join a comment line and would audit jinja2 that the deploy does not install).
+    assert audited == ["boto3==1.40.0", "requests[socks] >=2,<3"]
+
+
+def test_the_builds_install_their_tools_at_one_version():
+    for path in (SCAN, DEPLOY):
+        installs = [c for c in buildspec_commands(path) if "pip install" in c]
+        assert installs and all(re.fullmatch(r"python3 -m pip install --quiet [a-z-]+==\d+(\.\d+)+", c) for c in installs), \
+            (path.name, installs)

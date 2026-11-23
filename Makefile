@@ -3,9 +3,10 @@
 # values as TF_VAR_region, TF_VAR_prefix and TF_VAR_model_id. Where they come from (README, ".env"): a value on the
 # make command line, else the line NAME=value in .env (see .env.example), else the shell, else the default below.
 # Only these three lines of .env are read; nothing else in it becomes a make variable or is exported.
+# A line with no value (DEMO_PREFIX=) is the same as no line.
 # HUB_ENV_LOADED=1 tells the commands make runs (publish.sh, e2e_hosting.py) that the values are chosen already.
 HUB_VARIABLES := AWS_REGION DEMO_PREFIX MODEL_ID
-dotenv = $(if $(wildcard .env),$(shell sed -n 's/^$(1)=//p' .env | tail -n 1))
+dotenv = $(if $(wildcard .env),$(shell sed -n 's/^$(1)=\(.\)/\1/p' .env | tail -n 1))
 $(foreach v,$(HUB_VARIABLES),$(if $(call dotenv,$(v)),$(eval $(v) := $(call dotenv,$(v)))))
 AWS_REGION ?= us-west-2
 DEMO_PREFIX ?= hub
@@ -17,15 +18,18 @@ export TF_VAR_prefix = $(DEMO_PREFIX)
 export TF_VAR_model_id = $(MODEL_ID)
 TF = terraform -chdir=platform_team/terraform
 SEED = uv run python -m platform_team.agent_catalog.seed_catalog
+PRELOAD = uv run python -m platform_team.hosting_review.preload_agents
 CLEAN = uv run python -m platform_team.hosting_review.agent_cleanup
+FORGET = uv run python -m platform_team.company_policy.policy_rollout --forget
+DETACH = uv run python -m platform_team.custom_guardrail.guardrail_attach detach
 # deploy and destroy show the plan and ask before they change the account. AUTO_APPROVE=1 skips the question
 # (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
 APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
 
-.PHONY: test package deploy seed destroy publish e2e
+.PHONY: test package deploy seed preload destroy publish e2e e2e-ops
 
 test:
-	uv run pytest tests -q
+	uv run pytest tests -q -W error
 
 # build/platform_team.zip and build/tool_schemas.json; Terraform reads them (even to destroy)
 package:
@@ -38,8 +42,20 @@ deploy: package
 seed:
 	$(SEED)
 
-# Outside Terraform's state: what the hosting review made for each agent (policies, gateway target, Runtime stack and
-# logs, execution role, SSM values), the agents' catalog records and the seeded record. An agent role keeps the
+# The two agents there from the start (dev_team/preloaded_agents), with the platform team's credentials: the managed
+# harness spec_assistant (role, tool permits, harness, approved record) and docs_adk, published like a team's agent;
+# it waits for docs_adk's review to end. What is there already is kept, so running it again makes nothing new: a
+# harness that is there keeps its role and tool permits as they are, also when agent.json or MODEL_ID changed.
+preload:
+	$(PRELOAD)
+
+# Outside Terraform's state: the custom guardrail's interceptor on the agent gateway (guardrail.sh attaches it), the
+# modes of the company policies (SSM /<prefix>/policies/, rollout.sh writes them), what the hosting review made for
+# each agent (policies, gateway target, harness, Runtime and its logs, code packages, execution role, SSM values), the agents'
+# catalog records and the seeded record. The interceptor is detached first, so the gateway never points at a deleted
+# Lambda; on a hub that is not deployed, or without its agent gateway, that step does nothing. The modes go next, so
+# a review that reads them after this step gives the agent it approves no company policy (one that read them just
+# before can still make it). An agent role keeps the
 # boundary policy from being deleted, and a registry with records cannot be deleted: they all go first, the agents
 # before the seed. Then `agent_cleanup --records` deletes any record still in the hub's registry (another type, a name
 # the rules refuse) and prints each one. If a step fails, terraform destroy does not run.
@@ -49,9 +65,11 @@ destroy: package
 	$(TF) init -input=false
 ifneq ($(AUTO_APPROVE),1)
 	$(TF) plan -destroy
-	@printf "Destroy everything above, every hosted agent with its catalog record, and the seeded catalog record? Only 'yes' is accepted: "; read answer; \
+	@printf "Detach the custom guardrail from the agent gateway, then destroy everything above, the modes of the company policies, every hosted agent with its catalog record, the seeded catalog record, and every other record left in the catalog? Only 'yes' is accepted: "; read answer; \
 	  [ "$$answer" = yes ] || { echo "Destroy cancelled."; exit 1; }
 endif
+	@$(DETACH) || { echo "Destroy stopped before terraform destroy: the custom guardrail was not detached from the agent gateway (see the line above). Fix that and run make destroy again."; exit 1; }
+	@$(FORGET) || { echo "Destroy stopped before terraform destroy: the modes of the company policies were not removed (see the line above). Fix that and run make destroy again."; exit 1; }
 	@$(CLEAN) || { echo "Destroy stopped before terraform destroy: the agents were not all removed (see the line above). Fix that and run make destroy again."; exit 1; }
 	$(SEED) --remove
 	$(CLEAN) --records
@@ -66,3 +84,8 @@ publish:
 # The log goes to e2e_checks/last-run.log (not committed: *.log).
 e2e:
 	bash -o pipefail -c 'uv run python e2e_checks/e2e_hosting.py 2>&1 | tee e2e_checks/last-run.log'
+
+# Flow 2 (operations) from end to end, on the hub make e2e leaves (release_review and quality_agent APPROVED); it runs
+# make preload itself. The log goes to e2e_checks/last-run-ops.log (not committed: *.log).
+e2e-ops:
+	bash -o pipefail -c 'uv run python e2e_checks/e2e_operations.py 2>&1 | tee e2e_checks/last-run-ops.log'

@@ -11,8 +11,13 @@ locals {
 resource "aws_iam_role" "tools" {
   name = "${var.prefix}-tools-role"
   assume_role_policy = jsonencode({
-    Version   = "2012-10-17"
-    Statement = [{ Effect = "Allow", Principal = { Service = "bedrock-agentcore.amazonaws.com" }, Action = "sts:AssumeRole" }]
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "bedrock-agentcore.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+      Condition = { StringEquals = { "aws:SourceAccount" = data.aws_caller_identity.me.account_id } }
+    }]
   })
 }
 
@@ -26,7 +31,7 @@ resource "aws_iam_role_policy" "tools" {
       {
         Effect   = "Allow"
         Action   = ["bedrock-agentcore:AuthorizeAction", "bedrock-agentcore:PartiallyAuthorizeActions", "bedrock-agentcore:GetPolicyEngine"]
-        Resource = [var.policy_engine_arn, "${local.agentcore}:gateway/*"]
+        Resource = [var.policy_engine_arn, "${local.agentcore}:gateway/${var.prefix}-*"]
       },
     ]
   })

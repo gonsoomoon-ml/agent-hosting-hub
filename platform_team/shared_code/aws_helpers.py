@@ -20,6 +20,7 @@ _SERVICES = {
     "cfn": "cloudformation",
     "ctl": "bedrock-agentcore-control", "data": "bedrock-agentcore",
     "reg": "agent-registry-control", "disc": "agent-registry",
+    "bedrock": "bedrock", "brt": "bedrock-runtime",          # Amazon Bedrock Guardrails: the resource, ApplyGuardrail
 }
 
 

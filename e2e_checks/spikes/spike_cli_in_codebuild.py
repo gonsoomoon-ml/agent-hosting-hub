@@ -3,7 +3,9 @@
 
 The review pipeline's deploy step can put a team's agent on AgentCore Runtime in two ways:
   cli  CodeBuild runs `agentcore deploy` with an execution role made beforehand (this spike)
-  api  CodeBuild packages the code and calls CreateAgentRuntime (passed in checks/whole-process)
+  api  CodeBuild packages the code and calls CreateAgentRuntime itself
+The hub's deploy step now takes the api path (platform_team/hosting_review/deploy_build.py). This spike records the
+earlier cli path; it keeps its own names and need not run again.
 
   up    create the agent's execution role, the deploy role (the CodeBuild service role) and the CodeBuild project.
         The deploy role starts small: assume the CDK bootstrap roles, write its own build log. Actions that a build
@@ -14,7 +16,7 @@ The review pipeline's deploy step can put a team's agent on AgentCore Runtime in
   down  delete the stack, the CDK asset objects the builds uploaded, the project and its log group, the two roles.
         Then list what is left.
 
-Usage:   AWS_REGION=us-west-2 uv run --with 'boto3>=1.44.9' --with requests python e2e_checks/spike_cli_in_codebuild.py up test
+Usage:   AWS_REGION=us-west-2 uv run --with 'boto3>=1.44.9' --with requests python e2e_checks/spikes/spike_cli_in_codebuild.py up test
          ... spike_cli_in_codebuild.py down
 Names:   everything this script creates starts with "hubspike". Printed output and saved logs mask the account ID.
 The script keeps no state file: every step finds its resources by name.
@@ -63,7 +65,7 @@ def mask(text: str) -> str:
 
 # ================================================================== roles
 
-# The agent's execution role: the same trust and permissions as the review's grant step (checks/whole-process).
+# The agent's execution role: the trust and permissions the review's grant step gave an agent role when this spike ran.
 EXEC_TRUST = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "bedrock-agentcore.amazonaws.com"},
               "Action": "sts:AssumeRole", "Condition": {"StringEquals": {"aws:SourceAccount": ACCOUNT}}}]}
 LG = f"arn:aws:logs:{REGION}:{ACCOUNT}:log-group"

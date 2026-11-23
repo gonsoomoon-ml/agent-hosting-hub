@@ -4,27 +4,33 @@
 
 One line per kind of resource, with the names of the hub's that are still there, then
 `still present: nothing` or the kinds that still hold something (exit code 1).
-A name is the hub's when it has the hub's prefix the way the hub writes it: <prefix>-..., <prefix>_..., /<prefix>/...,
-or <prefix> followed by an upper-case letter (CLI projects, Runtimes, stacks). Nothing is changed.
-Kept on purpose and not listed: the code CDK uploaded to the account's CDK bootstrap bucket (shared with other stacks).
+A name is the hub's when it has the hub's prefix the way the hub writes it: <prefix>-..., <prefix>_... (the Runtimes
+<prefix>_<agent>), /<prefix>/.... Two more shapes are the names an AgentCore CLI deploy gives: <prefix> followed by
+an upper-case letter (its projects and Runtimes) and AgentCore-<prefix>... (its CloudFormation stacks). The hub
+makes no such names now; they are still looked for, so what an earlier version of the hub left is listed too. One
+more shape is AgentCore's for a harness of the hub: harness_<prefix>_<agent> (the Runtime the harness runs on, and its
+workload identity and log group, named after it).
+Nothing is changed.
 Not seen: the workload identity the registry service makes for itself. It is named registry-<registry ID>, without
 the hub's prefix, so hub_name cannot tell it from another registry's; it goes with the registry (in the recorded run
 a listing by hand showed it gone).
 Printed output masks the account ID.
 """
+import os
 import re
 import sys
+from pathlib import Path
 
 from botocore.exceptions import ClientError
 
 from platform_team.shared_code.aws_helpers import Clients, all_items, mask
-from platform_team.shared_code.config import Settings
+from platform_team.shared_code.config import Settings, env_file_updates
 
 
 def hub_name(s: Settings, name: str) -> bool:
     """Whether a name is written the way the hub writes its names."""
     p = re.escape(s.prefix)
-    return bool(re.match(rf"({p}[-_]|{p}[A-Z]|AgentCore-{p}[A-Z]|/{p}/)", name or ""))
+    return bool(re.match(rf"({p}[-_]|{p}[A-Z]|AgentCore-{p}[A-Z]|/{p}/|harness_{p}_)", name or ""))
 
 
 def _pages(client, op: str, key: str, **kwargs) -> list:
@@ -39,6 +45,7 @@ def kinds(s: Settings, c: Clients) -> dict:
         "gateways": lambda: [g["name"] for g in all_items(c.ctl.list_gateways, maxResults=100)],
         "policy engines": lambda: [e["name"] for e in all_items(c.ctl.list_policy_engines, maxResults=100)],
         "Runtimes": lambda: [r["agentRuntimeName"] for r in all_items(c.ctl.list_agent_runtimes, maxResults=100)],
+        "harnesses": lambda: [h["harnessName"] for h in all_items(c.ctl.list_harnesses, maxResults=100)],
         "workload identities": lambda: [w["name"] for w in all_items(c.ctl.list_workload_identities, maxResults=20)],
         "registries": lambda: [r["name"] for r in all_items(c.reg.list_registries, maxResults=100)],
         "Lambda functions": lambda: [f["FunctionName"] for f in _pages(c.lam, "list_functions", "Functions")],
@@ -57,9 +64,16 @@ def kinds(s: Settings, c: Clients) -> dict:
         "CloudFormation stacks": lambda: [x["StackName"] for x in _pages(
             c.cfn, "list_stacks", "StackSummaries") if x["StackStatus"] != "DELETE_COMPLETE"],
         "log groups": lambda: (logs("/aws/lambda/") + logs("/aws/codebuild/") + logs("/aws/vendedlogs/states/")
-                               + logs("/aws/bedrock-agentcore/runtimes/")),
+                               + logs("/aws/vendedlogs/bedrock-agentcore/") + logs("/aws/bedrock-agentcore/runtimes/")),
         "log resource policies": lambda: [p["policyName"] for p in c.logs.describe_resource_policies()["resourcePolicies"]],
+        # the gateways' log deliveries (agent_monitoring); a delivery has an ID only, so it goes by its source's name
+        "log delivery sources": lambda: [x["name"] for x in _pages(c.logs, "describe_delivery_sources", "deliverySources")],
+        "log delivery destinations": lambda: [x["name"] for x in _pages(c.logs, "describe_delivery_destinations",
+                                                                         "deliveryDestinations")],
+        "log deliveries": lambda: [x.get("deliverySourceName", "") for x in _pages(c.logs, "describe_deliveries",
+                                                                                   "deliveries")],
         "CloudWatch alarms": lambda: [a["AlarmName"] for a in _pages(c.cw, "describe_alarms", "MetricAlarms")],
+        "Bedrock guardrails": lambda: [g["name"] for g in _pages(c.bedrock, "list_guardrails", "guardrails")],
         "ECR repositories": lambda: [r["repositoryName"] for r in _pages(c.session.client("ecr"), "describe_repositories",
                                                                           "repositories")],
     }
@@ -76,7 +90,12 @@ def leftovers(s: Settings, c: Clients) -> dict[str, list[str]]:
     return out
 
 
+REPO = Path(__file__).resolve().parents[1]
+
+
 def main() -> int:
+    # .env by the same rule as make and the commands (README, ".env"): before the settings are read
+    os.environ.update(env_file_updates(os.environ, REPO / ".env"))
     s = Settings.from_env()
     c = Clients.for_settings(s)
     account = c.account

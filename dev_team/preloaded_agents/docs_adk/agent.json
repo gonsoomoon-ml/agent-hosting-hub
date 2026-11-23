@@ -1,0 +1,7 @@
+{
+  "name": "docs_adk",
+  "team": "common",
+  "framework": "google-adk",
+  "description": "Answers questions about the company's design standards (API versioning, logging, timeouts and retries).",
+  "tools": []
+}

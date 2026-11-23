@@ -111,7 +111,7 @@ def test_the_result_wins_over_other_stream_events():
     assert hub_tools.parse_tool_response(stream) == "M4"
 
 
-# ------------------------------------------------------------------ final review M-5: never raise, never show the account
+# ------------------------------------------------------------------ never raise, never show the account
 
 @pytest.mark.parametrize("error, shown", [('"Tool call not allowed"', "ERROR: Tool call not allowed"),
                                           ('["denied", 3]', "ERROR: ['denied', 3]"), ("42", "ERROR: 42")])
@@ -145,3 +145,9 @@ def test_a_failed_call_does_not_show_the_account(monkeypatch):
 def test_a_result_of_another_shape_is_an_error_text_too(result):          # call_tool must not raise on any answer
     text = '{"jsonrpc":"2.0","id":1,"result":' + result + '}'
     assert hub_tools.parse_tool_response(text) == "ERROR: unexpected answer: " + text
+
+
+@pytest.mark.parametrize("error", [{}, "", [], 0])
+def test_an_empty_error_is_still_an_error(error):
+    text = json.dumps({"jsonrpc": "2.0", "id": 1, "error": error})
+    assert hub_tools.parse_tool_response(text).startswith("ERROR:")

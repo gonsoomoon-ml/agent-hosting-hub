@@ -1,10 +1,26 @@
 # The hosting review: a catalog record that asks for approval starts a Step Functions state machine.
 # Read, Grant, Entry, TestCall and Approve are Lambda functions (review_steps.py): they grant, and never open the
 # submitted code. Scan and Deploy are CodeBuild projects (the buildspecs in ../): they handle the submitted code, and
-# their roles' own policies hold no action that grants. Deploy's role assumes the CDK bootstrap roles, which with the
-# default bootstrap lead to an AdministratorAccess execution role, so by default the separation is whole for Scan
-# only (../README.md, the deploy step's known limit). Every step has its own role (iam.tf). A failed step publishes
-# to the alert topic.
+# their roles hold no action that grants. Scan only reads. Deploy can create a Runtime and its endpoint: the policy
+# allows both creates on runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so
+# it does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload
+# identity named after its ID, and the role reaches workload identities only for <prefix>_* names). The Service
+# Authorization Reference (read on 2026-11-22) lists no condition key on a Runtime's name for either create (only tag,
+# authorizer and network keys; the hub uses none of them).
+# Deploy can update and read the hub's Runtimes, pass a Runtime a role named
+# <prefix>-agent-*-role, and write an agent's Runtime ARN to SSM (the policy allows /<prefix>/agents/<agent>/runtime_arn
+# and no other parameter); it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
+# name only under the agent boundary; a role of that name made outside the hub would not be bounded, and making one
+# takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code
+# that runs in the deploy build could change another agent's Runtime, pass it another agent's role, or write another
+# agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves open that such
+# code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's cleanup would not find
+# (../README.md, the known limit). Every step has its own role (iam.tf). Read reads the catalog record
+# (GetRegistryRecord) and, to find an earlier review of the same record, lists this state machine's executions and
+# reads their input (states:ListExecutions, states:DescribeExecution); it changes nothing. Approve reads one SSM
+# path, /<prefix>/policies (the modes of the company policies, GetParametersByPath), and makes those policies and the
+# entry permit; it cannot switch a policy's mode (no UpdatePolicy). A record the review does not host (not an AGENT
+# record, or a harness) ends after Read, with no alert. A failed step publishes to the alert topic.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
@@ -21,7 +37,7 @@ locals {
     grant    = 900 # one policy per tool of the application
     entry    = 900 # a target and two policies
     testcall = 900 # a new target and a new policy take a while before they answer
-    approve  = 420 # one policy
+    approve  = 900 # the deployed company policies and the entry permit
   }
   # What the steps read from their environment (review_steps.py, lambda_handler.py); ACTION names the step.
   step_env = {
@@ -39,6 +55,7 @@ locals {
     EXAMPLE_KEY    = join("", ["AKIA", "IOSFODNN7EXAMPLE"])
     CATALOG_TOOLS  = join(",", sort(var.catalog_tools))
     AGENT_BOUNDARY = aws_iam_policy.agent_boundary.arn # Grant creates agent roles under this boundary
+    MODEL_ID       = var.model_id                      # Grant: the one model an agent role may call
   }
 }
 
@@ -64,6 +81,13 @@ resource "aws_s3_bucket_public_access_block" "inbox" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+# Requests without TLS are refused (iam.tf, the policy document "inbox").
+resource "aws_s3_bucket_policy" "inbox" {
+  bucket     = aws_s3_bucket.inbox.id
+  policy     = data.aws_iam_policy_document.inbox.json
+  depends_on = [aws_s3_bucket_public_access_block.inbox]
 }
 
 resource "aws_s3_object" "code" {
@@ -148,7 +172,7 @@ resource "aws_cloudwatch_log_group" "deploy" {
 
 resource "aws_codebuild_project" "deploy" {
   name          = "${var.prefix}-review-deploy"
-  description   = "Hosting review, Deploy: put the submission on AgentCore Runtime with the AgentCore CLI"
+  description   = "Hosting review, Deploy: package the submission and create or update its AgentCore Runtime"
   service_role  = aws_iam_role.deploy.arn
   build_timeout = 30
   source {
@@ -256,7 +280,7 @@ resource "aws_cloudwatch_event_target" "review" {
   depends_on = [aws_iam_role_policy.events]
 }
 
-# A new rule missed the first event (found by running, checks/system-flows). Whoever reads machine_arn waits for this.
+# A new rule missed the first event (found by running). Whoever reads machine_arn waits for this.
 resource "time_sleep" "rule_settles" {
   create_duration = "90s"
   depends_on      = [aws_cloudwatch_event_rule.on_submit, aws_cloudwatch_event_target.review]

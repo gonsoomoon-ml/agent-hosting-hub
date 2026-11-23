@@ -45,3 +45,14 @@ def review_permit(target: str, gateway_arn: str, account: str, role_name: str) -
 def guard_secret(target: str, gateway_arn: str) -> str:
     """A prompt that holds a secret is refused (agent gateway)."""
     return _render("guard-secret.cedar", target=target, gateway_arn=gateway_arn)
+
+
+def guard_prompt(target: str, gateway_arn: str) -> str:
+    """A prompt that is a prompt injection (confidence above 0.4) is refused (agent gateway)."""
+    return _render("guard-prompt.cedar", target=target, gateway_arn=gateway_arn)
+
+
+def stop_agent(target: str, gateway_arn: str, account: str, role_name: str) -> str:
+    """Every call to the agent behind this target is refused, except from this role: the review's test call
+    (agent gateway)."""
+    return _render("stop-agent.cedar", account=account, role_name=role_name, target=target, gateway_arn=gateway_arn)

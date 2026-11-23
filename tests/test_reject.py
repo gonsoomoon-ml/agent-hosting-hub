@@ -1,4 +1,4 @@
-# tests/test_reject.py  (Review Focus 2)
+# tests/test_reject.py
 import pytest
 from platform_team.hosting_review.reject_agent import reject
 from platform_team.shared_code.config import Settings
@@ -13,6 +13,20 @@ def test_reject_removes_what_the_review_made():
     assert out["removed"] == ["policy tool_quality_agent_Parts_get_part_spec", "role hub-agent-quality_agent-role"]
     assert "tool_release_review_Release_file_review_request" in c.policies      # another agent's permit stays
 
+def test_reject_removes_the_prompt_guard_and_the_stop_policy_too_and_leaves_another_agents():
+    # An entry permit means an approved version runs, and then reject removes nothing (the new-version tests below).
+    # The cleanup reject calls removes it first all the same, when make destroy removes the agent.
+    mine = ["guard_secret_quality_agent", "guard_prompt_quality_agent", "stop_agent_quality_agent"]
+    others = {"stop_agent_quality", "guard_prompt_release"}
+    c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={*mine, *others})
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "why")
+    assert out["removed"] == [f"policy {n}" for n in mine]                    # the stop policy last
+    assert set(c.policies) == others
+    c = FakeClients(existing_policies={"entry_permit_quality_agent", *mine, *others})
+    assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == [    # the entry permit first, the stop policy last
+        f"policy {n}" for n in ["entry_permit_quality_agent", *mine]]
+    assert set(c.policies) == others
+
 def test_an_approved_agent_is_not_rejected():
     with pytest.raises(ValueError, match="approved agents are stopped, not rejected"):
         reject(FakeClients(record_status="APPROVED"), Settings(), PLATFORM, "quality_agent", "x")
@@ -20,6 +34,7 @@ def test_an_approved_agent_is_not_rejected():
 
 # ------------------------------------------------------------------ every kind the review makes, and only the agent's own
 
+import json
 import os
 import pathlib
 import re
@@ -27,45 +42,46 @@ import subprocess
 
 from botocore.exceptions import ClientError
 
-from platform_team.hosting_review import agent_cleanup, reject_agent, review_steps as steps
+from platform_team.hosting_review import agent_cleanup, deploy_build, reject_agent, review_steps as steps
 from platform_team.hosting_review.agent_cleanup import CleanupFailed, clean_agents, remove_agent
-from tests.fakes import ACCOUNT, CTX, ENV, SPEC
+from tests.fakes import ACCOUNT, ENV, SPEC, read_input
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-RUNTIME_ID = "Ab12Cd34Ef"          # the 10 characters AgentCore adds to a Runtime's name
+RUNTIME_ID = "Ab12Cd34Ef"          # the 10 characters AgentCore adds to a Runtime's name (the fake adds these)
 FOREIGN_LOG = "/aws/bedrock-agentcore/runtimes/other_team_runtime-Zz98Yy76Xx-DEFAULT"
-ROLE, STACK = "hub-agent-quality_agent-role", "AgentCore-hubQualityAgent-default"
-RUNTIME_TYPE = "AWS::BedrockAgentCore::Runtime"
+ROLE, RUNTIME = "hub-agent-quality_agent-role", "hub_quality_agent"
 
 
-def _stack_of(agent, runtime_name=None, **changes):
-    """A stack as `agentcore deploy` leaves it: it holds the agent's Runtime (its physical ID is the Runtime ID)."""
-    runtime_name = runtime_name or Settings().runtime_name(agent)
-    return {"status": "CREATE_COMPLETE", **changes,
-            "resources": [{"LogicalResourceId": "AgentRuntime", "ResourceType": RUNTIME_TYPE,
-                           "PhysicalResourceId": f"{runtime_name}-{RUNTIME_ID}", "ResourceStatus": "CREATE_COMPLETE"}]}
+def _deploy(c, agent, version="v1", role=None):
+    """What the deploy build leaves for the agent: its package in the inbox, its Runtime under the agent's role (or
+    `role`), and the Runtime ARN in SSM (deploy_build.deploy on the fake)."""
+    s = Settings()
+    key = s.package_key(agent, version)
+    c.s3.put_object(Bucket=PLATFORM.bucket, Key=key, Body=b"zip")
+    env = {"AGENT": agent, "PREFIX": "hub", "AWS_REGION": "us-west-2", "MODEL_ID": s.model_id, "BUCKET": PLATFORM.bucket,
+           "TOOL_GW_URL": "https://hub-tools-abcdefghij.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp",
+           "ROLE_ARN": f"arn:aws:iam::{ACCOUNT}:role/{role or s.agent_role(agent)}"}
+    return deploy_build.deploy(c, env, key)
 
 
 def _review(c, spec):
-    """What the review's steps leave on the fake for this agent: Read, Grant, Deploy (as the build leaves it: a stack,
-    the Runtime ARN in SSM, the Runtime's log group), Entry and Approve."""
+    """What the review's steps leave on the fake for this agent: Read, Grant, Deploy (as the build leaves it: the
+    package, the Runtime, the Runtime ARN in SSM; and the Runtime's log group), Entry and Approve."""
     s, agent = Settings(), spec["name"]
     c.record_spec = spec                                       # Read reads the record, Approve reads it again
     c.record_status = "PENDING_APPROVAL"                       # as publish leaves it (the fake has one record status)
-    ctx = steps.grant(steps.read({"detail": {"registryId": CTX["registryId"], "registryRecordId": CTX["recordId"]}},
-                                 c, ENV), c, ENV)
-    runtime = f"{s.runtime_name(agent)}-{RUNTIME_ID}"
-    c.stacks[s.stack_name(agent)] = _stack_of(agent)
-    c.parameters[s.ssm("agents", agent, "runtime_arn")] = f"arn:aws:bedrock-agentcore:us-west-2:{ACCOUNT}:runtime/{runtime}"
-    c.log_groups.add(f"/aws/bedrock-agentcore/runtimes/{runtime}-DEFAULT")
+    ctx = steps.grant(steps.read(read_input(), c, ENV), c, ENV)
+    _deploy(c, agent)
+    c.log_groups.add(f"/aws/bedrock-agentcore/runtimes/{s.runtime_name(agent)}-{RUNTIME_ID}-DEFAULT")
     steps.approve(steps.entry(ctx, c, ENV), c, ENV)
 
 
 def _state(c) -> set[str]:
     """Everything on the fake, named the way `removed` names it."""
     records = c.reg.list_registry_records(registryId=PLATFORM.registry_id)["registryRecords"]
-    return ({f"policy {n}" for n in c.policies} | {f"target {n}" for n in c.targets} | {f"stack {n}" for n in c.stacks}
-            | {f"log group {n}" for n in c.log_groups} | {f"role {n}" for n in c.existing_roles | set(c.roles)}
+    return ({f"policy {n}" for n in c.policies} | {f"target {n}" for n in c.targets} | {f"Runtime {n}" for n in c.runtimes}
+            | {f"log group {n}" for n in c.log_groups} | {f"package {k}" for k in c.objects}
+            | {f"role {n}" for n in c.existing_roles | set(c.roles)}
             | {f"parameter {n}" for n in c.parameters} | {f"record {r['name']}" for r in records})
 
 
@@ -77,9 +93,10 @@ def test_every_kind_the_review_makes_is_removed_in_order_and_a_second_run_finds_
         "policy entry_permit_quality_agent", "policy review_permit_quality_agent",
         "policy tool_quality_agent_Parts_get_part_spec",
         "policy tool_quality_agent_Quality_get_inspection_data", "policy guard_secret_quality_agent",
-        "target QualityAgent", "stack AgentCore-hubQualityAgent-default",
-        f"log group /aws/bedrock-agentcore/runtimes/hubQualityAgent_default_agent-{RUNTIME_ID}-DEFAULT",
-        "role hub-agent-quality_agent-role", "parameter /hub/agents/quality_agent/runtime_arn"]
+        "target QualityAgent", "Runtime hub_quality_agent",
+        f"log group /aws/bedrock-agentcore/runtimes/hub_quality_agent-{RUNTIME_ID}-DEFAULT",
+        "package packages/quality_agent/v1.zip", "role hub-agent-quality_agent-role",
+        "parameter /hub/agents/quality_agent/runtime_arn"]
     assert _state(c) == {"record quality_agent"}                    # the record stays: it is the team's
     assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == []
 
@@ -91,9 +108,9 @@ def test_removing_quality_leaves_everything_of_quality_agent():
     before = _state(c)
     mine = {"policy entry_permit_quality", "policy review_permit_quality",
             "policy tool_quality_Parts_get_part_spec", "policy tool_quality_Quality_get_inspection_data",
-            "policy guard_secret_quality", "target Quality", "stack AgentCore-hubQuality-default",
-            f"log group /aws/bedrock-agentcore/runtimes/hubQuality_default_agent-{RUNTIME_ID}-DEFAULT",
-            "role hub-agent-quality-role", "parameter /hub/agents/quality/runtime_arn"}
+            "policy guard_secret_quality", "target Quality", "Runtime hub_quality",
+            f"log group /aws/bedrock-agentcore/runtimes/hub_quality-{RUNTIME_ID}-DEFAULT",
+            "package packages/quality/v1.zip", "role hub-agent-quality-role", "parameter /hub/agents/quality/runtime_arn"}
     assert set(remove_agent(c, Settings(), PLATFORM, "quality")) == mine
     assert _state(c) == before - mine
 
@@ -105,17 +122,18 @@ def test_removing_quality_leaves_everything_of_review_quality():
     assert remove_agent(c, Settings(), PLATFORM, "quality") == [] and _state(c) == before
 
 
-def test_a_stack_that_does_not_delete_stops_the_run_and_names_the_stack_and_its_reason():
+def test_a_runtime_that_does_not_delete_stops_the_run_and_names_the_runtime_and_its_reason():
     c = FakeClients(existing_roles={"hub-agent-quality_agent-role"},
-                    stack_delete_reason="The following resource(s) failed to delete: [Runtime].")
-    c.stacks[STACK] = _stack_of("quality_agent")
+                    runtime_delete_failure="the Runtime's endpoint could not be deleted")
+    _deploy(c, "quality_agent")
     c.targets["QualityAgent"] = "QualityAgent-tid"
     with pytest.raises(CleanupFailed) as e:
         remove_agent(c, Settings(), PLATFORM, "quality_agent")
-    assert "Runtime stack" in str(e.value) and "AgentCore-hubQualityAgent-default DELETE_FAILED" in str(e.value)
-    assert "failed to delete: [Runtime]" in str(e.value)
+    assert "removing the Runtime failed" in str(e.value) and "Runtime hub_quality_agent DELETE_FAILED" in str(e.value)
+    assert "the Runtime's endpoint could not be deleted" in str(e.value)
     assert e.value.removed == ["target QualityAgent"]
     assert "hub-agent-quality_agent-role" in c.existing_roles           # the Runtime may still use it
+    assert "packages/quality_agent/v1.zip" in c.objects
 
 
 def test_any_other_aws_error_stops_the_run_with_the_step_named():
@@ -145,7 +163,7 @@ def test_reject_again_cleans_again_and_keeps_the_record_as_it_is():
 @pytest.mark.parametrize("agent, status, reason, message", [
     ("quality_agent", "PENDING_APPROVAL", "  ", "a reason is required"),
     ("quality_agent", "PENDING_APPROVAL", "x" * 256, "at most 255"),
-    ("quality_agent", "DRAFT", "x", "record quality_agent is DRAFT: only a record pending approval"),
+    ("quality_agent", "DEPRECATED", "x", "record quality_agent is DEPRECATED: reject takes a record pending approval"),
     ("quality_agent", None, "x", "no agent record named quality_agent"),
     ("Bad-Name", "PENDING_APPROVAL", "x", "agent name 'Bad-Name': name must match"),
 ])
@@ -168,32 +186,36 @@ def test_clean_agents_finds_every_agent_and_leaves_what_the_hub_did_not_make(mon
     c.parameters["/hub/agents/part_inspector/runtime_arn"] = "arn"       # only an SSM value is left
     c.parameters["/hub/platform/registry_id"] = "reg-1"
     c.other_records = [{"name": "parts-tools", "recordId": "rec-tools", "recordType": "MCP", "status": "APPROVED"}]
-    c.stacks["AgentCore-otherTeam-default"] = {"status": "CREATE_COMPLETE"}
+    c.ctl.create_agent_runtime(agentRuntimeName="other_team_runtime",       # the account's own Runtime
+                               roleArn=f"arn:aws:iam::{ACCOUNT}:role/other_team_runtime-role")
+    c.s3.put_object(Bucket=PLATFORM.bucket, Key="submissions/appliance/quality_agent/agent.zip", Body=b"zip")
     c.log_groups.add(FOREIGN_LOG)
     monkeypatch.setattr(agent_cleanup, "load", lambda s, c=None: PLATFORM)
     foreign = {"policy shared_tool_read", "parameter /hub/platform/registry_id", "record parts-tools",
-               "stack AgentCore-otherTeam-default", f"log group {FOREIGN_LOG}", *(f"role {r}" for r in FOREIGN_ROLES)}
+               "Runtime other_team_runtime",
+               "package submissions/appliance/quality_agent/agent.zip",                 # kept: what was submitted
+               f"log group {FOREIGN_LOG}", *(f"role {r}" for r in FOREIGN_ROLES)}
     removed = clean_agents(Settings(), c)
     assert _state(c) == foreign
     assert {"parameter /hub/agents/part_inspector/runtime_arn", "role hub-agent-release_review-role",
-            "stack AgentCore-hubQualityAgent-default", "record quality_agent"} <= set(removed)
+            "Runtime hub_quality_agent", "package packages/quality_agent/v1.zip", "record quality_agent"} <= set(removed)
     assert removed.index("parameter /hub/agents/quality_agent/runtime_arn") < removed.index("record quality_agent")
     assert clean_agents(Settings(), c) == []
 
 
 def test_clean_agents_works_without_the_platform_values(monkeypatch):
     c = FakeClients(existing_roles={"hub-agent-quality_agent-role"})
-    c.parameters["/hub/agents/quality_agent/runtime_arn"] = "arn"
-    c.stacks[STACK] = _stack_of("quality_agent")
+    _deploy(c, "quality_agent")
 
     def nothing_deployed(s, c=None):
         raise RuntimeError("nothing under /hub/platform/: run `make deploy` first")
     monkeypatch.setattr(agent_cleanup, "load", nothing_deployed)
-    assert clean_agents(Settings(), c) == ["stack AgentCore-hubQualityAgent-default", "role hub-agent-quality_agent-role",
+    assert clean_agents(Settings(), c) == ["Runtime hub_quality_agent", "role hub-agent-quality_agent-role",
                                            "parameter /hub/agents/quality_agent/runtime_arn"]
+    assert list(c.objects) == ["packages/quality_agent/v1.zip"]     # no bucket name: terraform destroy empties it
 
 
-# ------------------------------------------------------------------ only what this hub made (fix round 1)
+# ------------------------------------------------------------------ only what this hub made
 
 def _pending_review(c):
     """quality_agent as a failed review leaves it, everything made, the record pending approval."""
@@ -225,30 +247,44 @@ def test_a_role_the_hub_did_not_make_as_it_is_stops_reject_and_removal_before_an
     _refused_before_anything_changes(c, message)
 
 
-def test_a_stack_that_holds_another_runtime_stops_reject_and_removal_before_anything_changes():
+@pytest.mark.parametrize("role", ["hub-agent-release_review-role",       # another agent's role (the deploy role can pass it)
+                                  "other_team_runtime-role"])
+def test_cleanup_refuses_a_runtime_of_this_name_that_runs_under_another_role(role):
     c = FakeClients()
     _pending_review(c)
-    c.stacks[STACK] = _stack_of("quality_agent", runtime_name="hubQualityAgent_default_main")    # another CLI project
-    _refused_before_anything_changes(c, f"stack {STACK} does not hold this agent's Runtime hubQualityAgent_default_agent")
+    config = c.runtimes[RUNTIME]["config"]
+    config["roleArn"] = f"arn:aws:iam::{ACCOUNT}:role/{role}"
+    _refused_before_anything_changes(c, f"Runtime {RUNTIME} is not this hub's: it runs under role {role}, not {ROLE}")
 
 
-def test_a_stack_whose_runtime_was_never_made_is_known_by_its_template():
+def test_cleanup_refuses_a_runtime_whose_role_is_in_another_account():
     c = FakeClients()
-    rolled_back = {"status": "ROLLBACK_COMPLETE", "resources": [
-        {"LogicalResourceId": "AgentRuntime", "ResourceType": RUNTIME_TYPE, "ResourceStatus": "DELETE_COMPLETE"}]}
-    c.stacks[STACK] = {**rolled_back, "template": {"Resources": {"AgentRuntime": {
-        "Type": RUNTIME_TYPE, "Properties": {"AgentRuntimeName": "hubQualityAgent_default_main"}}}}}
-    with pytest.raises(CleanupFailed, match="does not hold this agent's Runtime"):
+    _pending_review(c)
+    c.runtimes[RUNTIME]["config"]["roleArn"] = f"arn:aws:iam::234567890123:role/{ROLE}"
+    with pytest.raises(CleanupFailed, match=f"Runtime {RUNTIME} is not this hub's: it runs under role {ROLE} of "
+                                            "another account"):
         remove_agent(c, Settings(), PLATFORM, "quality_agent")
-    c.stacks[STACK] = {**rolled_back, "template": {"Resources": {"AgentRuntime": {
-        "Type": RUNTIME_TYPE, "Properties": {"AgentRuntimeName": "hubQualityAgent_default_agent"}}}}}
-    assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == [f"stack {STACK}"]
+    assert RUNTIME in c.runtimes
+
+
+def test_cleanup_deletes_the_agents_runtime_and_its_packages():
+    c = FakeClients()
+    _review(c, SPEC)
+    _deploy(c, "quality_agent", "v2")                                  # a second version: the same Runtime, updated
+    c.s3.put_object(Bucket=PLATFORM.bucket, Key="packages/quality_agent/v2.zip", Body=b"again")   # two versions of a key
+    _deploy(c, "quality", role="hub-agent-quality-role")                # another agent whose name starts the same
+    removed = remove_agent(c, Settings(), PLATFORM, "quality_agent")
+    assert [r for r in removed if r.split()[0] in ("Runtime", "package")] == [
+        "Runtime hub_quality_agent", "package packages/quality_agent/v1.zip", "package packages/quality_agent/v2.zip"]
+    assert list(c.runtimes) == ["hub_quality"] and list(c.objects) == ["packages/quality/v1.zip"]
+    assert c.runtime_calls[-1] == "delete hub_quality_agent-Ab12Cd34Ef"
 
 
 def test_clean_agents_skips_a_role_not_made_by_this_hub(monkeypatch):
     c = FakeClients(record_status=None, existing_roles={ROLE})
     c.role_boundaries[ROLE] = None
-    c.stacks[STACK] = _stack_of("quality_agent")
+    _deploy(c, "quality_agent")
+    c.parameters.clear()                                                # found by its role only
     monkeypatch.setattr(agent_cleanup, "load", lambda s, c=None: PLATFORM)
     before, said = _state(c), []
     assert clean_agents(Settings(), c, say=said.append) == []
@@ -270,20 +306,52 @@ def clock(monkeypatch):
     return now
 
 
-def test_a_deleting_stack_is_waited_on_until_it_is_gone(clock):
-    c = FakeClients(stack_delete_polls=3)
-    c.stacks[STACK] = _stack_of("quality_agent")
-    assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == [f"stack {STACK}"]
-    assert clock["t"] - 1000.0 == 3 * agent_cleanup.STACK_STEP                 # three looks at DELETE_IN_PROGRESS
+def test_a_deleting_runtime_is_waited_on_until_it_is_gone(clock):
+    c = FakeClients(runtime_delete_polls=3)
+    _deploy(c, "quality_agent")
+    c.objects.clear()
+    c.parameters.clear()
+    t0 = clock["t"]
+    assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == [f"Runtime {RUNTIME}"]
+    assert clock["t"] - t0 == 3 * agent_cleanup.RUNTIME_STEP                    # three looks at DELETING
 
 
-def test_a_stack_still_deleting_after_the_wait_stops_the_run(clock):
-    c = FakeClients(existing_roles={ROLE}, stack_delete_polls=float("inf"))
-    c.stacks[STACK] = _stack_of("quality_agent")
-    with pytest.raises(CleanupFailed, match=f"removing the Runtime stack failed .TimeoutError: stack {STACK} not .* "
-                                            f"within {agent_cleanup.STACK_WAIT}s"):
+def test_a_runtime_that_is_deleting_already_is_waited_on_and_not_deleted_again(clock):
+    c = FakeClients(runtime_delete_polls=2)
+    _deploy(c, "quality_agent")
+    c.objects.clear()
+    c.parameters.clear()
+    c.ctl.delete_agent_runtime(agentRuntimeId=f"{RUNTIME}-{RUNTIME_ID}")       # a run before this one stopped here
+    assert remove_agent(c, Settings(), PLATFORM, "quality_agent") == [f"Runtime {RUNTIME}"]
+    assert c.runtime_calls.count(f"delete {RUNTIME}-{RUNTIME_ID}") == 1
+
+
+def test_a_runtime_still_deleting_after_the_wait_stops_the_run(clock):
+    c = FakeClients(existing_roles={ROLE}, runtime_delete_polls=float("inf"))
+    _deploy(c, "quality_agent")
+    t0 = clock["t"]
+    with pytest.raises(CleanupFailed, match=f"removing the Runtime failed .TimeoutError: Runtime {RUNTIME} not .* "
+                                            f"within {agent_cleanup.RUNTIME_WAIT}s"):
         remove_agent(c, Settings(), PLATFORM, "quality_agent")
-    assert ROLE in c.existing_roles and clock["t"] - 1000.0 >= agent_cleanup.STACK_WAIT
+    assert ROLE in c.existing_roles and "packages/quality_agent/v1.zip" in c.objects
+    assert clock["t"] - t0 >= agent_cleanup.RUNTIME_WAIT                       # it waited the whole time
+
+
+@pytest.mark.parametrize("failed, deploys", [("CREATE_FAILED", 1), ("UPDATE_FAILED", 2)])
+def test_a_runtime_a_failed_deploy_left_is_removed_though_it_shows_its_failure_while_deleting(clock, failed, deploys):
+    """Only DELETE_FAILED means the delete failed: a Runtime left CREATE_FAILED or UPDATE_FAILED may show that
+    status for a while after DeleteAgentRuntime."""
+    c = FakeClients(runtime_failure="the code package could not be read", runtime_delete_polls=2,
+                    runtime_delete_keeps_status=True)
+    for n in range(deploys):
+        c.runtime_status = failed if n == deploys - 1 else "READY"
+        try:
+            _deploy(c, "quality_agent", f"v{n + 1}")
+        except RuntimeError:
+            pass                                                       # the failed deploy stops the build
+    assert c.runtimes[RUNTIME]["status"] == failed
+    assert f"Runtime {RUNTIME}" in remove_agent(c, Settings(), PLATFORM, "quality_agent")
+    assert c.runtimes == {}
 
 
 # ------------------------------------------------------------------ the commands
@@ -337,7 +405,7 @@ def test_reject_sh_runs_the_module_from_the_repo_whatever_the_current_folder(tmp
 # The two commands' reading of .env: tests/test_hub_env.py (one rule for make, the commands and the e2e script).
 
 
-# ------------------------------------------------------------------ final review M-3: what the hub made and did not find
+# ------------------------------------------------------------------ what the hub made and did not find
 
 def test_a_tool_permit_for_a_tool_no_longer_in_the_catalog_is_removed_too():
     gone = "tool_quality_agent_Retired_get_old_data"                   # its tool left TARGETS after it was granted
@@ -393,3 +461,147 @@ def test_make_destroy_removes_the_records_last_after_the_agents_and_the_seed():
     agents, seed = at("platform_team.hosting_review.agent_cleanup ||"), at("seed_catalog --remove")
     records, destroy = at("agent_cleanup --records"), at("destroy -auto-approve")
     assert agents < seed < records < destroy
+
+
+# ------------------------------------------------------------------ the review of a new version
+
+# What reject can know: it sees the agent's entry permit, not whether the record was ever approved
+NOTE = ("entry_permit_quality_agent is there: an approved version is running, or an approval that stopped left it; "
+        "nothing was removed")
+
+def test_rejecting_a_new_version_leaves_the_running_agent():
+    c = FakeClients(record_status="PENDING_APPROVAL", existing_policies={"entry_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec"},
+                    existing_roles={"hub-agent-quality_agent-role"})
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "the new version fails its test call")
+    assert out["removed"] == [] and "approved version is running" in out["note"] and c.deleted_policies == []
+    assert out == {"status": "REJECTED", "removed": [], "note": NOTE}
+    assert c.record_status == "REJECTED" and c.status_reason == "the new version fails its test call"
+    assert set(c.policies) == {"entry_permit_quality_agent", "tool_quality_agent_Parts_get_part_spec"}
+    assert c.existing_roles == {ROLE}
+
+
+def test_rejecting_a_rejected_new_version_again_changes_nothing():
+    c = FakeClients(record_status="REJECTED", existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE})
+    before = _state(c)
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "another reason")
+    assert out["removed"] == [] and "approved version is running" in out["note"]
+    assert c.record_status == "REJECTED" and c.status_reason is None and _state(c) == before
+
+
+def test_a_draft_left_by_a_stopped_review_can_be_cleaned():
+    # Approve stopped at its second record check because the team changed its record (a changed record is a DRAFT),
+    # and took back the entry permit it had made. Reject keeps the team's draft as it is and removes the rest.
+    c = FakeClients()
+    ctx = steps.grant(steps.read(read_input(), c, ENV), c, ENV)
+    _deploy(c, "quality_agent")
+    ctx = steps.entry(ctx, c, ENV)
+    create = c.ctl.create_policy
+
+    def create_then_edit(**kw):
+        out = create(**kw)
+        c.record_status = "DRAFT"
+        return out
+    c.ctl.create_policy = create_then_edit
+    with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
+        steps.approve(ctx, c, ENV)
+    assert "policy entry_permit_quality_agent" not in _state(c)
+    out = reject(c, Settings(), PLATFORM, "quality_agent", "the review stopped when the record changed")
+    assert out["status"] == "DRAFT" and c.record_status == "DRAFT" and c.status_reason is None
+    assert {"policy review_permit_quality_agent", "policy guard_secret_quality_agent", "target QualityAgent",
+            f"Runtime {RUNTIME}", f"role {ROLE}"} <= set(out["removed"])
+    assert _state(c) == {"record quality_agent"}                     # the team's draft stays
+
+
+def test_a_draft_of_an_agent_whose_approved_version_runs_is_refused():
+    c = FakeClients(record_status="DRAFT", existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE})
+    before = _state(c)
+    with pytest.raises(ValueError, match="record quality_agent is DRAFT and entry_permit_quality_agent is there "
+                                         r"\(an approved version is running, or an approval that stopped left it\): "
+                                         "reject changes nothing"):
+        reject(c, Settings(), PLATFORM, "quality_agent", "why")
+    assert c.record_status == "DRAFT" and c.status_reason is None and _state(c) == before
+
+
+def test_reject_main_says_that_the_running_version_was_left(monkeypatch, capsys):
+    _wire(monkeypatch, reject_agent, FakeClients(existing_policies={"entry_permit_quality_agent"}, existing_roles={ROLE}))
+    assert reject_agent.main(["quality_agent", "the new version fails its test call"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["record quality_agent: REJECTED (prefix hub, region us-west-2)", NOTE]
+
+
+def test_a_draft_whose_cleanup_fails_is_said_to_be_a_draft(monkeypatch, capsys):
+    c = FakeClients(record_status="DRAFT", existing_roles={ROLE})
+
+    def denied(**kw):
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "not allowed"}}, "DeleteRole")
+    c.iam.delete_role = denied
+    _wire(monkeypatch, reject_agent, c)
+    assert reject_agent.main(["quality_agent", "the review stopped when the record changed"]) == 1
+    [line] = capsys.readouterr().out.splitlines()
+    assert line.startswith("record quality_agent is DRAFT (prefix hub, region us-west-2), but not everything was removed")
+    assert c.record_status == "DRAFT" and c.status_reason is None
+
+
+# ------------------------------------------------------------------ a managed harness (hosting_review/preload_agents)
+
+from platform_team.hosting_review.preload_agents import host_harness  # noqa: E402
+
+SPEC_ASSISTANT = json.loads((ROOT / "dev_team/preloaded_agents/spec_assistant/agent.json").read_text())
+HARNESS_ROLE = "hub-agent-spec_assistant-role"
+
+
+def _harness_of(c, name, role):
+    """A harness of this name under `role`, made outside the hub's code (another team, or by hand)."""
+    c.ctl.create_harness(harnessName=name, executionRoleArn=f"arn:aws:iam::{ACCOUNT}:role/{role}")
+
+
+HARNESS_LOG = "/aws/bedrock-agentcore/runtimes/harness_hub_spec_assistant-Xy12Ab34Cd-DEFAULT"   # its Runtime's group
+
+
+def test_cleanup_removes_a_harness_the_hub_made_and_no_other():
+    c = FakeClients(record_status=None)
+    host_harness(c, Settings(), PLATFORM, SPEC_ASSISTANT)
+    host_harness(c, Settings(), PLATFORM, {**SPEC_ASSISTANT, "name": "spec"})     # a name that only starts the same
+    _harness_of(c, "other_team_harness", "other_team_role")                        # not the hub's name
+    c.log_groups |= {HARNESS_LOG, "/aws/bedrock-agentcore/runtimes/harness_hub_spec-Xy12Ab34Cd-DEFAULT",
+                     "/aws/bedrock-agentcore/runtimes/harness_other_team_harness-Xy12Ab34Cd-DEFAULT"}
+    removed = remove_agent(c, Settings(), PLATFORM, "spec_assistant")
+    assert removed == ["policy tool_spec_assistant_Parts_get_part_spec", "policy tool_spec_assistant_Parts_get_test_result",
+                       "harness hub_spec_assistant", f"log group {HARNESS_LOG}", f"role {HARNESS_ROLE}",
+                       "parameter /hub/agents/spec_assistant/harness_arn"]
+    assert sorted(c.log_groups) == ["/aws/bedrock-agentcore/runtimes/harness_hub_spec-Xy12Ab34Cd-DEFAULT",
+                                    "/aws/bedrock-agentcore/runtimes/harness_other_team_harness-Xy12Ab34Cd-DEFAULT"]
+    assert sorted(c.harnesses) == ["hub_spec", "other_team_harness"]
+    assert c.deleted_harnesses == ["hub_spec_assistant-Ab12Cd34Ef"]
+    assert "parameter /hub/agents/spec/harness_arn" in _state(c) and "role hub-agent-spec-role" in _state(c)
+    assert remove_agent(c, Settings(), PLATFORM, "spec_assistant") == []
+
+
+@pytest.mark.parametrize("role", ["hub-agent-release_review-role", "other_team_role"])   # another agent's, or not the hub's
+def test_cleanup_refuses_a_harness_of_this_name_under_another_role_before_anything_is_deleted(role):
+    c = FakeClients(record_status=None)
+    _review(c, SPEC)                                                   # quality_agent, everything the review makes
+    _harness_of(c, "hub_quality_agent", role)
+    before = _state(c)
+    with pytest.raises(CleanupFailed, match=f"harness hub_quality_agent is not this hub's: it runs under role {role}, "
+                                            f"not {ROLE}") as e:
+        remove_agent(c, Settings(), PLATFORM, "quality_agent")
+    assert e.value.removed == [] and _state(c) == before and "hub_quality_agent" in c.harnesses
+
+
+def test_cleanup_refuses_a_harness_whose_role_is_in_another_account():
+    c = FakeClients(record_status=None)
+    host_harness(c, Settings(), PLATFORM, SPEC_ASSISTANT)
+    c.harnesses["hub_spec_assistant"]["executionRoleArn"] = f"arn:aws:iam::234567890123:role/{HARNESS_ROLE}"
+    with pytest.raises(CleanupFailed, match=f"harness hub_spec_assistant is not this hub's: it runs under role "
+                                            f"{HARNESS_ROLE} of another account"):
+        remove_agent(c, Settings(), PLATFORM, "spec_assistant")
+    assert "hub_spec_assistant" in c.harnesses and c.deleted_harnesses == []
+
+
+def test_make_destroy_finds_a_harness_agent_and_removes_it_with_its_record(monkeypatch):
+    c = FakeClients(record_status=None)
+    host_harness(c, Settings(), PLATFORM, SPEC_ASSISTANT)
+    monkeypatch.setattr(agent_cleanup, "load", lambda s, c=None: PLATFORM)
+    removed = clean_agents(Settings(), c)
+    assert "harness hub_spec_assistant" in removed and removed[-1] == "record spec_assistant"
+    assert c.harnesses == {} and c.other_records == [] and HARNESS_ROLE not in c.roles

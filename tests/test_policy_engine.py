@@ -58,3 +58,67 @@ def test_a_timeout_does_not_leave_the_new_policy_behind():
     with pytest.raises(TimeoutError, match="deleted"):
         ensure_policy(c, "e", "p", "permit (...);", wait=0)
     assert c.ctl.created == ["p"] and c.ctl.deleted == ["p-id"]
+
+
+# ------------------------------------------------------------------ the enforcement mode
+
+from platform_team.company_policy.policy_engine import MODES, set_mode
+from tests.fakes import FakeClients
+
+
+def test_an_existing_policy_in_another_mode_is_switched_not_made_again():
+    c = FakeClients(existing_policies={"guard_prompt_quality_agent"}, policy_mode="LOG_ONLY")
+    ensure_policy(c, "engine-1", "guard_prompt_quality_agent", "forbid ...;", guardrail=True, mode="ACTIVE")
+    assert c.mode_changes == [("guard_prompt_quality_agent", "ACTIVE")] and c.created_policies == []
+
+
+def test_an_existing_policy_already_in_the_mode_is_left_alone():
+    c = FakeClients(existing_policies={"guard_prompt_quality_agent"}, policy_mode="LOG_ONLY")
+    ensure_policy(c, "engine-1", "guard_prompt_quality_agent", "forbid ...;", guardrail=True, mode="LOG_ONLY")
+    assert c.mode_changes == [] and c.created_policies == []
+
+
+def test_a_new_policy_is_made_in_the_mode_asked_for():
+    c = FakeClients()
+    ensure_policy(c, "engine-1", "guard_prompt_quality_agent", "forbid ...;", guardrail=True, mode="LOG_ONLY")
+    assert [(p["name"], p["mode"]) for p in c.created_policies] == [("guard_prompt_quality_agent", "LOG_ONLY")]
+
+
+def test_an_unknown_mode_is_refused():
+    c = FakeClients()
+    with pytest.raises(ValueError, match="mode"):
+        ensure_policy(c, "engine-1", "x", "permit ...;", mode="DRY_RUN")
+    assert c.created_policies == [] and c.calls == []                  # refused before AWS is asked anything
+
+
+def test_set_mode_updates_the_policy_and_waits_for_it_to_be_active():
+    c = FakeClients(existing_policies={"p"}, policy_mode="ACTIVE")
+    set_mode(c, "engine-1", "p-id", "LOG_ONLY")
+    assert c.mode_changes == [("p", "LOG_ONLY")]
+    assert c.calls[-2:] == [("ctl", "update_policy"), ("ctl", "get_policy")]
+    with pytest.raises(ValueError, match="mode"):
+        set_mode(c, "engine-1", "p-id", "DRY_RUN")
+
+
+def test_the_modes_are_the_two_the_service_knows():
+    assert MODES == ("ACTIVE", "LOG_ONLY")
+
+
+@pytest.mark.parametrize("status, error", [("UPDATING", TimeoutError), ("UPDATE_FAILED", RuntimeError)])
+def test_a_failed_mode_switch_keeps_the_working_policy(status, error):
+    c = FakeClients(existing_policies={"stop_agent_quality_agent"}, policy_mode="ACTIVE")
+    real_get = c.ctl.get_policy
+    switched = []
+    real_update = c.ctl.update_policy
+
+    def update(**kw):
+        switched.append(kw)
+        return real_update(**kw)
+
+    def get(policyEngineId, policyId):
+        return {"status": status, "statusReasons": ["x"]} if switched else real_get(policyEngineId=policyEngineId, policyId=policyId)
+
+    c.ctl.update_policy, c.ctl.get_policy = update, get
+    with pytest.raises(error):
+        ensure_policy(c, "engine-1", "stop_agent_quality_agent", "forbid ...;", mode="LOG_ONLY", wait=1)
+    assert c.deleted_policies == [] and "stop_agent_quality_agent" in c.policies

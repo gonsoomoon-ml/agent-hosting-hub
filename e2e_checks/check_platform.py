@@ -24,10 +24,11 @@ from platform_team.agent_gateway.gateway_targets import find_gateway
 from platform_team.sample_tools.tool_data import PARTS, TEST_RESULTS
 from platform_team.sample_tools.tool_schema import SHARED_READ
 from platform_team.shared_code.aws_helpers import Clients, mask, retry, signed_post
-from platform_team.shared_code.config import Settings
+from platform_team.shared_code.config import Settings, env_file_updates
 from platform_team.shared_code.hub_state import load
 
-START_POINT = Path(__file__).resolve().parents[1] / "platform_team" / "terraform"
+REPO = Path(__file__).resolve().parents[1]
+START_POINT = REPO / "platform_team" / "terraform"
 OTHER_TOOL = "Parts___get_test_result"
 QUERY = "part specification tool"
 RESULTS: list[tuple[str, bool]] = []
@@ -122,6 +123,8 @@ def check_plan(s: Settings) -> None:
 
 def main() -> None:
     global ACCOUNT
+    # .env by the same rule as make and the commands (README, ".env"): before the settings are read
+    os.environ.update(env_file_updates(os.environ, REPO / ".env"))
     s = Settings.from_env()
     c = Clients.for_settings(s)
     ACCOUNT = c.account

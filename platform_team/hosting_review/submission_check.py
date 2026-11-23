@@ -1,11 +1,13 @@
 """Unpack a team's submission and check its layout. Both CodeBuild steps of the hosting review use it.
 
-    python -m platform_team.hosting_review.submission_check <zip> <dest>
+    python -m platform_team.hosting_review.submission_check <zip> <dest> <audit_file>
 
-unpacks <zip> into <dest>, prints each problem it finds and exits with 1 when there is one.
-A submission is the agent's code and its requirements.txt: main.py and requirements.txt at the top of the zip.
-requirements.txt may name packages on the package index only (a name, extras, versions; no marker). The scan
-audits those lines and the deploy installs those lines, so the rule (parse_requirements) is the same for both.
+unpacks <zip> into <dest>, prints each problem it finds and exits with 1 when there is one. When there is none, it
+writes <audit_file>: the requirement lines of the submission's requirements.txt (requirements_from), which the scan
+step audits. A submission is the agent's code and its requirements.txt: main.py and requirements.txt at the top of
+the zip. requirements.txt may name packages on the package index only (a name, extras, versions; no marker). The
+deploy build installs from a file that requirements_from writes too, so the scan audits exactly the lines the deploy
+installs: neither reads the team's file as pip or uv would (comments, continuations).
 """
 import re
 import stat
@@ -83,11 +85,21 @@ def check_requirements(src: Path) -> list[str]:
     return parse_requirements(text)[1]
 
 
+def requirements_from(text: str) -> str:
+    """The platform's requirements file: the requirement lines of a requirements.txt (parse_requirements), one per
+    line, with comments, blank lines and continuations gone. A line it refuses raises ValueError. The scan audits
+    this file and the deploy build installs from this file; neither reads the team's own."""
+    deps, problems = parse_requirements(text)
+    if problems:
+        raise ValueError("; ".join(problems))
+    return "".join(f"{d}\n" for d in deps)
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: python -m platform_team.hosting_review.submission_check <zip> <dest>")
+    if len(argv) != 3:
+        print("usage: python -m platform_team.hosting_review.submission_check <zip> <dest> <audit_file>")
         return 2
-    zip_path, dest = Path(argv[0]), Path(argv[1])
+    zip_path, dest, audit_file = (Path(a) for a in argv)
     try:
         unpack(zip_path, dest)
     except (ValueError, zipfile.BadZipFile) as e:
@@ -98,7 +110,11 @@ def main(argv: list[str]) -> int:
         print(f"submission refused: {problem}")
     if problems:
         return 1
-    print(f"submission unpacked into {dest}: {', '.join(REQUIRED_FILES)} present")
+    lines = requirements_from((dest / "requirements.txt").read_text(encoding="utf-8"))
+    audit_file.parent.mkdir(parents=True, exist_ok=True)
+    audit_file.write_text(lines, encoding="utf-8")
+    print(f"submission unpacked into {dest}: {', '.join(REQUIRED_FILES)} present; {len(lines.splitlines())} "
+          f"requirement lines written to {audit_file}")
     return 0
 
 

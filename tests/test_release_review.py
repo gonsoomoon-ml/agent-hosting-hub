@@ -45,7 +45,7 @@ def test_a_model_failure_is_an_error_not_a_silent_pass(load_agent):
     assert out["answer"].startswith("ERROR") and "throttled" in out["answer"] and calls == []
 
 
-def test_a_model_error_reaches_the_caller_without_the_account(load_agent):      # final review M-5
+def test_a_model_error_reaches_the_caller_without_the_account(load_agent):
     def denied(system, user):
         raise RuntimeError("User: arn:aws:sts::123456789012:assumed-role/hub-agent-release_review-role/s is not "
                            "authorized to perform: bedrock:InvokeModel " + "x" * 1000)

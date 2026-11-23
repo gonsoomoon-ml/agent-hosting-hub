@@ -1,14 +1,30 @@
 # Every step of the hosting review has its own role, and each policy document holds what its step calls:
 # read from the step's code (review_steps.py and what it imports, the buildspecs, deploy_build.py) and, where marked,
-# found by running (checks/whole-process). The steps that handle submitted code (scan, deploy) can read the
-# submission, and their own policies hold no action that grants. The deploy role, though, assumes the CDK bootstrap
-# roles, and with the default bootstrap these reach the CloudFormation execution role, which is AdministratorAccess:
-# in the default setup the separation is whole for scan only (hosting_review/README.md, the deploy step's known
-# limit). The steps that grant (Lambda) never open the submitted code.
+# found by running. The steps that handle submitted code (scan, deploy) can read the submission and hold no action
+# that grants. Scan only reads. Deploy can create a Runtime and its endpoint: the policy allows both creates on
+# runtime/* (IAM checks them against that resource and denied them on runtime/<prefix>_*), so it does not hold a
+# create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after
+# its ID, and the role reaches workload identities only for <prefix>_* names). The Service Authorization Reference
+# (read on 2026-11-22) lists no condition key on a Runtime's name for either create (only tag, authorizer and network
+# keys; the hub uses none of them).
+# Deploy can update and read the hub's Runtimes, pass a Runtime a role named <prefix>-agent-*-role, and write an
+# agent's Runtime ARN to SSM (the policy allows /<prefix>/agents/<agent>/runtime_arn and no other parameter); it
+# cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that name only under the agent
+# boundary (its role's iam:PermissionsBoundary condition); a role of that name made outside the hub would not be
+# bounded, and making one takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves
+# every review, so code that runs in the deploy build could change another agent's Runtime, pass it another agent's
+# role, or write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy
+# leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
+# cleanup would not find (hosting_review/README.md, the known limit).
+# The steps that grant (Lambda) never open the submitted code. Read reads the catalog record (GetRegistryRecord)
+# and, to find an earlier review of the same record, lists this state machine's executions and reads their input
+# (states:ListExecutions, states:DescribeExecution); it changes nothing. Approve reads one SSM path,
+# /<prefix>/policies (the modes of the company policies, GetParametersByPath), and makes those policies and the
+# entry permit; it cannot switch a policy's mode (no UpdatePolicy).
 
 locals {
   agentcore  = "arn:aws:bedrock-agentcore:${local.region}:${local.account}"
-  agent_ssm  = "arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/agents/*" # /<prefix>/agents/<agent>/runtime_arn
+  agent_ssm  = "arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/agents/*/runtime_arn" # one per agent
   submission = "${aws_s3_bucket.inbox.arn}/submissions/*"
   hub_code   = "${aws_s3_bucket.inbox.arn}/${aws_s3_object.code.key}"
   step_policy = {
@@ -90,6 +106,16 @@ data "aws_iam_policy_document" "read" {
     actions   = ["agent-registry:GetRegistryRecord"]
     resources = ["${var.registry_arn}/record/*"]
   }
+  statement {
+    sid       = "ListTheReviews" # reject_agent.running_reviews: the RUNNING executions of this state machine. An ARN built from the name (main.tf names the machine ${var.prefix}-review): the machine refers to this step's function, so a reference back would be a cycle. On AWS on 2026-11-22 Read listed the executions with it and nothing was denied
+    actions   = ["states:ListExecutions"]
+    resources = ["arn:aws:states:${local.region}:${local.account}:stateMachine:${var.prefix}-review"]
+  }
+  statement {
+    sid       = "ReadTheReviews" # describe_execution: the record each running review was started for (its input). Built from the name like ListTheReviews. On AWS on 2026-11-22 Read read their input with it and nothing was denied
+    actions   = ["states:DescribeExecution"]
+    resources = ["arn:aws:states:${local.region}:${local.account}:execution:${var.prefix}-review:*"]
+  }
 }
 
 # ------------------------------------------------------------------ 2 Scan (CodeBuild, handles submitted code)
@@ -136,7 +162,7 @@ data "aws_iam_policy_document" "grant" {
     }
   }
   statement {
-    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed
+    sid       = "ToolPermits" # ensure_policy tool_<agent>_<Target>_<tool>: list, create, wait until ACTIVE, delete one that failed; delete the agent's permits of tools the application no longer names; from the same list, whether entry_permit_<agent> is there before the review (entryPermitBefore)
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }
@@ -168,6 +194,21 @@ data "aws_iam_policy_document" "agent_boundary" {
     resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
   }
   statement {
+    sid       = "Traces" # the agent's spans (the AWS example of a Runtime execution role). The Service Authorization Reference gives these actions no resource type, so only "*" matches them
+    actions   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets"]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "OwnMetrics" # metrics into the namespace bedrock-agentcore only, any metric there (the same example)
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["bedrock-agentcore"]
+    }
+  }
+  statement {
     sid       = "ToolGateway"
     actions   = ["bedrock-agentcore:InvokeGateway"]
     resources = [var.tool_gateway_arn]
@@ -193,10 +234,11 @@ resource "aws_iam_policy" "agent_boundary" {
 }
 
 # ------------------------------------------------------------------ 4 Deploy (CodeBuild, handles submitted code)
-# The CLI path (agentcore deploy): CloudFormation creates the Runtime through the CDK bootstrap roles, so this role
-# needs no bedrock-agentcore action and no iam:PassRole. Known limit: the CDK roles lead to the CDK execution role,
-# which the default bootstrap makes AdministratorAccess, so code run in the deploy build is an administrator of the
-# account (README.md).
+# The build packages the submission and calls CreateAgentRuntime or UpdateAgentRuntime itself (deploy_build.py). It
+# creates a Runtime and its endpoint under CreateTheRuntime, on runtime/*, which does not hold a create to the hub's
+# names; everything else it does on a Runtime reaches only the Runtimes whose names start with <prefix>_ and their
+# workload identities. It passes only roles named <prefix>-agent-*-role, to AgentCore only, and writes only the SSM
+# parameters /<prefix>/agents/<agent>/runtime_arn.
 
 data "aws_iam_policy_document" "deploy" {
   statement {
@@ -215,14 +257,37 @@ data "aws_iam_policy_document" "deploy" {
     resources = [local.hub_code]
   }
   statement {
-    sid       = "CdkBootstrapRoles" # found by running (Task 0): asset publishing, deploy and lookup roles of this account and Region
-    actions   = ["sts:AssumeRole"]
-    resources = ["arn:aws:iam::${local.account}:role/cdk-hnb659fds-*-${local.account}-${local.region}"]
+    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). The deploy worked with it; whether the service needs GetObject was not tried
+    actions   = ["s3:PutObject", "s3:GetObject"]
+    resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {
-    sid       = "TransactionSearchCheck" # found by running (Task 0): the CLI only reads it; the action has no resource type
-    actions   = ["xray:GetTraceSegmentDestination"]
+    sid       = "CreateTheRuntime" # found by running: IAM checks create_agent_runtime, and the endpoint create it implies, against runtime/* (perhaps because the new Runtime has no ID yet; not checked), and denies both on runtime/<prefix>_*. So this statement does not hold a create to the hub's names. A create under another name was not tried (a Runtime gets a workload identity named after its ID, which TheAgentsRuntime reaches only for <prefix>_* names). The Service Authorization Reference (read on 2026-11-22) lists no condition key on a Runtime's name for these two actions (only tag, authorizer and network keys; the hub uses none of them)
+    actions   = ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:CreateAgentRuntimeEndpoint"]
+    resources = ["${local.agentcore}:runtime/*"]
+  }
+  statement {
+    sid = "TheAgentsRuntime" # update <prefix>_<agent> and wait until READY; the endpoint and workload identity actions for what the service makes with a Runtime (CreateAgentRuntime returns workloadIdentityDetails). Create and update worked with them; whether each is needed was not tried
+    actions = ["bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
+      "bedrock-agentcore:GetAgentRuntimeEndpoint",
+    "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity"]
+    resources = ["${local.agentcore}:runtime/${var.prefix}_*", "${local.agentcore}:workload-identity-directory/default",
+    "${local.agentcore}:workload-identity-directory/default/workload-identity/${var.prefix}_*"]
+  }
+  statement {
+    sid       = "FindTheRuntime" # list_agent_runtimes, every page, to find <prefix>_<agent> by name. It reads names, IDs and status only. The Service Authorization Reference gives the action no resource type, so only "*" matches it (on "*" it worked when run; a narrower resource was not tried)
+    actions   = ["bedrock-agentcore:ListAgentRuntimes"]
     resources = ["*"]
+  }
+  statement {
+    sid       = "PassAgentRole" # roleArn of the Runtime: any role named <prefix>-agent-*-role (Grant makes them under the boundary), to AgentCore only
+    actions   = ["iam:PassRole"]
+    resources = ["arn:aws:iam::${local.account}:role/${var.prefix}-agent-*-role"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["bedrock-agentcore.amazonaws.com"]
+    }
   }
   statement {
     sid       = "WriteTheRuntimeArn" # put_parameter /<prefix>/agents/<agent>/runtime_arn, read by Entry
@@ -250,9 +315,9 @@ data "aws_iam_policy_document" "entry" {
     resources = [var.agent_gateway_arn]
   }
   statement {
-    sid       = "TheTargetsRuntime" # as in the run that passed (checks/whole-process): a Runtime target names the Runtime
+    sid       = "TheTargetsRuntime" # a Runtime target names the Runtime; only the hub's, <prefix>_<agent> (Deploy's names)
     actions   = ["bedrock-agentcore:GetAgentRuntime", "bedrock-agentcore:GetAgentRuntimeEndpoint"]
-    resources = ["${local.agentcore}:runtime/${var.prefix}*"]
+    resources = ["${local.agentcore}:runtime/${var.prefix}_*"]
   }
   statement {
     sid       = "EntryPolicies" # ensure_policy: review_permit_<agent>, guard_secret_<agent>
@@ -292,7 +357,12 @@ data "aws_iam_policy_document" "approve" {
     resources = ["${aws_cloudwatch_log_group.step["approve"].arn}:*"]
   }
   statement {
-    sid       = "EntryPermit" # ensure_policy: entry_permit_<agent>
+    sid       = "CompanyPolicyModes" # get_parameters_by_path /<prefix>/policies (policy_rollout.deployed). The resource is the path as the call passes it, as the dev role's denial for /<prefix>/platform named it. On AWS on 2026-11-22 Approve read the modes with this role
+    actions   = ["ssm:GetParametersByPath"]
+    resources = ["arn:aws:ssm:${local.region}:${local.account}:parameter/${var.prefix}/policies"]
+  }
+  statement {
+    sid       = "CompanyPoliciesAndEntryPermit" # ensure_policy: the deployed company policies (guard_prompt_<agent>), entry_permit_<agent>; when the approval fails after the permit, list the policies and delete the permit this review made (entryPermitBefore false)
     actions   = ["bedrock-agentcore:ListPolicies", "bedrock-agentcore:CreatePolicy", "bedrock-agentcore:GetPolicy", "bedrock-agentcore:DeletePolicy"]
     resources = [var.policy_engine_arn, "${var.policy_engine_arn}/policy/*"]
   }
@@ -345,6 +415,25 @@ data "aws_iam_policy_document" "events" {
     sid       = "StartTheReview"
     actions   = ["states:StartExecution"]
     resources = [aws_sfn_state_machine.review.arn]
+  }
+}
+
+# The inbox's bucket policy (main.tf): every request to the inbox must come over TLS.
+data "aws_iam_policy_document" "inbox" {
+  statement {
+    sid       = "TlsOnly"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.inbox.arn, "${aws_s3_bucket.inbox.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
   }
 }
 

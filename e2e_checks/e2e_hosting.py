@@ -1,11 +1,11 @@
-"""e2e_hosting.py - flow 1 (hosting) from end to end on real AWS: scenes 1-1 to 2-3 of the demo story.
+"""e2e_hosting.py - flow 1 (hosting) from end to end on real AWS, in the order of the twelve checks below.
 
     make deploy seed && AWS_REGION=us-west-2 uv run python e2e_checks/e2e_hosting.py 2>&1 | tee e2e_checks/last-run.log
 
 Twelve checks, one [PASS] / [FAIL] line each, [INFO] lines for what was observed (timings, answers, the alert),
 then `== N checks passed, M failed, K observations`. Exit code 1 if a check failed.
    1  as the dev team role, a catalog search finds the shared tool record parts-tools           (picture 1)
-   2  as the dev team role, the shared read tool answers and another tool is refused by policy  (D15)
+   2  as the dev team role, the shared read tool answers and another tool is refused by policy
       (JSON-RPC error -32002, "policy enforcement"; any other error does not count)
    3  as the dev team role, publish.sh dev_team/release_review: the record is PENDING_APPROVAL  (picture 2)
    4  the review starts within 120 s of the request (timed from just before publish.sh)         (picture 3)
@@ -18,13 +18,16 @@ then `== N checks passed, M failed, K observations`. Exit code 1 if a check fail
    9  that submission made no role, policy, gateway target or Runtime
   10  reject.sh: the record is REJECTED
   11  the fixed version (no variant) again: a new review starts, SUCCEEDED, and the record is APPROVED
-  12  quality_agent answers with both its tools (an EMP- employee ID in the answer is an [INFO]: plan 2 masks it)
+  12  quality_agent answers with both its tools (an EMP- employee ID in the answer is an [INFO]: the custom guardrail
+      masks it when it is attached, platform_team/custom_guardrail)
 
 The dev team's steps run as the dev team role (<prefix>-dev-role), the platform team's (reject.sh) and the user's
 calls with the credentials of the shell. publish.sh and reject.sh are the repo's own commands.
 Before the checks, the two agents are brought back to a known state with the repo's own cleanup (remove_agent, then
-the agent's catalog record), so the script can start again after a failed run; it refuses to start while a review
-is still running. Alerts are read through a temporary SQS queue <prefix>-e2e-alerts subscribed to the alert topic;
+the agent's catalog record), so the script can start again after a failed run. A review still running (the one make
+seed starts for the shared tool record, which ends within seconds) is waited for, up to RUNNING_WAIT seconds; the
+script refuses to start while one still runs after that.
+Alerts are read through a temporary SQS queue <prefix>-e2e-alerts subscribed to the alert topic;
 the queue and the subscription are removed at the end, also when a check fails. Everything this script makes or
 changes has a name that starts with the hub's prefix, or lives in the hub's catalog and policy engine.
 Printed output masks the account ID.
@@ -50,7 +53,7 @@ from platform_team.hosting_review.agent_cleanup import remove_agent
 from platform_team.sample_tools.tool_data import INSPECTIONS, PARTS, TEST_RESULTS
 from platform_team.sample_tools.tool_schema import SHARED_READ, TARGETS
 from platform_team.shared_code.aws_helpers import Clients, all_items, mask, retry, signed_post
-from platform_team.shared_code.config import Settings, env_file_updates
+from platform_team.shared_code.config import PACKAGES, Settings, env_file_updates
 from platform_team.shared_code.hub_state import Platform, load
 
 REPO = Path(__file__).resolve().parents[1]
@@ -76,6 +79,9 @@ REVIEW_WAIT = 2700       # s, one review (the deploy build alone may take up to 
 ALERT_WAIT = 180         # s, after the review stopped
 SEARCH_WAIT = 180        # s, the search index follows an approval
 COMMAND_WAIT = 900       # s, publish.sh or reject.sh
+RUNNING_WAIT = 60        # s, check 0: how long the start waits for a review still running to end
+RUNNING_STEP = 5         # s, between two looks
+MADE_BY_A_REVIEW = ("Runtime", "policies", "role", "target")      # the kinds check 9 looks for, after Scan
 
 RESULTS: list[tuple[int, str, bool]] = []
 OBSERVED = [0]
@@ -482,7 +488,8 @@ def scan_log_lines(c: Clients, message: dict) -> tuple[str, list[str]]:
 
 
 def nothing_made(c: Clients, s: Settings, p: Platform, agent: str) -> dict[str, list[str]]:
-    """What exists for the agent of the kinds the review makes after Scan: role, policies, target, Runtime, stack."""
+    """What exists for the agent of the kinds the review makes after Scan (MADE_BY_A_REVIEW): role, policies, target,
+    Runtime."""
     found: dict[str, list[str]] = {}
     try:
         c.iam.get_role(RoleName=s.agent_role(agent))
@@ -495,12 +502,6 @@ def nothing_made(c: Clients, s: Settings, p: Platform, agent: str) -> dict[str, 
     found["target"] = [n for n in targets(c, p.agent_gw["id"]) if n == s.target_name(agent)]
     found["Runtime"] = [r["agentRuntimeName"] for r in all_items(c.ctl.list_agent_runtimes, maxResults=100)
                         if r["agentRuntimeName"] == s.runtime_name(agent)]          # every page: it asserts absence
-    try:
-        st = c.cfn.describe_stacks(StackName=s.stack_name(agent))["Stacks"][0]
-        found["stack"] = [f"{st['StackName']} {st['StackStatus']}"]
-    except ClientError as e:
-        if "does not exist" not in e.response["Error"]["Message"]:
-            raise
     return {k: v for k, v in found.items() if v}
 
 
@@ -541,7 +542,7 @@ def scene_quality(c: Clients, s: Settings, p: Platform, dev: DevTeam, inbox: Ale
 
     left = nothing_made(c, s, p, QUALITY)
     control = nothing_made(c, s, p, RELEASE)       # the same look finds what a passed review made
-    sees = sorted(control) == ["Runtime", "policies", "role", "stack", "target"]
+    sees = sorted(control) == list(MADE_BY_A_REVIEW)
     check(9, "that submission made no role, policy, target or Runtime", not left and sees,
           f"found {left or 'nothing'} for {QUALITY}; the same look finds {sorted(control) or 'nothing'} for {RELEASE}")
 
@@ -571,44 +572,63 @@ def scene_quality(c: Clients, s: Settings, p: Platform, dev: DevTeam, inbox: Ale
     check(12, "quality_agent answers with both tools", code == 200 and set(QUALITY_TOOLS) <= set(used) and has_data,
           f"{code} in {took:.1f}s; tools {used}; answer {text[:400]!r}")
     ids = sorted(set(re.findall(r"EMP-\d+", text)))
-    info("employee ID in quality_agent's answer", f"{ids} as the tool gave it (plan 2 masks it)" if ids else "none")
+    info("employee ID in quality_agent's answer",
+         f"{ids} as the tool gave it (the custom guardrail masks it when it is attached)" if ids else "none")
 
 
-def observe_leftovers(c: Clients, s: Settings, agent: str) -> None:
-    """Observation B: what a deploy leaves for one agent beyond its stack, Runtime log groups and SSM value."""
-    project = s.project_name(agent)
+def observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None:
+    """Observation B: what a deploy leaves for one agent: its Runtime (ID, version, status), the workload identities
+    and log groups named after the Runtime, and its code packages in the inbox. It only observes: an error is one
+    more [INFO] line, and the checks' summary and exit code stay as they are."""
     try:
-        held = [f"{r['ResourceType']} {r.get('PhysicalResourceId', '')}" for page in
-                c.cfn.get_paginator("list_stack_resources").paginate(StackName=s.stack_name(agent))
-                for r in page["StackResourceSummaries"]]
-    except ClientError as e:
-        held = [error_of(e)]
-    info(f"stack {s.stack_name(agent)} holds", held)
-    wis = []
-    token = None
-    while True:
-        page = c.ctl.list_workload_identities(maxResults=20, **({"nextToken": token} if token else {}))
-        wis += [w["name"] for w in page.get("workloadIdentities", []) if project in w["name"]]
-        token = page.get("nextToken")
-        if not token:
-            break
-    info(f"workload identities named after {project}", wis or "none")
-    groups = [g["logGroupName"] for page in c.logs.get_paginator("describe_log_groups").paginate()
-              for g in page["logGroups"] if project in g["logGroupName"]]
-    info(f"log groups named after {project}", groups or "none")
-    repos = [r["repositoryName"] for page in c.session.client("ecr").get_paginator("describe_repositories").paginate()
-             for r in page["repositories"] if project.lower() in r["repositoryName"].lower()]
-    info(f"ECR repositories named after {project}", repos or "none")
-    try:
-        body = c.cfn.get_template(StackName=s.stack_name(agent))["TemplateBody"]
-        text = body if isinstance(body, str) else json.dumps(body)
-        assets = sorted(set(re.findall(r"[0-9a-f]{64}\.zip", text)))
-        info(f"CDK assets the stack names (kept on purpose, CDK bootstrap bucket)", assets or "none")
-    except ClientError as e:
-        info("CDK assets", error_of(e))
+        _observe_leftovers(c, s, p, agent)
+    except Exception as e:
+        info("observation B stopped", error_of(e))
+
+
+def _observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None:
+    name = s.runtime_name(agent)
+    runtime = next((r for r in all_items(c.ctl.list_agent_runtimes, maxResults=100) if r["agentRuntimeName"] == name),
+                   None)
+    info(f"Runtime {name}", f"{runtime['agentRuntimeId']} version {runtime['agentRuntimeVersion']} {runtime['status']}"
+         if runtime else "none")
+    wis = [w["name"] for w in all_items(c.ctl.list_workload_identities, maxResults=20) if name in w["name"]]
+    info(f"workload identities named after {name}", wis or "none")
+    groups = [g["logGroupName"] for page in c.logs.get_paginator("describe_log_groups").paginate(
+        logGroupNamePrefix=f"/aws/bedrock-agentcore/runtimes/{name}-") for g in page["logGroups"]]
+    info(f"log groups of {name}", groups or "none")
+    packages = [f"{o['Key']} ({o.get('Size', 0)} bytes)" for page in c.s3.get_paginator("list_object_versions").paginate(
+        Bucket=p.bucket, Prefix=f"{PACKAGES}{agent}/") for o in page.get("Versions", [])]
+    info(f"code packages of {agent} in the inbox", packages or "none")
 
 
 # ================================================================== main
+
+def no_review_running(sfn, machine_arn: str, say, sleep, clock, wait: float = RUNNING_WAIT,
+                      step: float = RUNNING_STEP) -> bool:
+    """Check 0: no review of the machine is RUNNING, so the cleanup that follows cannot race a review's steps. A review
+    still running is waited for: look, and while one runs, sleep `step` seconds and look again, up to `wait` seconds.
+    When none runs any more, say in one line how long it waited and for which executions, and return True. One still
+    running after `wait` fails the check (the [FAIL] line) and returns False.
+
+    The review make seed starts for the shared tool record is the usual one (it runs about 2 s). A review that starts
+    just after the last look, because its event had not arrived yet, is not seen by any wait. For the seed's review that
+    is harmless: it goes Read, Reviewable, Skipped and reads the shared tool record only, so it touches nothing the
+    cleanup or the checks touch."""
+    t0, waited = clock(), []
+    while True:
+        running = [e["name"] for e in sfn.list_executions(stateMachineArn=machine_arn, statusFilter="RUNNING")["executions"]]
+        if not running:
+            if waited:
+                say(f"waited {clock() - t0:.0f}s for the reviews still running to end: {waited}")
+            return True
+        waited += [name for name in running if name not in waited]
+        if clock() - t0 >= wait:
+            say(f"[FAIL] 0 no review is running: {running} still running. Cleaning up now would race its steps: "
+                "wait until it stops (Step Functions console), then start again")
+            return False
+        sleep(step)
+
 
 def main() -> int:
     global ACCOUNT
@@ -623,10 +643,7 @@ def main() -> int:
     if not (p.machine_arn and p.bucket and p.registry_id and p.agent_gw.get("id") and p.dev_role_arn):
         say("[FAIL] 0 the hub is deployed: run `make deploy seed` first")
         return 1
-    running = [e["name"] for e in c.sfn.list_executions(stateMachineArn=p.machine_arn, statusFilter="RUNNING")["executions"]]
-    if running:
-        say(f"[FAIL] 0 no review is running: {running} still running. Cleaning up now would race its steps: "
-            "wait until it stops (Step Functions console), then start again")
+    if not no_review_running(c.sfn, p.machine_arn, say, time.sleep, time.monotonic):
         return 1
     t0 = time.monotonic()
     known_state(c, s, p)
@@ -638,7 +655,7 @@ def main() -> int:
         scene_dev_tools(dev, s, p)
         scene_release(c, s, p, dev)
         scene_quality(c, s, p, dev, inbox)
-        observe_leftovers(c, s, QUALITY)
+        observe_leftovers(c, s, p, QUALITY)
     finally:
         inbox.close()
     failed = [f"{n} {name}" for n, name, ok in RESULTS if not ok]

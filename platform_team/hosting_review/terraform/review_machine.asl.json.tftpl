@@ -5,13 +5,21 @@
     "Read": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": { "FunctionName": "${fn_read}", "Payload.$": "$" },
+      "Comment": "Read gets the Registry's event, this execution and the state machine: it stops a review of a record whose earlier review still runs",
+      "Parameters": { "FunctionName": "${fn_read}", "Payload": { "event.$": "$", "execution.$": "$$.Execution.Id", "machine.$": "$$.StateMachine.Id" } },
       "OutputPath": "$.Payload",
       "TimeoutSeconds": 960,
       "Retry": [{ "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "MaxAttempts": 3, "BackoffRate": 2 }],
       "Catch": [{ "ErrorEquals": ["States.ALL"], "ResultPath": "$.error", "Assign": { "failedStep": "Read" }, "Next": "Notify" }],
-      "Next": "Scan"
+      "Next": "Reviewable"
     },
+    "Reviewable": {
+      "Type": "Choice",
+      "Comment": "Read gives {skip: <reason>} for a record the review does not host (not an AGENT record, or a harness): the review ends in Skipped, with no alert",
+      "Choices": [{ "Variable": "$.skip", "IsPresent": true, "Next": "Skipped" }],
+      "Default": "Scan"
+    },
+    "Skipped": { "Type": "Succeed", "Comment": "Nothing was reviewed or made; the output holds the reason (skip)" },
     "Scan": {
       "Type": "Task",
       "Resource": "arn:aws:states:::codebuild:startBuild.sync",
@@ -90,12 +98,13 @@
     "Notify": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sns:publish",
-      "Comment": "The alert: the subject and the message name the step that failed (failedStep, set by its Catch). The message is the review's state with failedStep added; it reads no field of the state by name, so a failed Read (no spec yet) is told too.",
+      "Comment": "The alert: the subject and the message name the step that failed (failedStep, set by its Catch). The message is the review's state with failedStep added; it reads no field of the state by name, so a failed Read (no spec yet) is told too. A publish that fails is tried again, three times at most (Retry), before the review ends without its alert.",
       "Parameters": {
         "TopicArn": "${topic_arn}",
         "Subject.$": "States.Format('Hosting review failed at {}', $failedStep)",
         "Message.$": "States.JsonToString(States.JsonMerge(States.StringToJson(States.Format('\\{\"failedStep\": \"{}\"\\}', $failedStep)), $, false))"
       },
+      "Retry": [{ "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2 }],
       "Next": "Failed"
     },
     "Failed": { "Type": "Fail", "Error": "ReviewFailed", "Cause": "A step of the hosting review failed; the notification holds the error" }

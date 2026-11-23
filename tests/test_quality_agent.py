@@ -1,5 +1,7 @@
 import json
 import pathlib
+import re
+import types
 
 import pytest
 
@@ -9,6 +11,9 @@ from platform_team.hosting_review import submission_check
 
 A = pathlib.Path("dev_team/quality_agent")
 VARIANT = "v1-vulnerable"
+BASE, LOOP = A / "agent.py", A / "variants/v2-loop/agent.py"
+START, END = "# --- demo incident: asks again until the result is confirmed ---", "# --- end of the demo incident ---"
+INCIDENT = "What is the result of inspection Q-1002?"
 
 
 def test_application_names_only_catalog_tools():
@@ -139,7 +144,7 @@ def test_each_run_starts_a_fresh_conversation(load_agent, monkeypatch):
     assert agent.run("two") == ("b", [])
 
 
-def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkeypatch):    # final review M-5
+def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkeypatch):
     agent = load_agent("quality_agent")
 
     def denied():
@@ -149,3 +154,85 @@ def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkey
     answer, used = agent.run("Did Q-1001 pass?")
     assert answer.startswith("ERROR: RuntimeError: User: arn:aws:sts::<ACCOUNT>:assumed-role/") and used == []
     assert "123456789012" not in answer and len(answer) < 400
+
+
+# ------------------------------------------------------------------ the incident version (v2-loop)
+
+def test_run_asks_once_through_ask_once(load_agent, monkeypatch):
+    agent = load_agent("quality_agent")
+    asked = []
+    monkeypatch.setattr(agent, "ask_once", lambda prompt: asked.append(prompt) or ("Q-1002 is PENDING", ["t"]))
+    assert agent.run(INCIDENT) == ("Q-1002 is PENDING", ["t"]) and asked == [INCIDENT]      # the base never asks again
+
+
+def test_the_loop_variant_differs_from_the_base_only_inside_the_marked_block():
+    """Removing the lines from the start marker to the end marker gives the base file, except for the one line that calls the block."""
+    base, loop = BASE.read_text().splitlines(), LOOP.read_text().splitlines()
+    assert START not in base and END not in base
+    assert loop.count(START) == 1 and loop.count(END) == 1 and loop.index(START) < loop.index(END)
+    start, end = loop.index(START), loop.index(END)
+    [called] = re.findall(r"^def (\w+)\(", "\n".join(loop[start:end]), re.M)        # the block defines one function
+    outside = loop[:start] + loop[end + 1:]
+    assert len(outside) == len(base)
+    [(was, now)] = [(b, v) for b, v in zip(base, outside) if b != v]
+    assert "ask_once(prompt)" in was and now == was.replace("ask_once(", called + "(")
+
+
+def test_the_incident_question_reads_a_case_whose_result_is_pending():
+    from platform_team.sample_tools.tool_data import INSPECTIONS
+    assert "Q-1002" in INCIDENT and INSPECTIONS["Q-1002"]["result"] == "PENDING"
+
+
+def test_the_loop_asks_again_until_the_result_is_no_longer_pending(load_variant, monkeypatch, capsys):
+    agent = load_variant("quality_agent", "v2-loop")
+    monkeypatch.delenv("RETRY_SECONDS", raising=False)
+    answers = iter([("Q-1002 is PENDING", ["t"]), ("Q-1002 is PENDING", ["t"]), ("Q-1002 passed", ["t"])])
+    asked = []
+    monkeypatch.setattr(agent, "ask_once", lambda prompt: asked.append(prompt) or next(answers))
+    assert agent.run("What is the result of inspection Q-1002?") == ("Q-1002 passed", ["t"])
+    assert asked == [INCIDENT] * 3                                         # the same question from the start each time
+    assert capsys.readouterr().out.splitlines() == ["asking again (1)", "asking again (2)"]
+
+
+def test_the_loop_stops_at_its_time_limit(load_variant, monkeypatch):
+    agent = load_variant("quality_agent", "v2-loop")
+    monkeypatch.setenv("RETRY_SECONDS", "0")
+    asked = []
+
+    def pending(prompt):
+        assert len(asked) < 100, "the loop did not stop at its time limit"
+        asked.append(prompt)
+        return "still PENDING", []
+    monkeypatch.setattr(agent, "ask_once", pending)
+    assert agent.run("…") == ("still PENDING", [])
+    assert len(asked) == 1                                                 # a limit of 0 s leaves no time to ask again
+
+
+def test_the_loop_limit_is_600_seconds_unless_retry_seconds_says_otherwise(load_variant, monkeypatch):
+    agent = load_variant("quality_agent", "v2-loop")
+    monkeypatch.delenv("RETRY_SECONDS", raising=False)
+    now = [0.0]
+    monkeypatch.setattr(agent, "time", types.SimpleNamespace(monotonic=lambda: now[0]))
+
+    def slow_pending(prompt):                                              # each question takes 100 s
+        now[0] += 100
+        assert now[0] <= 10_000, "the loop did not stop at its time limit"
+        return "Q-1002 is PENDING", ["Quality___get_inspection_data"]
+    monkeypatch.setattr(agent, "ask_once", slow_pending)
+    agent.run(INCIDENT)
+    assert now[0] == 600                                                   # asked until 600 s had passed, then stopped
+    now[0] = 0.0
+    monkeypatch.setenv("RETRY_SECONDS", "250")
+    agent.run(INCIDENT)
+    assert now[0] == 300
+
+
+def test_the_loop_variant_is_submitted_with_the_base_requirements(tmp_path):
+    """The incident version passes the scan's layout and line rules: only its agent.py differs from the base."""
+    (tmp_path / "agent.zip").write_bytes(bundle(A, "v2-loop"))
+    out = tmp_path / "unpacked"
+    submission_check.unpack(tmp_path / "agent.zip", out)
+    assert submission_check.check_layout(out) == [] and submission_check.check_requirements(out) == []
+    assert sorted(p.name for p in out.iterdir()) == ["agent.py", "hub_tools.py", "main.py", "requirements.txt"]
+    assert (out / "requirements.txt").read_bytes() == (A / "requirements.txt").read_bytes()
+    assert (out / "agent.py").read_bytes() == LOOP.read_bytes()

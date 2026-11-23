@@ -1,15 +1,23 @@
-"""The calls of reject and of the cleanup, checked against the AWS service models on this machine. The clients are
-real boto3 clients, each wrapped in a botocore Stubber. So every operation name and parameter is validated against
-the model, and every answer against the operation's output shape; a wrong parameter name fails here even though the
-fakes would accept it. No network and no credentials: the clients get dummy keys and a region."""
+"""The calls of reject, of the cleanup, of the review's steps, of the deploy build and of stopping an agent, checked
+against the AWS service models on this machine. The clients are real boto3 clients, each wrapped in a botocore Stubber. So every
+operation name and parameter is validated against the model, and every answer against the operation's output shape;
+a wrong parameter name fails here even though the fakes would accept it. No network and no credentials: the clients get dummy keys and a region."""
 import datetime
+import io
 import json
+import time
+import zipfile
 
 import boto3
 import pytest
-from botocore.stub import Stubber
+from botocore.exceptions import ClientError
+from botocore.response import StreamingBody
+from botocore.stub import ANY, Stubber
 
-from platform_team.hosting_review import agent_cleanup, reject_agent, review_steps
+from platform_team.agent_stop import stop_agent
+from platform_team.company_policy import policy_rollout
+from platform_team.company_policy.policy_engine import ensure_policy, set_mode
+from platform_team.hosting_review import agent_cleanup, deploy_build, reject_agent, review_steps
 from platform_team.shared_code.aws_helpers import Clients
 from platform_team.shared_code.config import Settings
 from platform_team.shared_code.hub_state import Platform
@@ -18,11 +26,14 @@ from tests.fakes import ENV
 ACCOUNT, REGION, NOW = "123456789012", "us-west-2", datetime.datetime(2026, 11, 22)
 ENGINE, GW, REG, REC, TID = "hub_pe-abcdefghij", "hub-agents-abcdefghij", "abcdef123456", "rec123456789", "Tgt1234567"
 S, AGENT = Settings(), "quality_agent"
-ROLE, STACK, RUNTIME = S.agent_role(AGENT), S.stack_name(AGENT), S.runtime_name(AGENT)
+ROLE, RUNTIME = S.agent_role(AGENT), S.runtime_name(AGENT)
 RUNTIME_ID = f"{RUNTIME}-Ab12Cd34Ef"
+RUNTIME_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/{RUNTIME_ID}"
 LOG, PARAM = f"/aws/bedrock-agentcore/runtimes/{RUNTIME_ID}-DEFAULT", S.ssm("agents", AGENT, "runtime_arn")
-P = Platform(account=ACCOUNT, agent_gw={"id": GW, "arn": "a", "url": "u"}, engine_id=ENGINE, registry_id=REG)
-RUNTIME_TYPE = "AWS::BedrockAgentCore::Runtime"
+BUCKET = S.bucket(ACCOUNT)
+PACKAGE = S.package_key(AGENT, "3HL4kqtJlcpXroDTDmJ.rmSpXd3dIbrH")
+P = Platform(account=ACCOUNT, agent_gw={"id": GW, "arn": "a", "url": "u"}, engine_id=ENGINE, registry_id=REG,
+             bucket=BUCKET)
 
 
 @pytest.fixture
@@ -34,7 +45,7 @@ def aws(monkeypatch, tmp_path):
     monkeypatch.setattr("time.sleep", lambda seconds: None)                 # a poll answered DELETE_IN_PROGRESS
     c = Clients(boto3.Session(region_name=REGION, aws_access_key_id="test-access-key",
                               aws_secret_access_key="example"))
-    stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "cfn", "logs", "iam", "ssm", "reg", "sfn")}
+    stubs = {name: Stubber(getattr(c, name)) for name in ("ctl", "logs", "iam", "ssm", "reg", "sfn", "s3", "data")}
     for st in stubs.values():
         st.activate()
     yield c, stubs
@@ -64,29 +75,75 @@ def _role():
                                     "PermissionsBoundaryArn": f"arn:aws:iam::{ACCOUNT}:policy/{S.agent_boundary}"}}
 
 
-def _runtime_resource(**changes):
-    return {"LogicalResourceId": "AgentRuntime", "PhysicalResourceId": RUNTIME_ID, "ResourceType": RUNTIME_TYPE,
-            "LastUpdatedTimestamp": NOW, "ResourceStatus": "CREATE_COMPLETE", **changes}
+def _listed_runtime(status="READY", version="1"):
+    """One item of ListAgentRuntimes' answer: this agent's Runtime."""
+    return {"agentRuntimeArn": RUNTIME_ARN, "agentRuntimeId": RUNTIME_ID, "agentRuntimeVersion": version,
+            "agentRuntimeName": RUNTIME, "description": "hosted agent", "lastUpdatedAt": NOW, "status": status}
+
+
+def _runtime(status="READY", version="1", role_arn=f"arn:aws:iam::{ACCOUNT}:role/{ROLE}"):
+    """GetAgentRuntime's answer for this agent's Runtime."""
+    return {**{k: v for k, v in _listed_runtime(status, version).items() if k != "description"}, "createdAt": NOW,
+            "roleArn": role_arn, "lifecycleConfiguration": {"idleRuntimeSessionTimeout": 900, "maxLifetime": 28800}}
+
+
+HARNESS, HARNESS_AGENT = S.harness_name("spec_assistant"), "spec_assistant"
+HARNESS_ID = f"{HARNESS}-Ab12Cd34Ef"
+HARNESS_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:harness/{HARNESS_ID}"
+HARNESS_ROLE = S.agent_role(HARNESS_AGENT)
+
+
+def _listed_harness(name=HARNESS, status="READY"):
+    """One item of ListHarnesses' answer."""
+    hid = f"{name}-Ab12Cd34Ef"
+    return {"harnessId": hid, "harnessName": name, "arn": f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:harness/{hid}",
+            "status": status, "createdAt": NOW, "updatedAt": NOW}
+
+
+def _harness(status="READY", role=HARNESS_ROLE):
+    """GetHarness's (and CreateHarness's) answer for spec_assistant's harness."""
+    return {"harness": {**_listed_harness(status=status), "executionRoleArn": f"arn:aws:iam::{ACCOUNT}:role/{role}",
+                        "model": {"bedrockModelConfig": {"modelId": S.model_id}}, "systemPrompt": [{"text": "x"}],
+                        "tools": [], "skills": [], "allowedTools": ["@hub_tools/Parts___get_part_spec"],
+                        "truncation": {"strategy": "sliding_window"}, "environment": {"agentCoreRuntimeEnvironment": {
+                            "agentRuntimeArn": f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/harness_abcdefghij-Ab12Cd34Ef",
+                            "agentRuntimeName": "harness_abcdefghij", "agentRuntimeId": "harness_abcdefghij-Ab12Cd34Ef",
+                            "lifecycleConfiguration": {"idleRuntimeSessionTimeout": 900, "maxLifetime": 28800},
+                            "networkConfiguration": {"networkMode": "PUBLIC"}}}}}
+
+
+def _find_runtime(stubs, status="READY"):
+    """Find this agent's Runtime by name (every page of ListAgentRuntimes) and read it (its roleArn)."""
+    other = {**_listed_runtime(), "agentRuntimeName": "other_team_runtime", "agentRuntimeId": "other_team_runtime-Zz98Yy76Xx",
+             "agentRuntimeArn": RUNTIME_ARN.replace(RUNTIME_ID, "other_team_runtime-Zz98Yy76Xx")}
+    stubs["ctl"].add_response("list_agent_runtimes", {"agentRuntimes": [other], "nextToken": "page-2"}, {"maxResults": 100})
+    stubs["ctl"].add_response("list_agent_runtimes", {"agentRuntimes": [_listed_runtime(status)]},
+                              {"maxResults": 100, "nextToken": "page-2"})
+    stubs["ctl"].add_response("get_agent_runtime", _runtime(status), {"agentRuntimeId": RUNTIME_ID})
+
+
+def _no_harness(stubs):
+    """No harness of the agent's name: ListHarnesses (every page) does not list one."""
+    stubs["ctl"].add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")]}, {"maxResults": 100})
 
 
 def _ownership_checks(stubs, role=True):
-    """check_agent: the role's boundary, managed policies and instance profiles; the stack's Runtime."""
-    iam, cfn = stubs["iam"], stubs["cfn"]
+    """check_agent: the role's boundary, managed policies and instance profiles; the Runtime's role; the harness's."""
+    iam = stubs["iam"]
     if role:
         iam.add_response("get_role", {"Role": _role()}, {"RoleName": ROLE})
         iam.add_response("list_attached_role_policies", {"AttachedPolicies": [], "IsTruncated": False}, {"RoleName": ROLE})
         iam.add_response("list_instance_profiles_for_role", {"InstanceProfiles": [], "IsTruncated": False}, {"RoleName": ROLE})
     else:
         iam.add_client_error("get_role", "NoSuchEntity", http_status_code=404, expected_params={"RoleName": ROLE})
-    cfn.add_response("describe_stacks", {"Stacks": [{"StackName": STACK, "CreationTime": NOW,
-                                                     "StackStatus": "CREATE_COMPLETE"}]}, {"StackName": STACK})
-    cfn.add_response("list_stack_resources", {"StackResourceSummaries": [_runtime_resource()]}, {"StackName": STACK})
+    _find_runtime(stubs)
+    _no_harness(stubs)
 
 
-def _removal(stubs, role=True):
-    """remove_agent after its checks: one of each kind the review makes."""
-    ctl, cfn, logs, iam, ssm = (stubs[k] for k in ("ctl", "cfn", "logs", "iam", "ssm"))
-    pol = _policy("entry_permit_quality_agent")
+def _removal(stubs, role=True, policy="entry_permit_quality_agent"):
+    """remove_agent after its checks: one of each kind the review makes (the policy `policy`)."""
+    ctl, logs, iam, ssm, s3 = (stubs[k] for k in ("ctl", "logs", "iam", "ssm", "s3"))
+    pol = _policy(policy)
     ctl.add_response("list_policies", {"policies": [pol]}, {"policyEngineId": ENGINE, "maxResults": 100})
     ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
     ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
@@ -99,15 +156,23 @@ def _removal(stubs, role=True):
                      {"gatewayIdentifier": GW, "targetId": TID})
     ctl.add_client_error("get_gateway_target", "ResourceNotFoundException", http_status_code=404,
                          expected_params={"gatewayIdentifier": GW, "targetId": TID})
-    stack = {"StackName": STACK, "CreationTime": NOW}
-    cfn.add_response("describe_stacks", {"Stacks": [{**stack, "StackStatus": "CREATE_COMPLETE"}]}, {"StackName": STACK})
-    cfn.add_response("delete_stack", {}, {"StackName": STACK})
-    cfn.add_response("describe_stacks", {"Stacks": [{**stack, "StackStatus": "DELETE_IN_PROGRESS"}]}, {"StackName": STACK})
-    cfn.add_client_error("describe_stacks", "ValidationError", f"Stack with id {STACK} does not exist",
-                         expected_params={"StackName": STACK})
+    _no_harness(stubs)                                                        # no harness of its name to delete
+    _find_runtime(stubs)                                                      # found and checked again
+    ctl.add_response("delete_agent_runtime", {"status": "DELETING", "agentRuntimeId": RUNTIME_ID}, {"agentRuntimeId": RUNTIME_ID})
+    ctl.add_response("get_agent_runtime", _runtime("DELETING"), {"agentRuntimeId": RUNTIME_ID})
+    ctl.add_client_error("get_agent_runtime", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"agentRuntimeId": RUNTIME_ID})
     logs.add_response("describe_log_groups", {"logGroups": [{"logGroupName": LOG}]},
                       {"logGroupNamePrefix": f"/aws/bedrock-agentcore/runtimes/{RUNTIME}-"})
     logs.add_response("delete_log_group", {}, {"logGroupName": LOG})
+    logs.add_response("describe_log_groups", {"logGroups": []},                   # the harness's Runtime's: none
+                      {"logGroupNamePrefix": f"/aws/bedrock-agentcore/runtimes/{S.harness_runtime_name(AGENT)}-"})
+    s3.add_response("list_object_versions", {
+        "Versions": [{"Key": PACKAGE, "VersionId": "version-1", "IsLatest": False, "Size": 3, "LastModified": NOW}],
+        "DeleteMarkers": [{"Key": PACKAGE, "VersionId": "marker-1", "IsLatest": True, "LastModified": NOW}],
+        "IsTruncated": False}, {"Bucket": BUCKET, "Prefix": f"packages/{AGENT}/"})
+    s3.add_response("delete_object", {}, {"Bucket": BUCKET, "Key": PACKAGE, "VersionId": "version-1"})
+    s3.add_response("delete_object", {}, {"Bucket": BUCKET, "Key": PACKAGE, "VersionId": "marker-1"})
     if role:
         iam.add_response("list_role_policies", {"PolicyNames": ["agent"], "IsTruncated": False}, {"RoleName": ROLE})
         iam.add_response("delete_role_policy", {}, {"RoleName": ROLE, "PolicyName": "agent"})
@@ -119,8 +184,8 @@ def _removal(stubs, role=True):
     ssm.add_response("delete_parameter", {}, {"Name": PARAM})
 
 
-REMOVED = ["policy entry_permit_quality_agent", "target QualityAgent", f"stack {STACK}", f"log group {LOG}",
-           f"role {ROLE}", f"parameter {PARAM}"]
+REMOVED = ["policy entry_permit_quality_agent", "target QualityAgent", f"Runtime {RUNTIME}", f"log group {LOG}",
+           f"package {PACKAGE}", f"role {ROLE}", f"parameter {PARAM}"]
 
 
 MACHINE = f"arn:aws:states:{REGION}:{ACCOUNT}:stateMachine:hub-review"
@@ -130,7 +195,7 @@ def test_reject_calls_match_the_service_models(aws):
     c, stubs = aws
     stubs["reg"].add_response("list_registry_records", {"registryRecords": [_record("PENDING_APPROVAL")]},
                               {"registryId": REG, "maxResults": 100})
-    other = f"arn:aws:states:{REGION}:{ACCOUNT}:execution:hub-review:other"          # final review M-3: is a review running?
+    other = f"arn:aws:states:{REGION}:{ACCOUNT}:execution:hub-review:other"          # is a review running?
     stubs["sfn"].add_response("list_executions", {"executions": [{
         "executionArn": other, "stateMachineArn": MACHINE, "name": "other", "status": "RUNNING", "startDate": NOW}]},
         {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
@@ -138,14 +203,17 @@ def test_reject_calls_match_the_service_models(aws):
         "executionArn": other, "stateMachineArn": MACHINE, "name": "other", "status": "RUNNING", "startDate": NOW,
         "input": json.dumps({"detail": {"registryId": REG, "registryRecordId": "rec999999999"}})}, {"executionArn": other})
     _ownership_checks(stubs)                                                 # reject checks before the status changes
+    stubs["ctl"].add_response("list_policies", {"policies": [_policy("review_permit_quality_agent")]},
+                              {"policyEngineId": ENGINE, "maxResults": 100})          # no entry permit: no version runs
     stubs["reg"].add_response("update_registry_record_status", {
         "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
         "status": "REJECTED", "statusReason": "why", "updatedAt": NOW},
         {"registryId": REG, "recordId": REC, "status": "REJECTED", "statusReason": "why"})
     _ownership_checks(stubs)                                                 # remove_agent checks again
-    _removal(stubs)
+    _removal(stubs, policy="review_permit_quality_agent")
     with_machine = Platform(**{**P.__dict__, "machine_arn": MACHINE})
-    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {"status": "REJECTED", "removed": REMOVED}
+    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
+        "status": "REJECTED", "removed": ["policy review_permit_quality_agent", *REMOVED[1:]]}
 
 
 def test_clean_agents_calls_match_the_service_models(aws, monkeypatch):
@@ -177,39 +245,141 @@ def _full_record(status, app=APPLICATION):
             "descriptors": {"custom": {"data": json.dumps(app)}}}
 
 
+EXECUTIONS = MACHINE.replace(":stateMachine:", ":execution:")
+READ_INPUT = {"event": {"detail": {"registryId": REG, "registryRecordId": REC}}, "execution": f"{EXECUTIONS}:this-one",
+              "machine": MACHINE}
+
+
+def _running(stubs, *reviews):
+    """The RUNNING reviews (name, record ID, start), most recent first as ListExecutions gives them, and each one's input."""
+    def item(name, start):
+        return {"executionArn": f"{EXECUTIONS}:{name}", "stateMachineArn": MACHINE, "name": name, "status": "RUNNING",
+                "startDate": start}
+    stubs["sfn"].add_response("list_executions", {"executions": [item(n, start) for n, _, start in reviews]},
+                              {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
+    for name, record, start in reviews:
+        stubs["sfn"].add_response("describe_execution", {
+            **item(name, start), "input": json.dumps({"detail": {"registryId": REG, "registryRecordId": record}})},
+            {"executionArn": f"{EXECUTIONS}:{name}"})
+
+
 def test_read_calls_match_the_service_model(aws):
-    """final review I-1: Read reads the record's name and type from GetRegistryRecord's answer."""
+    """Read reads the record's name and type from GetRegistryRecord's answer. Then it looks for an
+    earlier review of the record (ListExecutions, DescribeExecution): here only this one runs."""
     c, stubs = aws
     stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
-    out = review_steps.read({"detail": {"registryId": REG, "registryRecordId": REC}}, c, ENV)
+    _running(stubs, ("this-one", REC, NOW))
+    out = review_steps.read(READ_INPUT, c, ENV)
     assert out["spec"] == {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS} and out["record"] == AGENT
 
 
-def test_approve_calls_match_the_service_models(aws):
-    """final review I-2: Approve reads the record (its status too) before and after making the entry permit."""
+def test_read_stops_at_an_earlier_review_of_the_record_with_calls_the_model_accepts(aws):
     c, stubs = aws
-    reg, ctl = stubs["reg"], stubs["ctl"]
-    ctx = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
-           "spec": {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS},
-           "applicationDigest": review_steps.application_digest(APPLICATION)}
-    env = {**ENV, "ENGINE_ID": ENGINE}
-    pol = _policy("entry_permit_quality_agent")
-    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    _running(stubs, ("this-one", REC, NOW + datetime.timedelta(seconds=40)), ("other-record", "rec999999999", NOW),
+             ("older", REC, NOW))
+    with pytest.raises(RuntimeError, match="^a review of this record is already running: older$"):
+        review_steps.read(READ_INPUT, c, ENV)
+
+
+APPROVE_CTX = {"registryId": REG, "recordId": REC, "record": AGENT, "target": "QualityAgent",
+               "spec": {k: APPLICATION[k] for k in review_steps.REVIEWED_FIELDS},
+               "applicationDigest": review_steps.application_digest(APPLICATION),
+               "entryPermitBefore": False}                    # Grant saw no entry permit of the agent
+
+
+def _made_policy(ctl, name, definition, mode="ACTIVE"):
+    """ensure_policy for a policy that is not there yet: list, create, and the first look finds it ACTIVE."""
+    pol = _policy(name)
     ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
     ctl.add_response("create_policy", {**pol, "status": "CREATING"}, {
-        "policyEngineId": ENGINE, "name": pol["name"], "validationMode": "IGNORE_ALL_FINDINGS", "enforcementMode": "ACTIVE",
-        "definition": {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}}})
+        "policyEngineId": ENGINE, "name": name, "validationMode": "IGNORE_ALL_FINDINGS", "enforcementMode": mode,
+        "definition": definition})
     ctl.add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    return pol
+
+
+def _approval(reg):
     reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
     reg.add_response("update_registry_record_status", {
         "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
         "status": "APPROVED", "statusReason": "passed the hosting review", "updatedAt": NOW},
         {"registryId": REG, "recordId": REC, "status": "APPROVED", "statusReason": "passed the hosting review"})
-    out = review_steps.approve(ctx, c, env)
-    assert out["recordStatus"] == "APPROVED" and out["entryPolicy"] == pol["policyId"]
 
 
-RUNTIME_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:runtime/{RUNTIME_ID}"
+def test_approve_calls_match_the_service_models(aws):
+    """Approve reads the record (its status too) before and after making the entry permit.
+    Between the first read and the entry permit it reads the company policies' modes: none are deployed here."""
+    c, stubs = aws
+    reg, ctl = stubs["reg"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
+    pol = _made_policy(ctl, "entry_permit_quality_agent",
+                       {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
+    _approval(reg)
+    out = review_steps.approve(dict(APPROVE_CTX), c, env)
+    assert out["recordStatus"] == "APPROVED" and out["entryPolicy"] == pol["policyId"] and out["companyPolicies"] == {}
+
+
+def test_approve_with_a_company_policy_deployed_calls_match_the_service_models(aws):
+    """The path is passed as the approve role's policy names it: /<prefix>/policies, no trailing slash."""
+    c, stubs = aws
+    reg, ctl = stubs["reg"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    reg.add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": [
+        {"Name": "/hub/policies/guard_prompt", "Type": "String", "Value": "LOG_ONLY", "Version": 1}]},
+        {"Path": "/hub/policies"})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})   # not in another mode
+    _made_policy(ctl, "guard_prompt_quality_agent",
+                 {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", ENV["AGENT_GW_ARN"])}},
+                 mode="LOG_ONLY")
+    _made_policy(ctl, "entry_permit_quality_agent",
+                 {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
+    _approval(reg)
+    out = review_steps.approve(dict(APPROVE_CTX), c, env)
+    assert out["companyPolicies"] == {"guard_prompt": "LOG_ONLY"} and out["recordStatus"] == "APPROVED"
+
+
+AGENT_GW_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/{GW}"
+ROLLOUT_P = Platform(account=ACCOUNT, agent_gw={"id": GW, "arn": AGENT_GW_ARN, "url": "u"}, engine_id=ENGINE)
+
+
+def test_rollout_calls_match_the_service_models(aws):
+    """The mode first (PutParameter), then the hosted agents (SSM and the agent gateway's targets), then the policy."""
+    c, stubs = aws
+    ssm, ctl = stubs["ssm"], stubs["ctl"]
+    ssm.add_response("put_parameter", {"Version": 1, "Tier": "Standard"},
+                     {"Name": "/hub/policies/guard_prompt", "Value": "LOG_ONLY", "Type": "String", "Overwrite": True})
+    ssm.add_response("get_parameters_by_path", {"Parameters": [{"Name": PARAM, "Type": "String", "Value": RUNTIME_ARN}]},
+                     {"Path": "/hub/agents", "Recursive": True})
+    ctl.add_response("list_gateway_targets", {"items": [{"targetId": TID, "name": "QualityAgent", "status": "READY",
+                                                         "createdAt": NOW, "updatedAt": NOW}]},
+                     {"gatewayIdentifier": GW, "maxResults": 100})
+    ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
+    _made_policy(ctl, "guard_prompt_quality_agent",
+                 {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", AGENT_GW_ARN)}}, mode="LOG_ONLY")
+    out = policy_rollout.rollout(c, S, ROLLOUT_P, "guard_prompt", "log-only", say=lambda line: None)
+    assert out == {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {AGENT: "created"}}
+
+
+def test_remove_and_forget_calls_match_the_service_models(aws):
+    c, stubs = aws
+    ssm, ctl = stubs["ssm"], stubs["ctl"]
+    ssm.add_response("delete_parameter", {}, {"Name": "/hub/policies/guard_prompt"})
+    pol = _policy("guard_prompt_quality_agent")
+    ctl.add_response("list_policies", {"policies": [pol, _policy("entry_permit_quality_agent")]},
+                     {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    assert policy_rollout.remove(c, S, ROLLOUT_P, "guard_prompt", say=lambda line: None) == {
+        "policy": "guard_prompt", "agents": {AGENT: "removed"}}
+    ssm.add_response("get_parameters_by_path", {"Parameters": [
+        {"Name": "/hub/policies/guard_prompt", "Type": "String", "Value": "ACTIVE"}]}, {"Path": "/hub/policies"})
+    ssm.add_response("delete_parameter", {}, {"Name": "/hub/policies/guard_prompt"})
+    assert policy_rollout.forget(c, S) == ["/hub/policies/guard_prompt"]
 
 
 def _target(arn):
@@ -221,7 +391,7 @@ def _target(arn):
 
 
 def test_a_found_target_is_kept_only_when_it_points_to_this_runtime(aws):
-    """final review M-2: ensure_runtime_target reads the found target's Runtime from GetGatewayTarget's answer."""
+    """ensure_runtime_target reads the found target's Runtime from GetGatewayTarget's answer."""
     from platform_team.agent_gateway.gateway_targets import ensure_runtime_target
     c, stubs = aws
     ctl = stubs["ctl"]
@@ -237,14 +407,418 @@ def test_a_found_target_is_kept_only_when_it_points_to_this_runtime(aws):
         ensure_runtime_target(c, GW, "QualityAgent", RUNTIME_ARN)
 
 
-def test_a_stack_without_a_made_runtime_is_checked_by_its_template(aws):
+def test_removal_without_the_role_calls_match_the_service_models(aws):
     c, stubs = aws
-    stubs["iam"].add_client_error("get_role", "NoSuchEntity", http_status_code=404, expected_params={"RoleName": ROLE})
-    stubs["cfn"].add_response("describe_stacks", {"Stacks": [{"StackName": STACK, "CreationTime": NOW,
-                                                              "StackStatus": "ROLLBACK_COMPLETE"}]}, {"StackName": STACK})
-    resource = {k: v for k, v in _runtime_resource(ResourceStatus="DELETE_COMPLETE").items() if k != "PhysicalResourceId"}
-    stubs["cfn"].add_response("list_stack_resources", {"StackResourceSummaries": [resource]}, {"StackName": STACK})
-    template = {"Resources": {"AgentRuntime": {"Type": RUNTIME_TYPE, "Properties": {"AgentRuntimeName": RUNTIME}}}}
-    stubs["cfn"].add_response("get_template", {"TemplateBody": json.dumps(template)}, {"StackName": STACK})
+    _ownership_checks(stubs, role=False)
     _removal(stubs, role=False)
     assert agent_cleanup.remove_agent(c, S, P, AGENT) == [r for r in REMOVED if not r.startswith("role")]
+
+
+def test_a_runtime_under_another_role_is_refused_before_anything_is_deleted(aws):
+    c, stubs = aws
+    stubs["iam"].add_client_error("get_role", "NoSuchEntity", http_status_code=404, expected_params={"RoleName": ROLE})
+    stubs["ctl"].add_response("list_agent_runtimes", {"agentRuntimes": [_listed_runtime()]}, {"maxResults": 100})
+    other = f"arn:aws:iam::{ACCOUNT}:role/hub-agent-release_review-role"
+    stubs["ctl"].add_response("get_agent_runtime", _runtime(role_arn=other), {"agentRuntimeId": RUNTIME_ID})
+    with pytest.raises(agent_cleanup.CleanupFailed, match="it runs under role hub-agent-release_review-role, not") as e:
+        agent_cleanup.remove_agent(c, S, P, AGENT)
+    assert e.value.removed == []
+
+
+# ------------------------------------------------------------------ the deploy build
+
+DEPLOY_ENV = {"AGENT": AGENT, "PREFIX": "hub", "AWS_REGION": REGION, "ROLE_ARN": f"arn:aws:iam::{ACCOUNT}:role/{ROLE}",
+              "TOOL_GW_URL": f"https://{GW}.gateway.bedrock-agentcore.{REGION}.amazonaws.com/mcp",
+              "MODEL_ID": S.model_id, "BUCKET": BUCKET, "CODE_KEY": APPLICATION["code_key"],
+              "CODE_VERSION": APPLICATION["code_version"]}
+
+
+def _made(version, created):
+    """CreateAgentRuntime's or UpdateAgentRuntime's answer."""
+    return {"agentRuntimeArn": RUNTIME_ARN, "agentRuntimeId": RUNTIME_ID, "agentRuntimeVersion": version,
+            "createdAt": NOW, **({} if created else {"lastUpdatedAt": NOW}),
+            "workloadIdentityDetails": {"workloadIdentityArn": f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:"
+                                                               f"workload-identity-directory/default/workload-identity/{RUNTIME}-abcdefghij"},
+            "status": "CREATING" if created else "UPDATING"}
+
+
+def _ready_and_written(ctl, ssm, version, status):
+    ctl.add_response("get_agent_runtime", _runtime(status, version), {"agentRuntimeId": RUNTIME_ID})
+    ctl.add_response("get_agent_runtime", _runtime("READY", version), {"agentRuntimeId": RUNTIME_ID})
+    ssm.add_response("put_parameter", {"Version": int(version), "Tier": "Standard"},
+                     {"Name": PARAM, "Value": RUNTIME_ARN, "Type": "String", "Overwrite": True})
+
+
+def _submission() -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("main.py", "M = 1\n")
+        z.writestr("requirements.txt", "strands-agents==1.65.0  # the framework\n")
+        z.writestr("uv.toml", "[pip]\nindex-url = 'http://127.0.0.1:9/evil-simple'\n")
+    return buf.getvalue()
+
+
+def _get_submission(stubs, body: bytes):
+    stubs["s3"].add_response("get_object", {"Body": StreamingBody(io.BytesIO(body), len(body)), "ContentLength": len(body)},
+                             {"Bucket": BUCKET, "Key": DEPLOY_ENV["CODE_KEY"], "VersionId": DEPLOY_ENV["CODE_VERSION"]})
+
+
+def test_the_deploy_builds_calls_match_the_service_models(aws, monkeypatch, tmp_path, capsys):
+    """main(): read the submission, install (faked), upload the package, create the Runtime, wait, write the ARN."""
+    c, stubs = aws
+    monkeypatch.setattr(deploy_build.tempfile, "mkdtemp", lambda prefix: str(tmp_path))
+    installed = []
+
+    def install(cmd, cwd):
+        assert cmd == deploy_build.install_command(tmp_path / "requirements.txt", tmp_path / "site") and cwd == tmp_path
+        assert (tmp_path / "requirements.txt").read_text() == "strands-agents==1.65.0\n"     # the platform's own file
+        assert not (tmp_path / "submission" / "uv.toml").exists()
+        (tmp_path / "site" / "strands").mkdir(parents=True)
+        (tmp_path / "site" / "strands" / "__init__.py").write_text("S = 1\n")
+        installed.append(cmd)
+    monkeypatch.setattr(deploy_build, "run", install)
+    _get_submission(stubs, _submission())
+    stubs["s3"].add_response("put_object", {"ETag": '"abcdef"', "VersionId": "package-version-1"},
+                             {"Bucket": BUCKET, "Key": PACKAGE, "Body": ANY})
+    ctl = stubs["ctl"]
+    ctl.add_response("list_agent_runtimes", {"agentRuntimes": []}, {"maxResults": 100})
+    ctl.add_response("create_agent_runtime", _made("1", created=True),
+                     {"agentRuntimeName": RUNTIME, **deploy_build.runtime_config(DEPLOY_ENV, PACKAGE)})
+    _ready_and_written(ctl, stubs["ssm"], "1", "CREATING")
+    out = deploy_build.main(DEPLOY_ENV, c)
+    assert installed and out["created"] is True and out["runtimeArn"] == RUNTIME_ARN and out["version"] == "1"
+    with zipfile.ZipFile(tmp_path / "package.zip") as z:
+        assert z.namelist() == ["main.py", "strands/__init__.py"]
+    assert f"package uploaded: s3://{BUCKET}/{PACKAGE}" in capsys.readouterr().out
+
+
+def test_a_later_deploy_updates_the_runtime_and_its_calls_match_the_service_models(aws):
+    c, stubs = aws
+    ctl = stubs["ctl"]
+    ctl.add_response("list_agent_runtimes", {"agentRuntimes": [_listed_runtime(version="1")]}, {"maxResults": 100})
+    ctl.add_response("update_agent_runtime", _made("2", created=False),
+                     {"agentRuntimeId": RUNTIME_ID, **deploy_build.runtime_config(DEPLOY_ENV, PACKAGE)})
+    ctl.add_response("get_agent_runtime", _runtime("READY", "1"), {"agentRuntimeId": RUNTIME_ID})   # not the new version yet
+    _ready_and_written(ctl, stubs["ssm"], "2", "UPDATING")
+    out = deploy_build.deploy(c, DEPLOY_ENV, PACKAGE)
+    assert (out["created"], out["version"], out["runtimeId"]) == (False, "2", RUNTIME_ID)
+
+
+def test_a_submission_the_rules_refuse_is_not_installed(aws, monkeypatch, tmp_path):
+    c, stubs = aws
+    monkeypatch.setattr(deploy_build.tempfile, "mkdtemp", lambda prefix: str(tmp_path))
+    monkeypatch.setattr(deploy_build, "run", lambda cmd, cwd: pytest.fail("installed a refused submission"))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("main.py", "M = 1\n")
+        z.writestr("requirements.txt", "--index-url http://127.0.0.1:9/evil-simple\nstrands-agents\n")
+    _get_submission(stubs, buf.getvalue())
+    with pytest.raises(SystemExit, match="deploy refused: requirements.txt: pip options are not allowed"):
+        deploy_build.main(DEPLOY_ENV, c)
+
+
+def test_set_mode_calls_match_the_service_models(aws):
+    c, stubs = aws
+    pol = _policy("guard_prompt_quality_agent")
+    stubs["ctl"].add_response("update_policy", {**pol, "status": "UPDATING"},
+                              {"policyEngineId": ENGINE, "policyId": pol["policyId"], "enforcementMode": "LOG_ONLY"})
+    stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    set_mode(c, ENGINE, pol["policyId"], "LOG_ONLY")
+
+
+def test_a_policy_in_another_mode_is_listed_and_switched_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    pol = _policy("guard_prompt_quality_agent")
+    stubs["ctl"].add_response("list_policies", {"policies": [{**pol, "enforcementMode": "LOG_ONLY"}]},
+                              {"policyEngineId": ENGINE, "maxResults": 100})
+    stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    stubs["ctl"].add_response("update_policy", {**pol, "status": "UPDATING"},
+                              {"policyEngineId": ENGINE, "policyId": pol["policyId"], "enforcementMode": "ACTIVE"})
+    stubs["ctl"].add_response("get_policy", pol, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    assert ensure_policy(c, ENGINE, pol["name"], "forbid ...;", guardrail=True, mode="ACTIVE") == pol["policyId"]
+
+
+# ------------------------------------------------------------------ the review of a new version
+
+def test_grant_removes_a_dropped_tools_permit_with_calls_the_models_accept(aws):
+    """The permits of this agent for tools the application no longer names go first; then the named ones are made."""
+    c, stubs = aws
+    iam, ctl = stubs["iam"], stubs["ctl"]
+    env = {**ENV, "ENGINE_ID": ENGINE}
+    iam.add_response("get_role", {"Role": _role()}, {"RoleName": ROLE})
+    iam.add_response("put_role_policy", {}, {"RoleName": ROLE, "PolicyName": "agent", "PolicyDocument": ANY})
+    kept, dropped, other = (_policy(n) for n in ("tool_quality_agent_Parts_get_part_spec",
+                                                  "tool_quality_agent_Parts_get_test_result", "tool_quality_Parts_get_test_result"))
+    entry = _policy("entry_permit_quality_agent")                       # an approved version runs
+    ctl.add_response("list_policies", {"policies": [kept, dropped, other, entry]},
+                     {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("delete_policy", {**dropped, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": dropped["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": dropped["policyId"]})
+    ctl.add_response("list_policies", {"policies": [kept, other]}, {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("get_policy", kept, {"policyEngineId": ENGINE, "policyId": kept["policyId"]})
+    out = review_steps.grant(dict(APPROVE_CTX), c, env)
+    assert out["removedToolPolicies"] == ["tool_quality_agent_Parts_get_test_result"]
+    assert out["toolPolicies"] == [kept["policyId"]] and out["roleArn"] == _role()["Arn"]
+    assert out["entryPermitBefore"] is True                            # from the same list: no call of its own
+
+
+def _taken_back(ctl, pol):
+    """Approve's take-back: find the entry permit by name, delete it, wait until it is gone."""
+    ctl.add_response("list_policies", {"policies": [pol]}, {"policyEngineId": ENGINE, "maxResults": 100})
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+
+
+def _up_to_the_entry_permit(stubs):
+    """Approve up to the entry permit: the record, no company policy deployed, the permit made."""
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    stubs["ssm"].add_response("get_parameters_by_path", {"Parameters": []}, {"Path": "/hub/policies"})
+    return _made_policy(stubs["ctl"], "entry_permit_quality_agent",
+                        {"cedar": {"statement": review_steps.cedar.entry_permit("QualityAgent", ENV["AGENT_GW_ARN"])}})
+
+
+def test_approve_takes_back_the_entry_permit_it_made_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    pol = _up_to_the_entry_permit(stubs)
+    stubs["reg"].add_response("get_registry_record", _full_record("DRAFT"), {"registryId": REG, "recordId": REC})  # edited
+    _taken_back(stubs["ctl"], pol)
+    with pytest.raises(RuntimeError, match="record quality_agent is DRAFT, not PENDING_APPROVAL"):
+        review_steps.approve(dict(APPROVE_CTX), c, {**ENV, "ENGINE_ID": ENGINE})
+
+
+def test_a_failed_status_update_takes_back_the_entry_permit_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    pol = _up_to_the_entry_permit(stubs)
+    stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
+    # botocore retries a throttle itself; an error it does not retry stands for one that outlasted those retries
+    stubs["reg"].add_client_error("update_registry_record_status", "AccessDeniedException", http_status_code=403,
+                                  expected_params={"registryId": REG, "recordId": REC, "status": "APPROVED",
+                                                   "statusReason": "passed the hosting review"})
+    _taken_back(stubs["ctl"], pol)
+    with pytest.raises(ClientError, match="AccessDeniedException"):
+        review_steps.approve(dict(APPROVE_CTX), c, {**ENV, "ENGINE_ID": ENGINE})
+
+
+def test_rejecting_a_new_version_calls_match_the_service_models(aws):
+    c, stubs = aws
+    stubs["reg"].add_response("list_registry_records", {"registryRecords": [_record("PENDING_APPROVAL")]},
+                              {"registryId": REG, "maxResults": 100})
+    stubs["sfn"].add_response("list_executions", {"executions": []}, {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
+    _ownership_checks(stubs)
+    stubs["ctl"].add_response("list_policies", {"policies": [_policy("entry_permit_quality_agent"),
+                                                             _policy("tool_quality_agent_Parts_get_part_spec")]},
+                              {"policyEngineId": ENGINE, "maxResults": 100})
+    stubs["reg"].add_response("update_registry_record_status", {
+        "registryArn": _record("x")["registryArn"], "recordArn": _record("x")["recordArn"], "recordId": REC,
+        "status": "REJECTED", "statusReason": "why", "updatedAt": NOW},
+        {"registryId": REG, "recordId": REC, "status": "REJECTED", "statusReason": "why"})
+    with_machine = Platform(**{**P.__dict__, "machine_arn": MACHINE})
+    assert reject_agent.reject(c, S, with_machine, AGENT, "why") == {
+        "status": "REJECTED", "removed": [], "note": "entry_permit_quality_agent is there: an approved version is running, "
+                                                     "or an approval that stopped left it; nothing was removed"}
+
+
+# ------------------------------------------------------------------ stopping one agent and resuming it
+
+SESSION, OLD_SESSION = "hub-session-" + "a" * 32, "0f8e7d6c-5b4a-4321-8fed-cba987654321"     # 44 and 36 characters
+
+
+def test_stop_calls_match_the_service_models(aws):
+    """The target, the Runtime ARN, the stop policy, then the sessions from the log streams (a prefix and no
+    orderBy, the only combination the model allows with a prefix), each stopped with qualifier DEFAULT."""
+    c, stubs = aws
+    ctl, ssm, logs, data = (stubs[k] for k in ("ctl", "ssm", "logs", "data"))
+    ctl.add_response("list_gateway_targets", {"items": [{"targetId": TID, "name": "QualityAgent", "status": "READY",
+                                                         "createdAt": NOW, "updatedAt": NOW}]},
+                     {"gatewayIdentifier": GW, "maxResults": 100})
+    ssm.add_response("get_parameter", {"Parameter": {"Name": PARAM, "Type": "String", "Value": RUNTIME_ARN}}, {"Name": PARAM})
+    _made_policy(ctl, "stop_agent_quality_agent", {"cedar": {"statement": review_steps.cedar.stop_agent(
+        "QualityAgent", AGENT_GW_ARN, ACCOUNT, "hub-review-testcall-role")}})
+    now = int(time.time() * 1000)
+    logs.add_response("describe_log_streams", {"logStreams": [
+        {"logStreamName": f"runtime-logs-{OLD_SESSION}", "creationTime": now - 3_600_000, "lastEventTimestamp": now - 60_000,
+         "lastIngestionTime": now - 60_000, "arn": f"arn:aws:logs:{REGION}:{ACCOUNT}:log-group:{LOG}:log-stream:x", "storedBytes": 0},
+        {"logStreamName": f"runtime-logs-{SESSION}", "creationTime": now - 30_000}]},
+        {"logGroupName": LOG, "logStreamNamePrefix": "runtime-logs-"})
+    data.add_response("stop_runtime_session", {"runtimeSessionId": SESSION, "statusCode": 200},
+                      {"runtimeSessionId": SESSION, "agentRuntimeArn": RUNTIME_ARN, "qualifier": "DEFAULT"})
+    data.add_client_error("stop_runtime_session", "ResourceNotFoundException",       # AWS's answer on 2026-11-22
+                          f"Session {OLD_SESSION} not found or has been terminated", http_status_code=404,
+                          expected_params={"runtimeSessionId": OLD_SESSION, "agentRuntimeArn": RUNTIME_ARN, "qualifier": "DEFAULT"})
+    out = stop_agent.stop(c, S, ROLLOUT_P, AGENT, say=lambda line: None)
+    assert out == {"agent": AGENT, "policy": "stop_agent_quality_agent", "stopped": [SESSION], "ended": [OLD_SESSION],
+                   "failed": {}}
+
+
+def test_stopped_and_resume_calls_match_the_service_models(aws):
+    """A ListPolicies item may leave enforcementMode out (it is optional in the model, which says it defaults to
+    ACTIVE): such a stop policy decides, so the agent is stopped."""
+    c, stubs = aws
+    ctl = stubs["ctl"]
+    pol = _policy("stop_agent_quality_agent")
+    assert "enforcementMode" not in pol
+    for _ in range(2):
+        ctl.add_response("list_policies", {"policies": [_policy("entry_permit_quality_agent"), pol]},
+                         {"policyEngineId": ENGINE, "maxResults": 100})
+    assert stop_agent.stopped(c, ROLLOUT_P, AGENT)
+    ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    assert stop_agent.resume(c, S, ROLLOUT_P, AGENT) == {"agent": AGENT, "resumed": True}
+
+
+def test_a_runtime_without_its_log_group_has_no_recent_sessions_with_a_call_the_model_accepts(aws):
+    c, stubs = aws
+    stubs["logs"].add_client_error("describe_log_streams", "ResourceNotFoundException", "The specified log group does not exist.",
+                                   http_status_code=400, expected_params={"logGroupName": LOG, "logStreamNamePrefix": "runtime-logs-"})
+    assert stop_agent.recent_sessions(c, S, RUNTIME_ARN) == []
+
+
+def test_the_session_header_is_the_one_the_service_model_names_for_the_session_id(aws):
+    c, _ = aws
+    model = c.data.meta.service_model.operation_model("StopRuntimeSession").input_shape.members["runtimeSessionId"]
+    assert model.serialization == {"location": "header", "name": stop_agent.SESSION_HEADER}
+    assert (model.metadata["min"], model.metadata["max"]) == stop_agent.SESSION_ID_LENGTH
+
+
+# ------------------------------------------------------------------ the custom guardrail
+
+GUARDRAIL_ID = "abcdefghij12"
+USAGE = {"topicPolicyUnits": 0, "contentPolicyUnits": 0, "wordPolicyUnits": 1, "sensitiveInformationPolicyUnits": 1,
+         "sensitiveInformationPolicyFreeUnits": 0, "contextualGroundingPolicyUnits": 0}
+
+
+@pytest.fixture
+def runtime(aws, monkeypatch):
+    """The interceptor's own bedrock-runtime client, made by its first use, answered by a Stubber."""
+    from platform_team.custom_guardrail import interceptor_lambda
+    monkeypatch.setenv("GUARDRAIL_ID", GUARDRAIL_ID)
+    monkeypatch.setenv("GUARDRAIL_VERSION", "1")
+    monkeypatch.setattr(interceptor_lambda, "_runtime", None)
+    c, _ = aws
+    monkeypatch.setattr("boto3.client", lambda service: c.session.client(service))       # the dummy keys and Region
+    st = Stubber(interceptor_lambda._client())
+    st.activate()
+    yield interceptor_lambda.guard, st
+    st.assert_no_pending_responses()
+    st.deactivate()
+
+
+def _applied(st, text, source, answer):
+    st.add_response("apply_guardrail", {"usage": USAGE, **answer}, {
+        "guardrailIdentifier": GUARDRAIL_ID, "guardrailVersion": "1", "source": source,
+        "content": [{"text": {"text": text}}]})
+
+
+def test_the_interceptors_guard_calls_match_the_service_model(runtime):
+    guard, st = runtime
+    banned = "Summarise the schedule of Project Falcon for part P-100."
+    _applied(st, banned, "INPUT", {"action": "GUARDRAIL_INTERVENED", "outputs": [{"text": "Blocked by the company guardrail."}],
+                                   "assessments": [{"wordPolicy": {"customWords": [
+                                       {"match": "Project Falcon", "action": "BLOCKED", "detected": True}],
+                                       "managedWordLists": []}}]})
+    assert guard(banned, "INPUT") == (True, banned)
+    with_id = "My employee id is EMP-123456."
+    _applied(st, with_id, "OUTPUT", {"action": "GUARDRAIL_INTERVENED", "outputs": [{"text": "My employee id is {employee_id}."}],
+                                     "assessments": [{"sensitiveInformationPolicy": {"regexes": [
+                                         {"name": "employee_id", "match": "EMP-123456", "regex": "EMP-\\d{6}",
+                                          "action": "ANONYMIZED", "detected": True}], "piiEntities": []}}]})
+    assert guard(with_id, "OUTPUT") == (False, "My employee id is {employee_id}.")
+    plain = "What is the spec of part P-100?"
+    _applied(st, plain, "INPUT", {"action": "NONE", "outputs": [], "assessments": [{}]})
+    assert guard(plain, "INPUT") == (False, plain)
+    assert guard("", "INPUT") == (False, "")                                   # nothing to check: no call
+
+
+def test_the_cleanup_check_lists_the_bedrock_guardrails_on_every_page(aws, monkeypatch):
+    from e2e_checks import check_cleanup
+    c, _ = aws
+    st = Stubber(c.bedrock)
+    st.activate()
+
+    def summary(name):
+        return {"id": f"{name[:4]}abcdefghij", "arn": f"arn:aws:bedrock:{REGION}:{ACCOUNT}:guardrail/abcdefghij",
+                "status": "READY", "name": name, "version": "DRAFT", "createdAt": NOW, "updatedAt": NOW}
+    st.add_response("list_guardrails", {"guardrails": [summary("other-team-guardrail")], "nextToken": "page-2"}, {})
+    st.add_response("list_guardrails", {"guardrails": [summary("hub-company-guardrail")]}, {"nextToken": "page-2"})
+    names = check_cleanup.kinds(S, c)["Bedrock guardrails"]()
+    assert [n for n in names if check_cleanup.hub_name(S, n)] == ["hub-company-guardrail"]
+    st.assert_no_pending_responses()
+    st.deactivate()
+
+
+# ------------------------------------------------------------------ a managed harness (preload_agents, the cleanup)
+
+TOOL_GW_ARN = f"arn:aws:bedrock-agentcore:{REGION}:{ACCOUNT}:gateway/hub-tools-abcdefghij"
+
+
+def _harness_found(ctl, role=HARNESS_ROLE):
+    """The cleanup finds the agent's harness by name (every page of ListHarnesses) and reads it (its role)."""
+    ctl.add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")], "nextToken": "page-2"},
+                     {"maxResults": 100})
+    ctl.add_response("list_harnesses", {"harnesses": [_listed_harness()]}, {"maxResults": 100, "nextToken": "page-2"})
+    ctl.add_response("get_harness", _harness(role=role), {"harnessId": HARNESS_ID})
+
+
+def test_a_harness_is_made_and_waited_on_with_calls_the_model_accepts(aws):
+    from platform_team.hosting_review import preload_agents
+    c, stubs = aws
+    ctl, role_arn = stubs["ctl"], f"arn:aws:iam::{ACCOUNT}:role/{HARNESS_ROLE}"
+    ctl.add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")]}, {"maxResults": 100})
+    ctl.add_response("create_harness", _harness("CREATING"), {
+        "harnessName": HARNESS, "executionRoleArn": role_arn, "model": {"bedrockModelConfig": {"modelId": S.model_id}},
+        "systemPrompt": [{"text": "Answer from the tools."}],
+        "tools": [{"type": "agentcore_gateway", "name": "hub_tools", "config": {"agentCoreGateway": {
+            "gatewayArn": TOOL_GW_ARN, "outboundAuth": {"awsIam": {}}}}}],
+        "allowedTools": ["@hub_tools/Parts___get_part_spec"], "memory": {"disabled": {}}})
+    ctl.add_response("get_harness", _harness("CREATING"), {"harnessId": HARNESS_ID})
+    ctl.add_response("get_harness", _harness("READY"), {"harnessId": HARNESS_ID})
+    app = {"name": HARNESS_AGENT, "tools": ["Parts___get_part_spec"], "system_prompt": "Answer from the tools."}
+    platform = Platform(**{**P.__dict__, "tool_gw": {"id": "hub-tools-abcdefghij", "arn": TOOL_GW_ARN, "url": "u"}})
+    assert preload_agents.ensure_harness(c, S, platform, app, role_arn) == HARNESS_ARN
+
+
+def test_a_harness_is_checked_and_deleted_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    ctl = stubs["ctl"]
+    _harness_found(ctl)
+    assert agent_cleanup.check_harness(c, S, HARNESS_AGENT)["harnessId"] == HARNESS_ID
+    _harness_found(ctl)                                                       # checked again right before the delete
+    ctl.add_response("delete_harness", _harness("DELETING"), {"harnessId": HARNESS_ID})
+    ctl.add_response("get_harness", _harness("DELETING"), {"harnessId": HARNESS_ID})
+    ctl.add_client_error("get_harness", "ResourceNotFoundException", http_status_code=404,
+                         expected_params={"harnessId": HARNESS_ID})
+    assert agent_cleanup._remove_harness(c, S, HARNESS_AGENT) == [f"harness {HARNESS}"]
+
+
+def test_a_harness_under_another_role_is_refused_with_calls_the_models_accept(aws):
+    c, stubs = aws
+    _harness_found(stubs["ctl"], role="hub-agent-release_review-role")
+    with pytest.raises(agent_cleanup.NotOwned, match=f"harness {HARNESS} is not this hub's: it runs under role "
+                                                     f"hub-agent-release_review-role, not {HARNESS_ROLE}"):
+        agent_cleanup.check_harness(c, S, HARNESS_AGENT)
+
+
+def test_ask_harness_sends_a_request_the_service_model_accepts():
+    """InvokeHarness answers an event stream, which a Stubber cannot give; the request is checked against the model."""
+    import botocore.session
+    from botocore.validate import validate_parameters
+    from platform_team.hosting_review.preload_agents import ask_harness
+    from tests.fakes import FakeClients
+    c = FakeClients()
+    ask_harness(c, HARNESS_ARN, "What is the spec of part P-100?")
+    model = botocore.session.get_session().get_service_model("bedrock-agentcore").operation_model("InvokeHarness")
+    validate_parameters(c.harness_calls[0], model.input_shape)              # raises ParamValidationError otherwise
+    assert model.has_event_stream_output
+
+
+def test_the_cleanup_check_lists_the_harnesses_on_every_page(aws):
+    from e2e_checks import check_cleanup
+    c, stubs = aws
+    stubs["ctl"].add_response("list_harnesses", {"harnesses": [_listed_harness("other_team_harness")],
+                                                 "nextToken": "page-2"}, {"maxResults": 100})
+    stubs["ctl"].add_response("list_harnesses", {"harnesses": [_listed_harness()]}, {"maxResults": 100, "nextToken": "page-2"})
+    names = check_cleanup.kinds(S, c)["harnesses"]()
+    assert [n for n in names if check_cleanup.hub_name(S, n)] == [HARNESS]

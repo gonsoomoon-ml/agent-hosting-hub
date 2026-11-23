@@ -1,0 +1,93 @@
+"""Gateway interceptor on the agent gateway: calls the custom guardrail (Amazon Bedrock Guardrails, ApplyGuardrail)
+on every request and every answer. A blocked text ends the call with the interceptor's own response.
+A masked text goes on in its masked form. To use the company's own guardrail, change guard().
+
+A request is checked by its prompt when its body is a JSON object with a text "prompt". Any other body (not base64,
+not JSON, not an object, no prompt) is checked whole, as text, and goes on whole in its masked form. An answer is
+always checked whole. The log line says only where, whether blocked and whether masked: never the text.
+"""
+import base64
+import json
+import os
+
+import boto3
+
+MESSAGE = "Blocked by the company guardrail (interceptor)."
+V = "interceptorOutputVersion"
+_runtime = None             # the bedrock-runtime client, made on first use (the tests swap guard and make none)
+
+
+def _client():
+    global _runtime
+    if _runtime is None:
+        _runtime = boto3.client("bedrock-runtime")
+    return _runtime
+
+
+def guard(text, source):
+    """Return (blocked, text after masking)."""
+    if not text:
+        return False, text
+    r = _client().apply_guardrail(guardrailIdentifier=os.environ["GUARDRAIL_ID"],
+                                  guardrailVersion=os.environ.get("GUARDRAIL_VERSION", "DRAFT"), source=source,
+                                  content=[{"text": {"text": text}}])
+    blocked = '"action": "BLOCKED"' in json.dumps(r.get("assessments", []))
+    masked = r["outputs"][0]["text"] if r.get("action") == "GUARDRAIL_INTERVENED" and r.get("outputs") and not blocked else text
+    return blocked, masked
+
+
+def b64(text):
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def unb64(text):
+    """The body as text. A body that is not base64 of UTF-8 text is taken as it is (line breaks in base64 are fine)."""
+    if not text:
+        return ""
+    try:
+        return base64.b64decode("".join(text.split()), validate=True).decode("utf-8")
+    except ValueError:                  # binascii.Error and UnicodeDecodeError are both ValueErrors
+        return text
+
+
+def _prompt(raw):
+    """(the request's JSON document, its prompt), or (None, the whole body) when the body has no text prompt."""
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return None, raw
+    if isinstance(doc, dict) and isinstance(doc.get("prompt"), str):
+        return doc, doc["prompt"]
+    return None, raw
+
+
+def refuse():
+    return {V: "1.0", "http": {"transformedGatewayResponse": {
+        "statusCode": 403, "contentType": "application/json", "body": b64(json.dumps({"error": MESSAGE}))}}}
+
+
+def handler(event, context, guard=guard):
+    h = event.get("http")
+    if h is None:                                                       # not an agent call: pass it on unchanged
+        return {V: "1.0"}
+    req, resp = h.get("gatewayRequest") or {}, h.get("gatewayResponse")
+    if resp is None:                                                    # REQUEST: the user's prompt
+        doc, prompt = _prompt(unb64(req.get("body")))
+        blocked, masked = guard(prompt, "INPUT")
+        print(json.dumps({"point": "REQUEST", "blocked": blocked, "masked": masked != prompt}))
+        if blocked:
+            return refuse()
+        if masked != prompt:
+            if doc is not None:
+                doc["prompt"] = masked
+                masked = json.dumps(doc)
+            return {V: "1.0", "http": {"transformedGatewayRequest": {"body": b64(masked)}}}
+        return {V: "1.0", "http": {}}
+    raw = unb64(resp.get("body"))                                       # RESPONSE: the agent's answer
+    blocked, masked = guard(raw, "OUTPUT")
+    print(json.dumps({"point": "RESPONSE", "status": resp.get("statusCode"), "blocked": blocked, "masked": masked != raw}))
+    if blocked:
+        return refuse()
+    if masked != raw:
+        return {V: "1.0", "http": {"transformedGatewayResponse": {"body": b64(masked)}}}
+    return {V: "1.0", "http": {}}
