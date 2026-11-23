@@ -664,7 +664,8 @@ const fakePage = screens => {
     keyboard: { press: async key => { page.log.push(['key', key, page.looked()]); } } };
   return page;
 };
-const fakeRec = () => ({ notes: [], note(kind, data) { this.notes.push([kind, data]); }, now: () => 1 });
+// a note is merged the way the plugin's recorder writes it into the camlog: { t, kind, ...data }
+const fakeRec = () => ({ notes: [], note(kind, data = {}) { this.notes.push({ t: this.now(), kind, ...data }); }, now: () => 1 });
 const fakeCam = () => ({ kept: [], shots: [], keep(text) { this.kept.push(text); }, lines: async (k) => {}, reset: async () => {},
   hold: async () => {} });
 """
@@ -794,6 +795,11 @@ BUSY = ["✻ Cooking… (2s · esc to interrupt)"]
 DONE = ["✻ Cooked for 3s", "❯"]
 
 
+def _permission_notes(g: dict) -> list[dict]:
+    """The notes named `permission`, as a camlog holds them (without their time)."""
+    return [{k: v for k, v in n.items() if k != "t"} for n in g["notes"] if n["kind"] == "permission"]
+
+
 def _answered_with_escape_only(g: dict, dialog: list[str], name) -> None:
     """Every key sent while the dialog was the screen looked at last is Escape, and nothing was pasted onto it: each
     paste follows a look, and that look did not find the dialog."""
@@ -819,9 +825,8 @@ def test_while_a_dialog_is_on_the_screen_the_only_key_is_escape_and_enter_never_
         _answered_with_escape_only(g, s, i)
         assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"], i
         assert g["pastes"] == ["the request", "files only"], i
-        assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": n[1]["kind"]}]
-                                                                   for n in g["notes"] if n[0] == "permission"]
-        assert len([n for n in g["notes"] if n[0] == "permission"]) == 1, i
+        [note] = _permission_notes(g)
+        assert note["answer"] == "no" and note["dialog"] in ("shell", "file", "unknown"), i
 
 
 # A question Claude Code draws itself, whose option texts the other agent writes (they read neither Yes nor No).
@@ -840,7 +845,7 @@ def test_a_dialog_whose_options_read_neither_yes_nor_no_gets_escape_and_a_plain_
                      "left_open": [OWN_QUESTION, BUSY, BUSY, BUSY, DONE],
                      "plain": [PLAIN_LIST, PLAIN_LIST, BUSY, DONE]}, tmp_path)
     during, left_open, plain = got["during"], got["left_open"], got["plain"]
-    assert [n for n in during["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": "unknown"}]]
+    assert _permission_notes(during) == [{"kind": "permission", "answer": "no", "dialog": "unknown"}]
     assert [k for k, _ in during["keys"]] == ["Enter", "Escape", "Escape", "Enter"]
     assert [k for k, _ in left_open["keys"]] == ["Escape", "Enter"]       # the open dialog first, then the request
     for name in ("during", "left_open"):
@@ -848,7 +853,7 @@ def test_a_dialog_whose_options_read_neither_yes_nor_no_gets_escape_and_a_plain_
         _answered_with_escape_only(got[name], OWN_QUESTION, name)
     # an answer's numbered list is not a dialog: the request goes out with Enter, nothing is answered
     assert [k for k, _ in plain["keys"]] == ["Enter"] and plain["error"] == ""
-    assert not [n for n in plain["notes"] if n[0] == "permission"]
+    assert not _permission_notes(plain)
 
 
 def _wrapped_question() -> list[str]:
@@ -863,7 +868,7 @@ def _wrapped_question() -> list[str]:
 def test_a_permission_question_whose_asking_row_wraps_is_still_answered_with_escape(tmp_path):
     wrapped = _wrapped_question()
     g = _requests({"wrapped": [BUSY, BUSY, wrapped, wrapped, BUSY, BUSY, DONE]}, tmp_path)["wrapped"]
-    assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": "file"}]]
+    assert _permission_notes(g) == [{"kind": "permission", "answer": "no", "dialog": "file"}]
     assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"]
     assert g["error"] == ""
     _answered_with_escape_only(g, wrapped, "wrapped")
@@ -888,7 +893,7 @@ def test_a_row_that_only_resembles_a_question_does_not_start_the_answering_branc
     seems = ["● agent.py는 120줄입니다. Do you want to see the rest of it?", BUSY[0]]
     got = _requests({"seems": [BUSY, seems, seems, DONE]}, tmp_path)["seems"]
     assert [k for k, _ in got["keys"]] == ["Enter"] and got["error"] == ""
-    assert not [n for n in got["notes"] if n[0] == "permission"]
+    assert not _permission_notes(got)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -934,6 +939,85 @@ const cases = [
 ];
 console.log(JSON.stringify(cases.map(jobEnded)));""", tmp_path)
     assert json.loads(out) == [False, False, False, True, True, True]
+
+
+# A review page, scripted: each look gives the strip's steps (strip() calls evaluate with a scope) and the two pills
+# of that look (the record's and the run's; evaluate without an argument). The recorder's clock moves one second per
+# hold, and it merges a note as the plugin's recorder does.
+REVIEW_PAGE = """
+const reviewPage = looks => {
+  let i = -1;
+  return { evaluate: async (fn, scope) => {
+    if (scope !== undefined) { i = Math.min(i + 1, looks.length - 1); return looks[i].steps.map(([name, state]) => ({ name, state })); }
+    const l = looks[Math.max(i, 0)];
+    return { record: l.record, run: l.run };
+  } };
+};
+const clockRec = () => { let t = 0; return { notes: [], now: () => t, tick: () => { t += 1; },
+  note(kind, data = {}) { this.notes.push({ t, kind, ...data }); } }; };
+const clockCam = rec => ({ shots: [], async hold() { rec.tick(); }, async focus(key) { this.shots.push([rec.now(), key]); } });
+"""
+STEPS = ["Read", "Scan", "Grant"]
+
+
+def _look(states: str, run: str, record: str) -> dict:
+    """One look of the page: the steps' states (one letter each: p passed, r running, w waiting, f failed)."""
+    word = {"p": "passed", "r": "running", "w": "waiting", "f": "failed"}
+    return {"steps": [[n, word[c]] for n, c in zip(STEPS, states)], "run": run, "record": record}
+
+
+def _reviews(cases: dict, tmp_path) -> dict:
+    """Run waitForReview once per case ({looks, until, prefix?, seen?}) against the scripted page: its result, the
+    notes (time and name) and the 'steps' shots (time and key)."""
+    given = tmp_path / "reviews.json"
+    given.write_text(json.dumps(cases), encoding="utf-8")
+    run = """import fs from 'node:fs';
+import { waitForReview } from './hub.mjs';
+""" + REVIEW_PAGE + f"""
+const cases = JSON.parse(fs.readFileSync({json.dumps(str(given))}, 'utf8'));
+""" + """const out = {};
+for (const [name, c] of Object.entries(cases)) {
+  const page = reviewPage(c.looks), rec = clockRec(), cam = clockCam(rec);
+  const result = await waitForReview(page, rec, cam, { until: c.until, prefix: c.prefix, seen: c.seen });
+  out[name] = { result, notes: rec.notes.map(n => [n.t, n.kind]), shots: cam.shots };
+}
+console.log(JSON.stringify(out));"""
+    return json.loads(_node(run, tmp_path))
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_wait_for_a_review_notes_each_change_and_ends_on_approved_failed_or_time(tmp_path):
+    pending, approved = "PENDING_APPROVAL", "APPROVED"
+    got = _reviews({
+        "passes": {"until": 100, "looks": [_look("prw", "RUNNING", pending), _look("prw", "RUNNING", pending),
+                                           _look("ppr", "RUNNING", pending), _look("ppp", "SUCCEEDED", approved)]},
+        # the page first shows the earlier review, finished: its end is not this review's end
+        "earlier_first": {"until": 100, "looks": [_look("ppp", "SUCCEEDED", pending), _look("prw", "RUNNING", pending),
+                                                  _look("ppp", "SUCCEEDED", approved)]},
+        # the record reads APPROVED one look before the run reads SUCCEEDED
+        "record_first": {"until": 100, "looks": [_look("prw", "RUNNING", pending), _look("ppp", "RUNNING", approved),
+                                                 _look("ppp", "SUCCEEDED", approved)]},
+        "fails": {"until": 100, "looks": [_look("prw", "RUNNING", pending), _look("pfw", "FAILED", pending),
+                                          _look("pfw", "FAILED", pending)]},
+        "time": {"until": 3, "looks": [_look("prw", "RUNNING", pending)]},
+        "prefix": {"until": 100, "prefix": "quality_agent_", "seen": {"quality_agent_Read": "passed"},
+                   "looks": [_look("prw", "RUNNING", pending), _look("ppp", "SUCCEEDED", approved)]},
+    }, tmp_path)
+    names = {k: [n for _, n in v["notes"]] for k, v in got.items()}
+    assert got["passes"]["result"] == {"approved": True, "ended": "SUCCEEDED"}
+    assert names["passes"] == ["Read_passed", "Scan_running", "Grant_waiting", "Scan_passed", "Grant_running",
+                               "Grant_passed", "review_SUCCEEDED", "approved"]
+    assert got["passes"]["shots"] == [[1, "steps"], [3, "steps"]]            # re-framed after each change, not after none
+    assert got["earlier_first"]["result"] == {"approved": True, "ended": "SUCCEEDED"}
+    assert names["earlier_first"].count("review_SUCCEEDED") == 1
+    assert names["earlier_first"].index("review_SUCCEEDED") > names["earlier_first"].index("Scan_running")
+    assert got["record_first"]["result"] == {"approved": True, "ended": "SUCCEEDED"}
+    assert [t for t, n in got["record_first"]["notes"] if n == "approved"] == [3]
+    assert got["fails"]["result"] == {"approved": False, "ended": "FAILED"}
+    assert names["fails"][-1] == "review_FAILED" and "approved" not in names["fails"]
+    assert got["time"]["result"] == {"approved": False, "ended": ""} and max(t for t, _ in got["time"]["notes"]) <= 3
+    assert names["prefix"] == ["quality_agent_Scan_running", "quality_agent_Grant_waiting", "quality_agent_Scan_passed",
+                               "quality_agent_Grant_passed", "quality_agent_SUCCEEDED", "approved"]
 
 
 def test_the_text_check_masks_the_containers_name_instead_of_dropping_its_line(tmp_path):

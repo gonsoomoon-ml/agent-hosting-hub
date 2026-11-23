@@ -4,7 +4,7 @@
 // comes (the agent keeps asking its tool). Changes the hub: a new version is reviewed and approved, and its loop runs.
 // Start 53-alarm as soon as the shot `asked` shows in this take's texts file (a line `== <t> asked` in
 // out/raw/52-incident.texts.txt): the alarm comes about a minute after the call.
-import { openPage, strip } from '../lib/hub.mjs';
+import { openPage, waitForReview } from '../lib/hub.mjs';
 import { command, idle, need, openShell } from '../lib/shell.mjs';
 import { needState } from '../lib/state.mjs';
 import { kit } from '../lib/take.mjs';
@@ -35,27 +35,8 @@ export default async function storyboard({ page, rec, option, maxSeconds }) {
   // its review, in real time, until the record reads APPROVED
   await openPage(page, rec, '/reviews/quality_agent');
   await cam.focus('steps', '#panel-steps', { pad: 12, kmax: 1.7 }, 'the new version\'s hosting review');
-  const seen = {};
-  // the end counts only after this review was seen running (the page could first show the earlier, finished one)
-  let approved = false, ended = '', running = false;
-  while (rec.now() < maxSeconds - 150) {
-    await cam.hold(1000);
-    const now = await strip(page, '#panel-steps').catch(() => []);
-    let changed = false;
-    for (const step of now) {
-      if (step.state && seen[step.name] !== step.state) { seen[step.name] = step.state; rec.note(`${step.name}_${step.state}`); changed = true; }
-    }
-    const facts = await page.evaluate(() => ({
-      record: document.querySelector('#panel-application .pill')?.textContent.trim() || '',
-      run: document.querySelector('#panel-steps .review-meta .pill')?.textContent.trim() || '',
-    })).catch(() => ({ record: '', run: '' }));
-    if (facts.run === 'RUNNING') running = true;
-    if (running && facts.run && facts.run !== 'RUNNING' && !ended) { ended = facts.run; rec.note(`review_${facts.run}`); }
-    if (facts.record === 'APPROVED' && ended === 'SUCCEEDED') { approved = true; rec.note('approved'); break; }
-    if (changed) await cam.focus('steps', '#panel-steps', { pad: 12, kmax: 1.7 });
-    if (ended && ended !== 'SUCCEEDED') break;
-  }
-  if (!approved) throw new Error(`the review of v2-loop did not end in APPROVED (${ended || 'still running'})`);
+  const review = await waitForReview(page, rec, cam, { until: maxSeconds - 150 });
+  if (!review.approved) throw new Error(`the review of v2-loop did not end in APPROVED (${review.ended || 'still running'})`);
   await cam.hold(1500);
   await cam.focus('approved', '#panel-application .app-facts', { pad: 16, kmax: 2.0 }, 'the version that loops is approved');
   await cam.hold(5000);

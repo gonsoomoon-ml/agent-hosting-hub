@@ -83,8 +83,8 @@ export async function startClaude(page) {
 
 /** Send one request (pasted: Korean survives) and follow Claude Code until it is done. Every screen not seen before
  * is kept for the take's text check (cam.keep). Each dialog is framed, held for the camera and answered No (Escape);
- * then `noRun` is sent as the way to go on. Returns { prompts: [{ question, kind, answer: 'no' }],
- * seconds }. */
+ * then `noRun` is sent as the way to go on (note `permission` { answer: 'no', dialog }). Returns
+ * { prompts: [{ question, kind, answer: 'no' }], seconds }. */
 export async function request(page, rec, cam, text, { noRun, limitMs = 600000, idleMs = 3000 } = {}) {
   const seen = new Set();
   const look = async () => {
@@ -104,7 +104,8 @@ export async function request(page, rec, cam, text, { noRun, limitMs = 600000, i
     const r = await look();
     const q = question(r);
     if (q) {
-      rec.note('permission', { answer: 'no', kind: q.kind });
+      // the dialog's kind under `dialog`: the recorder writes a note's data over its name, so `kind` would replace it
+      rec.note('permission', { answer: 'no', dialog: q.kind });
       await cam.lines(`ask${prompts.length + 1}`, q.top, q.end, { pad: 24, kmax: 1.5 }, `permission question ${prompts.length + 1}`);
       await cam.hold(4500);
       await page.keyboard.press('Escape');

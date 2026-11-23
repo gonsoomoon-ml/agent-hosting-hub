@@ -3,7 +3,8 @@
 // on the agents page the platform engineer resumes it (one press, the job's lines); a user asks it and it answers.
 // Changes the hub: a new version, approved, and the agent resumed. With REHEARSE=1 in the environment the take only
 // frames the agents page (no publish, no wait, no press, no call).
-import { openPage, press, strip, waitForJob } from '../lib/hub.mjs';
+import { INSPECTION } from '../lib/guardrail.mjs';
+import { openPage, press, waitForJob, waitForReview } from '../lib/hub.mjs';
 import { term } from '../lib/plugin.mjs';
 import { command, idle, need, openShell } from '../lib/shell.mjs';
 import { needState } from '../lib/state.mjs';
@@ -13,7 +14,6 @@ import { texts } from '../lib/texts.mjs';
 export const surfaces = ['dev', 'hub', 'user'];
 
 const ROW = '#agent-quality_agent';
-const QUESTION = 'ask quality_agent "What was the result of inspection Q-1001, and what is the specification of the part it inspected?"';
 
 export default async function storyboard({ page, rec, tap, option, maxSeconds }) {
   await needState({ records: { quality_agent: 'APPROVED', release_review: 'APPROVED', docs_adk: 'APPROVED' },
@@ -38,26 +38,10 @@ export default async function storyboard({ page, rec, tap, option, maxSeconds })
     // its review passes while the agent is stopped
     await openPage(page, rec, '/reviews/quality_agent');
     await cam.focus('steps', '#panel-steps', { pad: 12, kmax: 1.7 }, 'the fixed version\'s hosting review');
-    const seen = {};
-    let approved = false, ended = '', running = false;
-    while (rec.now() < maxSeconds - 150) {
-      await cam.hold(1000);
-      const now = await strip(page, '#panel-steps').catch(() => []);
-      let changed = false;
-      for (const step of now) {
-        if (step.state && seen[step.name] !== step.state) { seen[step.name] = step.state; rec.note(`${step.name}_${step.state}`); changed = true; }
-      }
-      const facts = await page.evaluate(() => ({
-        record: document.querySelector('#panel-application .pill')?.textContent.trim() || '',
-        run: document.querySelector('#panel-steps .review-meta .pill')?.textContent.trim() || '',
-      })).catch(() => ({ record: '', run: '' }));
-      if (facts.run === 'RUNNING') running = true;
-      if (running && facts.run && facts.run !== 'RUNNING' && !ended) { ended = facts.run; rec.note(`review_${facts.run}`); }
-      if (facts.record === 'APPROVED' && ended === 'SUCCEEDED') { approved = true; rec.note('approved'); break; }
-      if (changed) await cam.focus('steps', '#panel-steps', { pad: 12, kmax: 1.7 });
-      if (ended && ended !== 'SUCCEEDED') break;
+    const review = await waitForReview(page, rec, cam, { until: maxSeconds - 150 });
+    if (!review.approved) {
+      throw new Error(`the review of the fixed version did not end in APPROVED (${review.ended || 'still running'})`);
     }
-    if (!approved) throw new Error(`the review of the fixed version did not end in APPROVED (${ended || 'still running'})`);
     await cam.hold(1500);
     await cam.focus('approved', '#panel-application .app-facts', { pad: 16, kmax: 2.0 }, 'the fixed version is approved');
     await cam.hold(5000);
@@ -88,7 +72,7 @@ export default async function storyboard({ page, rec, tap, option, maxSeconds })
   await openShell(page, rec, 'user', t);
   await cam.reset('user_shell', 'the user\'s shell');
   await cam.hold(3000);
-  await command(page, QUESTION);
+  await command(page, INSPECTION);
   rec.note('asked');
   if (!(await idle(page, t.prompt.user, 200000))) throw new Error('ask quality_agent did not end');
   const said = (await term.screenText(page)).split('\n').find(r => /^HTTP \d{3} /.test(r.trim())) || '(no status line)';

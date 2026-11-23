@@ -2,7 +2,7 @@
 // the list; quality_agent fails at Scan (its vulnerable dependency); release_review passes the seven steps, each with
 // the AWS service that runs it, and its record reads APPROVED. A note at every change (a step's new state, the
 // failure, the approval): the waits are cut by these notes. Record it right after 13-submit, with 720 s.
-import { openPage, strip } from '../lib/hub.mjs';
+import { openPage, stepChanges, waitForReview } from '../lib/hub.mjs';
 import { needState } from '../lib/state.mjs';
 import { kit } from '../lib/take.mjs';
 import { texts } from '../lib/texts.mjs';
@@ -17,15 +17,7 @@ export default async function storyboard({ page, rec, option, maxSeconds }) {
   const cam = kit({ page, rec, option });
   const seen = {};
   // a note for each step whose state changed since the last look: <agent>_<step>_<state>
-  const changes = async (agent, scope) => {
-    const now = await strip(page, scope).catch(() => []);
-    const changed = [];
-    for (const step of now) {
-      const key = `${agent}_${step.name}`;
-      if (step.state && seen[key] !== step.state) { seen[key] = step.state; rec.note(`${key}_${step.state}`); changed.push(step); }
-    }
-    return { now, changed };
-  };
+  const changes = (agent, scope) => stepChanges(page, rec, seen, scope, `${agent}_`);
 
   // both applications, both reviews running; quality_agent fails at Scan
   await openPage(page, rec, '/reviews');
@@ -54,20 +46,8 @@ export default async function storyboard({ page, rec, option, maxSeconds }) {
   await openPage(page, rec, '/reviews/release_review');
   await cam.focus('steps', '#panel-steps', { pad: 12, kmax: 1.7 }, 'the seven steps and their AWS services');
   await changes('release_review', '#panel-steps');
-  let approved = false, ended = '';
-  while (rec.now() < maxSeconds - 45) {
-    await cam.hold(1000);
-    const r = await changes('release_review', '#panel-steps');
-    const facts = await page.evaluate(() => ({
-      record: document.querySelector('#panel-application .pill')?.textContent.trim() || '',
-      run: document.querySelector('#panel-steps .review-meta .pill')?.textContent.trim() || '',
-    })).catch(() => ({ record: '', run: '' }));
-    if (facts.run && facts.run !== 'RUNNING' && !ended) { ended = facts.run; rec.note(`release_review_${facts.run}`); }
-    if (facts.record === 'APPROVED') { approved = true; rec.note('approved'); break; }
-    if (r.changed.length) await cam.focus('steps', '#panel-steps', { pad: 12, kmax: 1.7 });
-    if (ended && ended !== 'SUCCEEDED') break;
-  }
-  if (!approved) rec.note('not_approved_in_time');
+  const review = await waitForReview(page, rec, cam, { until: maxSeconds - 45, prefix: 'release_review_', seen });
+  if (!review.approved) rec.note('not_approved_in_time');
   await cam.hold(1500);
   await cam.focus('record', '#panel-application .app-facts', { pad: 16, kmax: 2.0 }, 'the record reads APPROVED');
   await cam.hold(5000);
