@@ -1,5 +1,4 @@
-Third-party material used in this project.
-Fill in one entry per item copied or adapted.
+Third-party material used in this project: one entry for each file copied or adapted from another repository.
 
 - Source repository: https://github.com/gonsoomoon-ml/ai-governance-hub
   Path: hub/templates/base.html, hub/templates/_nav.html, hub/i18n.py, hub/timefmt.py

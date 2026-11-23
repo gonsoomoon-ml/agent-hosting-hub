@@ -1,5 +1,5 @@
 # Where alerts go: one SNS topic. A failed hosting review and the hub's alarms publish here.
-# The SQS inbox behind it lets checks read what was sent; an email subscription is optional.
+# An email subscription is optional; the checks that read an alert make their own queue and subscribe it for the run.
 # The alarm on one tool's calls per minute, which tells the platform team that an agent may be looping.
 # And what the two gateways record: their logs into a log group each, their traces into X-Ray.
 
@@ -18,32 +18,6 @@ locals {
 
 resource "aws_sns_topic" "alerts" {
   name = "${var.prefix}-alerts"
-}
-
-resource "aws_sqs_queue" "inbox" {
-  name = "${var.prefix}-alerts-inbox"
-}
-
-resource "aws_sqs_queue_policy" "inbox" {
-  queue_url = aws_sqs_queue.inbox.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "sns.amazonaws.com" }
-      Action    = "sqs:SendMessage"
-      Resource  = aws_sqs_queue.inbox.arn
-      Condition = { ArnEquals = { "aws:SourceArn" = aws_sns_topic.alerts.arn } }
-    }]
-  })
-}
-
-resource "aws_sns_topic_subscription" "inbox" {
-  topic_arn            = aws_sns_topic.alerts.arn
-  protocol             = "sqs"
-  endpoint             = aws_sqs_queue.inbox.arn
-  raw_message_delivery = true
-  depends_on           = [aws_sqs_queue_policy.inbox]
 }
 
 resource "aws_sns_topic_subscription" "email" {

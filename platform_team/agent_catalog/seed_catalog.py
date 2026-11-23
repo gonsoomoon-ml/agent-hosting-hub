@@ -1,4 +1,4 @@
-"""Put the shared tool in the catalog and approve it, so a developer's first search finds it (picture step 1).
+"""Put the shared tool in the catalog and approve it, so a developer's first search finds it (step 1 of docs/hosting-hub-concept.png).
 
     python -m platform_team.agent_catalog.seed_catalog             # make seed
     python -m platform_team.agent_catalog.seed_catalog --remove    # make destroy, before terraform destroy

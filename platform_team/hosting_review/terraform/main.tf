@@ -263,7 +263,7 @@ resource "aws_sfn_state_machine" "review" {
   depends_on = [aws_iam_role_policy.sfn, aws_cloudwatch_log_resource_policy.machine]
 }
 
-# ------------------------------------------------------------------ the start (picture ③)
+# ------------------------------------------------------------------ the start (step ③ of docs/hosting-hub-concept.png)
 
 resource "aws_cloudwatch_event_rule" "on_submit" {
   name        = "${var.prefix}-on-submit"
