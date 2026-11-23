@@ -46,7 +46,7 @@ def test_names_of_different_agents_kinds_and_tools_never_meet():
     assert len({n for n, _ in made}) == len(made)
 
 
-def test_the_tool_permit_pattern_finds_one_agents_permits_and_no_others():     # final review M-3: the cleanup uses it
+def test_the_tool_permit_pattern_finds_one_agents_permits_and_no_others():     # the cleanup uses it
     agents = ["quality", "quality_agent", "review_quality", "review", "permit", "tool", "entry", "entry_permit",
               "guard", "secret", "agent", "parts", "ab_c", "a_bc", "abc"]
     made = {a: names.policy_names(a, sorted(CATALOG)) for a in agents}

@@ -38,7 +38,7 @@ def test_the_stop_policy_without_a_test_call_role_is_not_made():
         with pytest.raises(ValueError, match="empty value"):
             cedar.stop_agent("QualityAgent", GW_AGENTS, account, role)       # an empty role would stop the test call too
 
-# ------------------------------------------------------------------ final review M-1: no statement opens more than asked
+# ------------------------------------------------------------------ no statement opens more than asked
 
 def test_the_permit_for_everyone_cannot_be_asked_for_by_accident():
     with pytest.raises(TypeError):

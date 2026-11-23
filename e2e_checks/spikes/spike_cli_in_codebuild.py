@@ -3,7 +3,7 @@
 
 The review pipeline's deploy step can put a team's agent on AgentCore Runtime in two ways:
   cli  CodeBuild runs `agentcore deploy` with an execution role made beforehand (this spike)
-  api  CodeBuild packages the code and calls CreateAgentRuntime (passed in checks/whole-process)
+  api  CodeBuild packages the code and calls CreateAgentRuntime itself
 The hub's deploy step now takes the api path (platform_team/hosting_review/deploy_build.py). This spike records the
 earlier cli path; it keeps its own names and need not run again.
 
@@ -65,7 +65,7 @@ def mask(text: str) -> str:
 
 # ================================================================== roles
 
-# The agent's execution role: the same trust and permissions as the review's grant step (checks/whole-process).
+# The agent's execution role: the trust and permissions the review's grant step gave an agent role when this spike ran.
 EXEC_TRUST = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "bedrock-agentcore.amazonaws.com"},
               "Action": "sts:AssumeRole", "Condition": {"StringEquals": {"aws:SourceAccount": ACCOUNT}}}]}
 LG = f"arn:aws:logs:{REGION}:{ACCOUNT}:log-group"

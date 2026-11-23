@@ -111,7 +111,7 @@ def test_the_result_wins_over_other_stream_events():
     assert hub_tools.parse_tool_response(stream) == "M4"
 
 
-# ------------------------------------------------------------------ final review M-5: never raise, never show the account
+# ------------------------------------------------------------------ never raise, never show the account
 
 @pytest.mark.parametrize("error, shown", [('"Tool call not allowed"', "ERROR: Tool call not allowed"),
                                           ('["denied", 3]', "ERROR: ['denied', 3]"), ("42", "ERROR: 42")])

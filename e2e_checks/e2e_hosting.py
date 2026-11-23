@@ -1,11 +1,11 @@
-"""e2e_hosting.py - flow 1 (hosting) from end to end on real AWS: scenes 1-1 to 2-3 of the demo story.
+"""e2e_hosting.py - flow 1 (hosting) from end to end on real AWS, in the order of the twelve checks below.
 
     make deploy seed && AWS_REGION=us-west-2 uv run python e2e_checks/e2e_hosting.py 2>&1 | tee e2e_checks/last-run.log
 
 Twelve checks, one [PASS] / [FAIL] line each, [INFO] lines for what was observed (timings, answers, the alert),
 then `== N checks passed, M failed, K observations`. Exit code 1 if a check failed.
    1  as the dev team role, a catalog search finds the shared tool record parts-tools           (picture 1)
-   2  as the dev team role, the shared read tool answers and another tool is refused by policy  (D15)
+   2  as the dev team role, the shared read tool answers and another tool is refused by policy
       (JSON-RPC error -32002, "policy enforcement"; any other error does not count)
    3  as the dev team role, publish.sh dev_team/release_review: the record is PENDING_APPROVAL  (picture 2)
    4  the review starts within 120 s of the request (timed from just before publish.sh)         (picture 3)
@@ -18,7 +18,8 @@ then `== N checks passed, M failed, K observations`. Exit code 1 if a check fail
    9  that submission made no role, policy, gateway target or Runtime
   10  reject.sh: the record is REJECTED
   11  the fixed version (no variant) again: a new review starts, SUCCEEDED, and the record is APPROVED
-  12  quality_agent answers with both its tools (an EMP- employee ID in the answer is an [INFO]: plan 2 masks it)
+  12  quality_agent answers with both its tools (an EMP- employee ID in the answer is an [INFO]: the custom guardrail
+      masks it when it is attached, platform_team/custom_guardrail)
 
 The dev team's steps run as the dev team role (<prefix>-dev-role), the platform team's (reject.sh) and the user's
 calls with the credentials of the shell. publish.sh and reject.sh are the repo's own commands.
@@ -571,7 +572,8 @@ def scene_quality(c: Clients, s: Settings, p: Platform, dev: DevTeam, inbox: Ale
     check(12, "quality_agent answers with both tools", code == 200 and set(QUALITY_TOOLS) <= set(used) and has_data,
           f"{code} in {took:.1f}s; tools {used}; answer {text[:400]!r}")
     ids = sorted(set(re.findall(r"EMP-\d+", text)))
-    info("employee ID in quality_agent's answer", f"{ids} as the tool gave it (plan 2 masks it)" if ids else "none")
+    info("employee ID in quality_agent's answer",
+         f"{ids} as the tool gave it (the custom guardrail masks it when it is attached)" if ids else "none")
 
 
 def observe_leftovers(c: Clients, s: Settings, p: Platform, agent: str) -> None:

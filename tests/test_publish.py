@@ -191,7 +191,7 @@ WITH_CODE = sorted(str(p.parent.relative_to("dev_team")) for p in [*pathlib.Path
 
 @pytest.mark.parametrize("folder", WITH_CODE)
 def test_the_record_publish_writes_passes_the_reviews_read(monkeypatch, folder):
-    """final review I-1: Read checks more than the form does (the record's name and type, code_key, code_version).
+    """Read checks more than the form does (the record's name and type, code_key, code_version).
     The record publish writes for each example application must still pass it."""
     from platform_team.hosting_review import review_steps
     from tests.fakes import ENV, read_input

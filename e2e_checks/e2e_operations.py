@@ -1,4 +1,6 @@
-"""e2e_operations.py - flow 2 (operations) from end to end on real AWS: scenes 3-1 to 5-4 of the demo story.
+"""e2e_operations.py - flow 2 (operations) from end to end on real AWS, in this order: a company policy in log-only
+mode, then active; the custom guardrail; the two agents there from the start; a new version of an approved agent and
+the tool-call alarm; stopping and resuming one agent; the usage report; and undoing the changes.
 
     AUTO_APPROVE=1 make deploy seed e2e && make e2e-ops        (the log goes to e2e_checks/last-run-ops.log)
 
@@ -10,28 +12,27 @@ that stopped midway can be run again without a destroy; make preload keeps the t
 Twelve checks, one [PASS] / [FAIL] line each, [INFO] lines for what was observed, then
 `== N checks passed, M failed, K observations (...s)`. Exit code 1 if a check failed.
    1  rollout.sh guard_prompt log-only: guard_prompt_<agent> of both agents is in LOG_ONLY, and a request with a hidden
-      instruction to release_review is 200                                                              (3-1)
+      instruction to release_review is 200
    2  rollout.sh guard_prompt report shows release_review's LogOnlyMatches >= 1 within 10 minutes of that request
-      (LogOnlyDecisionFlips is an [INFO])                                                                (3-2)
+      (LogOnlyDecisionFlips is an [INFO])
    3  rollout.sh guard_prompt active: within 150 s the same request is 403 on release_review and quality_agent, and the
-      normal question is 200 on both                                                                    (4-1)
+      normal question is 200 on both
    4  before the custom guardrail: the code-name request is 200 on quality_agent, and its answer to the employee-ID
-      question holds EMP-204817                                                                          (4-2)
+      question holds EMP-204817
    5  guardrail.sh attach: the policy engine as before and as many targets; the code-name request is 403 on both agents
-      with "interceptor" in the body; the employee-ID answer holds {employee_id} and no EMP-             (4-2)
+      with "interceptor" in the body; the employee-ID answer holds {employee_id} and no EMP-
    6  make preload: docs_adk APPROVED, and its guard_prompt_docs_adk ACTIVE (its approval made it); the hidden
       instruction is 403 on docs_adk; spec_assistant answers with a tool
    7  quality_agent v2-loop (a new version): its review SUCCEEDED and the record is APPROVED (the catalog search during
-      the review is an [INFO])                                                                           (5-2)
+      the review is an [INFO])
    8  the incident question, sent with a session ID header (the client gives up after 20 s, the loop goes on): the alert
-      of the alarm <prefix>-tool-calls arrives within 10 minutes                                          (5-2)
+      of the alarm <prefix>-tool-calls arrives within 10 minutes
    9  stop.sh quality_agent (and --session <the incident's ID> when it did not find that session): its entry is 403
       naming stop_agent_quality_agent; the loop was running and no new `asking again` line comes within 3 minutes;
-      release_review, docs_adk and spec_assistant answer                                                  (5-3)
+      release_review, docs_adk and spec_assistant answer
   10  while it is stopped, the fixed version (no variant): its review SUCCEEDED (the test call passes the stop policy)
-      and a user's call is still 403                                                                     (5-4)
+      and a user's call is still 403
   11  resume.sh quality_agent: 200, using both its tools; usage.sh 60 lists the four agents and calls of those tools
-                                                                                                        (5-4, 5-1)
   12  guardrail.sh detach and rollout.sh guard_prompt off: the code-name request and the hidden instruction are 200 on
       quality_agent again; no policy guard_prompt_* and no SSM value under /<prefix>/policies/ is left
 

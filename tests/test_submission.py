@@ -1,4 +1,4 @@
-# tests/test_submission.py  (Review Focus 4)
+# tests/test_submission.py
 import zipfile, pytest
 from platform_team.hosting_review.submission_check import unpack, check_layout
 
@@ -16,7 +16,7 @@ def test_bad_submission_is_refused(tmp_path):
     assert check_layout(tmp_path / "out2") == ["missing: main.py", "missing: requirements.txt"]
 
 
-# final review I-5 (Review Focus 4): every kind of unsafe name _unsafe handles, not only ../
+# every kind of unsafe name _unsafe handles, not only ../
 import stat
 
 @pytest.mark.parametrize("name", ["../evil.py", "app/../../evil.py", "/etc/evil.py", "C:\\evil.py", "C:/evil.py",

@@ -20,7 +20,7 @@ def repo_files() -> list[pathlib.Path]:
 
 
 def test_no_account_values_in_repo():
-    """final review I-5: every text file, whatever its suffix (Terraform, templates, Makefile, NOTICE, ...)."""
+    """Every text file, whatever its suffix (Terraform, templates, Makefile, NOTICE, ...)."""
     files = [f for f in repo_files() if f.name not in HASHES]
     assert {"Makefile", "main.tf", "review_machine.asl.json.tftpl", "buildspec_deploy.yml", ".env.example"} <= {
         f.name for f in files}

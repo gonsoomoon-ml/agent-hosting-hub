@@ -1,4 +1,4 @@
-# tests/test_reject.py  (Review Focus 2)
+# tests/test_reject.py
 import pytest
 from platform_team.hosting_review.reject_agent import reject
 from platform_team.shared_code.config import Settings
@@ -215,7 +215,7 @@ def test_clean_agents_works_without_the_platform_values(monkeypatch):
     assert list(c.objects) == ["packages/quality_agent/v1.zip"]     # no bucket name: terraform destroy empties it
 
 
-# ------------------------------------------------------------------ only what this hub made (fix round 1)
+# ------------------------------------------------------------------ only what this hub made
 
 def _pending_review(c):
     """quality_agent as a failed review leaves it, everything made, the record pending approval."""
@@ -405,7 +405,7 @@ def test_reject_sh_runs_the_module_from_the_repo_whatever_the_current_folder(tmp
 # The two commands' reading of .env: tests/test_hub_env.py (one rule for make, the commands and the e2e script).
 
 
-# ------------------------------------------------------------------ final review M-3: what the hub made and did not find
+# ------------------------------------------------------------------ what the hub made and did not find
 
 def test_a_tool_permit_for_a_tool_no_longer_in_the_catalog_is_removed_too():
     gone = "tool_quality_agent_Retired_get_old_data"                   # its tool left TARGETS after it was granted

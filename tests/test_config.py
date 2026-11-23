@@ -18,7 +18,7 @@ def test_prefix_comes_from_env(monkeypatch):
     monkeypatch.setenv("DEMO_PREFIX", "hubx")
     assert Settings.from_env().tool_gateway == "hubx-tools"
 
-def test_the_runtime_arn_of_an_agent_is_one_exact_form():          # final review M-2: Entry and the cleanup use it
+def test_the_runtime_arn_of_an_agent_is_one_exact_form():          # Entry and the cleanup use it
     s, arn = Settings(), "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hub_quality_agent-eHcqNQ7n5v"
     assert re.fullmatch(s.runtime_arn_pattern("quality_agent", "123456789012"), arn)
     assert re.fullmatch(s.runtime_id_pattern("quality_agent"), arn.rsplit("/", 1)[1])

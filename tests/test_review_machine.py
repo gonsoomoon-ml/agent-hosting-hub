@@ -34,7 +34,7 @@ def test_the_build_steps_wait_and_get_the_exact_code_version():
     deploy_env = {e["Name"] for e in D["States"]["Deploy"]["Parameters"]["EnvironmentVariablesOverride"]}
     assert deploy_env == {"AGENT", "CODE_KEY", "CODE_VERSION", "ROLE_ARN"}
 
-# ------------------------------------------------------------------ found on AWS (Task 12)
+# ------------------------------------------------------------------ found on AWS
 
 def test_the_alert_names_the_step_that_failed():
     # On AWS the alert of a failed Scan had the subject "Hosting review failed" and the review's state: the agent

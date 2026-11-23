@@ -101,7 +101,7 @@ def test_cleanup_check_lists_the_log_deliveries_and_the_gateway_log_groups(monke
     assert check_cleanup.hub_name(s, found["log groups"][0].rsplit("/", 1)[-1])
 
 
-# ------------------------------------------------------------------ fix round 1: checks 2 and 4 assert what their lines say
+# ------------------------------------------------------------------ checks 2 and 4 assert what their lines say
 
 REFUSED = ('{"jsonrpc":"2.0","id":1,"error":{"code":-32002,"message":"Tool Execution Denied: Tool call not allowed due to '
            'policy enforcement [No policy applies to the request (denied by default).]"}}')     # the final run's log
@@ -123,7 +123,7 @@ def test_check_4_measures_the_start_from_the_request():
     assert not e2e.started_in_time(requested, requested + 125)
 
 
-# ------------------------------------------------------------------ final review M-6: a check that asserts absence reads every page
+# ------------------------------------------------------------------ a check that asserts absence reads every page
 
 def test_check_9_finds_a_runtime_on_a_later_page():
     from tests.fakes import PLATFORM, FakeClients

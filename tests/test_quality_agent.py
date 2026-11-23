@@ -144,7 +144,7 @@ def test_each_run_starts_a_fresh_conversation(load_agent, monkeypatch):
     assert agent.run("two") == ("b", [])
 
 
-def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkeypatch):    # final review M-5
+def test_a_model_error_reaches_the_caller_without_the_account(load_agent, monkeypatch):
     agent = load_agent("quality_agent")
 
     def denied():

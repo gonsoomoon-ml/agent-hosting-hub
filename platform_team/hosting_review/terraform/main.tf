@@ -280,7 +280,7 @@ resource "aws_cloudwatch_event_target" "review" {
   depends_on = [aws_iam_role_policy.events]
 }
 
-# A new rule missed the first event (found by running, checks/system-flows). Whoever reads machine_arn waits for this.
+# A new rule missed the first event (found by running). Whoever reads machine_arn waits for this.
 resource "time_sleep" "rule_settles" {
   create_duration = "90s"
   depends_on      = [aws_cloudwatch_event_rule.on_submit, aws_cloudwatch_event_target.review]

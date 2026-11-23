@@ -18,7 +18,7 @@ def patched_post(monkeypatch):
     """The steps' signed_post answers from the FakeClients built in the test."""
     monkeypatch.setattr(steps, "signed_post", lambda *a, **kw: FakeClients.latest.post(*a, **kw))
 
-def test_read_refuses_an_application_with_an_unknown_tool():       # Review Focus 3
+def test_read_refuses_an_application_with_an_unknown_tool():
     c = FakeClients(record_spec={"name": "quality_agent", "team": "appliance", "framework": "strands",
                                  "tools": ["Parts___nope"], "code_key": "k", "code_version": "v"})
     with pytest.raises(ValueError, match="tool not in the catalog: Parts___nope"):
@@ -32,12 +32,12 @@ def test_grant_creates_the_role_and_one_permit_per_tool():
                                                         "tool_quality_agent_Quality_get_inspection_data"]
     assert 'action == AgentCore::Action::"Parts___get_part_spec"' in c.created_policies[0]["statement"]
 
-def test_policy_conflict_is_kept():                                  # Review Focus 1
+def test_policy_conflict_is_kept():
     c = FakeClients(existing_policies={"tool_quality_agent_Parts_get_part_spec"})
     steps.grant(dict(CTX), c, ENV)
     assert "tool_quality_agent_Parts_get_part_spec" not in [p["name"] for p in c.created_policies]
 
-def test_failed_policy_is_removed_and_reason_raised():               # Review Focus 2
+def test_failed_policy_is_removed_and_reason_raised():
     c = FakeClients(policy_status="CREATE_FAILED", policy_reasons=["Insufficient permissions to call gateway"])
     with pytest.raises(RuntimeError, match="Insufficient permissions to call gateway"):
         steps.grant(dict(CTX), c, ENV)
@@ -62,7 +62,7 @@ def test_testcall_retries_a_call_that_raises_a_network_error():
     assert out["testCall"]["normal"] == 200 and out["testCall"]["with_secret"] == 403
     assert len(c.posts) == 4
 
-# ------------------------------------------------------------------ the step's deadline (fix round 1)
+# ------------------------------------------------------------------ the step's deadline
 
 class Clock:
     """Fake time: sleep moves the clock, nothing waits."""
@@ -124,7 +124,7 @@ def test_the_handler_gives_the_step_the_lambda_time_left_minus_the_margin(clock,
     lambda_handler.handler({}, types.SimpleNamespace(get_remaining_time_in_millis=lambda: 300_000))
     assert seen["left"] == 300 - lambda_handler.MARGIN and lambda_handler.MARGIN >= 45
 
-# ------------------------------------------------------------------ the agent role's boundary, approve re-reads (fix round 1)
+# ------------------------------------------------------------------ the agent role's boundary, approve re-reads
 
 def test_grant_creates_the_agent_role_under_the_boundary():
     c = FakeClients()
@@ -142,7 +142,7 @@ def test_approve_refuses_a_record_that_changed_after_the_review_started():
         steps.approve(AT_APPROVE, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
 
-# ------------------------------------------------------------------ final review I-5: a second run keeps what the first made
+# ------------------------------------------------------------------ a second run keeps what the first made
 
 def _counting(c, client, method):
     calls = []
@@ -153,7 +153,7 @@ def _counting(c, client, method):
     setattr(getattr(c, client), method, counted)
     return calls
 
-def test_grant_run_again_keeps_the_role_and_its_permits():                 # Review Focus 1
+def test_grant_run_again_keeps_the_role_and_its_permits():
     c = FakeClients()
     created = _counting(c, "iam", "create_role")
     first = steps.grant(dict(CTX), c, ENV)
@@ -162,7 +162,7 @@ def test_grant_run_again_keeps_the_role_and_its_permits():                 # Rev
     assert first["roleArn"] == second["roleArn"] and first["toolPolicies"] == second["toolPolicies"]
     assert len(c.created_policies) == 2 and c.deleted_policies == []
 
-def test_entry_run_again_keeps_the_target_and_its_policies():              # Review Focus 1
+def test_entry_run_again_keeps_the_target_and_its_policies():
     c = FakeClients(runtime_arn=RUNTIME_ARN)
     created = _counting(c, "ctl", "create_gateway_target")
     first = steps.entry({**CTX, "roleArn": "r"}, c, ENV)
@@ -171,7 +171,7 @@ def test_entry_run_again_keeps_the_target_and_its_policies():              # Rev
     assert [p["name"] for p in c.created_policies] == ["review_permit_quality_agent", "guard_secret_quality_agent"]
     assert (first["reviewPolicy"], first["guardPolicy"]) == (second["reviewPolicy"], second["guardPolicy"])
 
-# ------------------------------------------------------------------ final review M-2: Entry trusts no Runtime ARN but this agent's
+# ------------------------------------------------------------------ Entry trusts no Runtime ARN but this agent's
 
 @pytest.mark.parametrize("arn", [
     "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/hub_release_review-Ab12Cd34Ef",       # another agent
@@ -198,7 +198,7 @@ def test_entry_refuses_a_target_of_this_name_that_points_to_another_runtime():
         steps.entry({**CTX, "roleArn": "r"}, c, ENV)
     assert c.target_arns == {"QualityAgent": other} and c.created_policies == []
 
-# ------------------------------------------------------------------ final review I-1: Read binds the application to its record
+# ------------------------------------------------------------------ Read binds the application to its record
 
 def test_read_refuses_an_application_whose_name_is_not_the_records():
     c = FakeClients(record_name="foo")                       # record foo, application quality_agent
@@ -308,7 +308,7 @@ def test_approve_refuses_a_record_that_changed_in_any_way_after_read(change):
         steps.approve({**ctx, "target": "QualityAgent", "entryPermitBefore": False}, c, ENV)
     assert c.record_status == "PENDING_APPROVAL" and c.status_reason is None and c.created_policies == []
 
-# ------------------------------------------------------------------ final review I-2: Approve requires the record to be pending
+# ------------------------------------------------------------------ Approve requires the record to be pending
 
 @pytest.mark.parametrize("status", ["REJECTED", "DRAFT", "APPROVED"])
 def test_approve_refuses_a_record_that_is_no_longer_pending(status):
@@ -330,7 +330,7 @@ def _changes_while_the_entry_permit_waits(c, change):
     (lambda c: setattr(c, "record_status", "REJECTED"), "record quality_agent is REJECTED, not PENDING_APPROVAL"),
     (lambda c: setattr(c, "record_spec", {**SPEC, "code_version": "v2"}), "the record changed after the review started"),
 ])
-def test_approve_checks_the_record_again_right_before_approving(change, message):     # ledger 184: the second check
+def test_approve_checks_the_record_again_right_before_approving(change, message):     # the second check
     c = FakeClients()
     _changes_while_the_entry_permit_waits(c, change)
     with pytest.raises(RuntimeError, match=message):
@@ -486,7 +486,7 @@ def test_a_failed_take_back_still_says_why_the_approval_stopped():
     assert "taking back entry_permit_quality_agent" in str(e.value) and "AccessDeniedException" in str(e.value)
     assert c.status_reason is None
 
-# ------------------------------------------------------------------ fix round 1: every failure after the entry permit takes it back
+# ------------------------------------------------------------------ every failure after the entry permit takes it back
 
 def _status_update_fails(c):
     def unavailable(**kw):

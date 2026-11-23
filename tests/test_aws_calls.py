@@ -195,7 +195,7 @@ def test_reject_calls_match_the_service_models(aws):
     c, stubs = aws
     stubs["reg"].add_response("list_registry_records", {"registryRecords": [_record("PENDING_APPROVAL")]},
                               {"registryId": REG, "maxResults": 100})
-    other = f"arn:aws:states:{REGION}:{ACCOUNT}:execution:hub-review:other"          # final review M-3: is a review running?
+    other = f"arn:aws:states:{REGION}:{ACCOUNT}:execution:hub-review:other"          # is a review running?
     stubs["sfn"].add_response("list_executions", {"executions": [{
         "executionArn": other, "stateMachineArn": MACHINE, "name": "other", "status": "RUNNING", "startDate": NOW}]},
         {"stateMachineArn": MACHINE, "statusFilter": "RUNNING"})
@@ -264,7 +264,7 @@ def _running(stubs, *reviews):
 
 
 def test_read_calls_match_the_service_model(aws):
-    """final review I-1: Read reads the record's name and type from GetRegistryRecord's answer. Then it looks for an
+    """Read reads the record's name and type from GetRegistryRecord's answer. Then it looks for an
     earlier review of the record (ListExecutions, DescribeExecution): here only this one runs."""
     c, stubs = aws
     stubs["reg"].add_response("get_registry_record", _full_record("PENDING_APPROVAL"), {"registryId": REG, "recordId": REC})
@@ -308,7 +308,7 @@ def _approval(reg):
 
 
 def test_approve_calls_match_the_service_models(aws):
-    """final review I-2: Approve reads the record (its status too) before and after making the entry permit.
+    """Approve reads the record (its status too) before and after making the entry permit.
     Between the first read and the entry permit it reads the company policies' modes: none are deployed here."""
     c, stubs = aws
     reg, ctl = stubs["reg"], stubs["ctl"]
@@ -391,7 +391,7 @@ def _target(arn):
 
 
 def test_a_found_target_is_kept_only_when_it_points_to_this_runtime(aws):
-    """final review M-2: ensure_runtime_target reads the found target's Runtime from GetGatewayTarget's answer."""
+    """ensure_runtime_target reads the found target's Runtime from GetGatewayTarget's answer."""
     from platform_team.agent_gateway.gateway_targets import ensure_runtime_target
     c, stubs = aws
     ctl = stubs["ctl"]

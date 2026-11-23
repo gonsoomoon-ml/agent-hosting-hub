@@ -5,7 +5,7 @@ OK = {"name": "quality_agent", "team": "appliance", "framework": "strands", "too
 def test_valid_application_has_no_problems():
     assert validate(OK, CATALOG) == []
 
-def test_unknown_tool_is_reported():          # Review Focus 3
+def test_unknown_tool_is_reported():
     problems = validate({**OK, "tools": ["Parts___get_part_spec", "Parts___delete_everything"]}, CATALOG)
     assert problems == ["tool not in the catalog: Parts___delete_everything"]
 
@@ -17,7 +17,7 @@ def test_an_application_may_name_no_hub_tool():
     """An agent whose tools run in its own process calls no tool through the hub: its list of hub tools is empty."""
     assert validate({"name": "docs_adk", "team": "common", "framework": "google-adk", "tools": []}, CATALOG) == []
 
-# final review I-1: publish refuses the same shapes as the review's Read
+# publish refuses the same shapes as the review's Read
 
 def test_tools_that_are_not_a_list_are_reported_once():
     for tools in ("Parts___get_part_spec", {"Parts___get_part_spec": 1}, 3):

@@ -2,7 +2,8 @@
 #
 # The smallest set: one gateway role, one policy engine, a gateway without a protocol type (for Runtime targets) and an
 # MCP gateway, both attached to the same engine in ENFORCE mode; one Lambda tool target; one Cedar policy; one Registry.
-# The argument values mirror what checks/whole-process created with boto3. Every name starts with "hubtf".
+# The argument values are the ones an earlier check made the same resources with through boto3. Every name starts
+# with "hubtf".
 #
 #   terraform -chdir=e2e_checks/spikes/spike_terraform init
 #   terraform -chdir=e2e_checks/spikes/spike_terraform apply -auto-approve

@@ -28,7 +28,7 @@ def test_policy_makers_have_the_actions_found_by_running():
     assert "var.tool_gateway_arn" in document("grant") and "var.agent_gateway_arn" not in document("grant")   # grant is scoped to the tool gateway
     assert "var.agent_gateway_arn" in document("entry")
 
-# ------------------------------------------------------------------ fix round 1: the agent role's boundary, approve re-reads
+# ------------------------------------------------------------------ the agent role's boundary, approve re-reads
 
 def statements(doc):
     return re.findall(r"\n  statement {(.*?)\n  }", doc, re.S)
