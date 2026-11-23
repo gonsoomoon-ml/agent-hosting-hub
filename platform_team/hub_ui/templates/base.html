@@ -171,6 +171,49 @@
   dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 18px; margin: 0; align-items: baseline; }
   dl.facts dt { font-weight: 600; } dl.facts dd { margin: 0; }
   dl.facts .tech { display: block; margin-top: 2px; }
+  /* Hosting review: the seven steps as seven equal boxes (number and step, the AWS service, mark, state and seconds) */
+  ol.steps.review { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; margin: 4px 0 12px; }
+  ol.steps.review .step { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 10px; border: 1px solid transparent; }
+  ol.steps.review .step .head { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  ol.steps.review .step .n { opacity: 0.75; font-size: 0.85em; margin-right: 2px; }
+  ol.steps.review .step .name { font-weight: 700; }
+  ol.steps.review .step .tech { color: inherit; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  ol.steps.review .step .state { display: flex; flex-wrap: wrap; gap: 0 8px; }
+  ol.steps.review .step .word, ol.steps.review .step .secs { white-space: nowrap; }
+  ol.steps.review .step .secs { font-variant-numeric: tabular-nums; }
+  ol.steps.review .step.waiting { border-color: var(--line); }
+  ol.steps.review .step.running { box-shadow: 0 0 0 3px var(--coral-tint); }
+  ol.steps.review .step.running .mark { display: inline-block; animation: hub-pulse 1.2s ease-in-out infinite; }
+  @keyframes hub-pulse { 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { ol.steps.review .step.running .mark { animation: none; } }
+  ol.steps.review.large { gap: 8px; }
+  ol.steps.review.large .step { padding: 12px 12px 10px; font-size: 1em; }
+  ol.steps.review.large .step .name { font-size: 1.1em; }
+  .app .app-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .app .app-head h2 { margin: 0; font-size: 1.25em; }
+  .app .app-head h2 a { color: var(--ink); text-decoration: none; }
+  .app .app-head h2 a:hover { text-decoration: underline; }
+  .app .app-review { margin-left: auto; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .app .app-facts { display: flex; gap: 6px 22px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .app .desc { margin: 0 0 8px; }
+  .app .strip-label { margin: 8px 0 4px; }
+  .app .err { margin: 0; }
+  code.tool { background: var(--code-bg); border-radius: 4px; padding: 1px 6px; margin-right: 2px; }
+  .intro .tech { white-space: nowrap; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .layout.review-layout { grid-template-columns: minmax(0, 1fr) 480px; }
+  @media (max-width: 1100px) { .layout.review-layout { grid-template-columns: 1fr; } }
+  #panel-application .app-facts { margin: 0; align-items: center; }
+  #panel-application .desc { margin: 8px 0 0; }
+  #panel-findings h2 .tech { display: block; margin: 2px 0 0; }
+  #panel-findings pre.findings { font-size: 0.85em; margin: 0 0 10px; }
+  .review-meta { display: flex; gap: 8px 16px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+  .review-meta code.exec { word-break: break-all; }
+  .review-meta .console { margin-left: auto; font-weight: 600; }
+  .review-error { display: flex; flex-direction: column; gap: 4px; }
+  table.steps-table td { vertical-align: middle; }
+  pre.findings { white-space: pre-wrap; word-break: break-word; margin: 0; }
+  #panel-reject textarea { max-width: none; }
 </style>
 </head>
 <body data-live="{{ '1' if live else '0' }}">

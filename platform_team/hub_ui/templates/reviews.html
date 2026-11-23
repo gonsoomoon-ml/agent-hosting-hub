@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% from "_steps.html" import strip with context %}
+{% block content %}
+<h1>{{ t("reviews.title") }}</h1>
+<p class="intro">{{ t("reviews.intro") }} <span class="tech">{{ t("drawn_at") }} {{ ts(now) }}</span></p>
+
+<section id="panel-applications">
+  {% if not view.reviews.ok %}{% with panel = view.reviews %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+  {% if view.applications.ok %}
+  {% for a in view.applications.value %}
+  <article class="card p1 app">
+    <div class="app-head">
+      <h2><a href="/reviews/{{ a.agent }}">{{ a.agent }}</a></h2>
+      <span><span class="pill {{ pill(a.status) }}">{{ a.status }}</span>{% if t.has("status." ~ a.status) %} <span class="muted">{{ t("status." ~ a.status) }}</span>{% endif %}</span>
+      <span class="tech">{{ services.catalog }}</span>
+      <span class="app-review">
+        {% if a.review %}
+        <span><span class="pill {{ pill(a.review.status) }}">{{ a.review.status }}</span>{% if t.has("exec." ~ a.review.status) %} <span class="muted">{{ t("exec." ~ a.review.status) }}</span>{% endif %}</span>
+        <span class="muted">{{ t("reviews.started") }} {{ ts(a.review.started) }} · {{ t("reviews.took") }} {{ t("reviews.seconds", n=a.review.seconds) }}</span>
+        {% endif %}
+        <a class="open" href="/reviews/{{ a.agent }}">{{ t("reviews.open") }} →</a>
+      </span>
+    </div>
+    <p class="app-facts">
+      <span>{{ t("reviews.app.team") }} <strong>{{ a.team or "—" }}</strong></span>
+      <span>{{ t("reviews.app.framework") }} <strong>{{ a.framework or "—" }}</strong></span>
+      <span>{{ t("reviews.app.tools") }} {% for tool in a.tools %}<code class="tool">{{ tool }}</code> {% else %}<span class="muted">{{ t("reviews.app.no_tools") }}</span>{% endfor %}</span>
+    </p>
+    {% if a.description %}<p class="muted desc">{{ a.description }}</p>{% endif %}
+    {% if a.review %}
+    <div class="strip-label"><span class="tech">{{ services.machine }}</span></div>
+    {{ strip(a.review.steps) }}
+    {% if a.review.failed_step %}<p class="err"><strong>{{ t("reviews.failed_at", step=a.review.failed_step) }}</strong> · <span class="mono">{{ a.review.error }}</span></p>{% endif %}
+    {% elif view.reviews.ok %}
+    <p class="muted">{{ t("reviews.no_review") }}</p>
+    {% endif %}
+  </article>
+  {% else %}
+  <p class="muted">{{ t("reviews.none") }}</p>
+  {% endfor %}
+  {% else %}{% with panel = view.applications %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+{% endblock %}

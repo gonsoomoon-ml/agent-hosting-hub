@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% from "_steps.html" import strip with context %}
+{% block content %}
+{% set a = view.applications.value[0] if view.applications.ok else none %}
+<a class="back" href="/reviews">← {{ t("reviews.back") }}</a>
+<h1>{{ agent }}</h1>
+<p class="intro">{{ t("review.intro") }} <span class="tech">{{ t("drawn_at") }} {{ ts(now) }}</span></p>
+
+{% if not a %}
+<section id="panel-application" class="card">{% with panel = view.applications %}{% include "_panel_error.html" %}{% endwith %}</section>
+{% else %}
+{% set r = a.review %}
+<section id="panel-application" class="card p1 app">
+  <h2 class="sr">{{ t("reviews.app.title") }}</h2>
+  <p class="app-facts">
+    <span>{{ t("reviews.app.status") }} <span class="pill {{ pill(a.status) }}">{{ a.status }}</span>{% if t.has("status." ~ a.status) %} <span class="muted">{{ t("status." ~ a.status) }}</span>{% endif %}</span>
+    <span>{{ t("reviews.app.team") }} <strong>{{ a.team or "—" }}</strong></span>
+    <span>{{ t("reviews.app.framework") }} <strong>{{ a.framework or "—" }}</strong></span>
+    <span>{{ t("reviews.app.tools") }} {% for tool in a.tools %}<code class="tool">{{ tool }}</code> {% else %}<span class="muted">{{ t("reviews.app.no_tools") }}</span>{% endfor %}</span>
+    <span>{{ t("reviews.app.record") }} <code>{{ a.record_id }}</code></span>
+    <span class="tech">{{ services.catalog }}</span>
+  </p>
+  {% if a.description %}<p class="muted desc">{{ a.description }}</p>{% endif %}
+</section>
+
+<div class="layout review-layout">
+  <section id="panel-steps" class="card p1">
+    <h2>{{ t("reviews.steps.title") }}<span class="tech">{{ services.machine }}</span></h2>
+    {% if r %}
+    <div class="review-meta">
+      <span>{{ t("reviews.execution") }} <code class="exec">{{ r.name }}</code></span>
+      <span><span class="pill {{ pill(r.status) }}">{{ r.status }}</span>{% if t.has("exec." ~ r.status) %} <span class="muted">{{ t("exec." ~ r.status) }}</span>{% endif %}</span>
+      <span class="muted">{{ t("reviews.started") }} {{ ts(r.started) }} · {{ t("reviews.took") }} {{ t("reviews.seconds", n=r.seconds) }}</span>
+      <a class="console" href="/reviews/{{ agent }}/console" target="_blank" rel="noopener">{{ t("reviews.console") }} ↗</a>
+    </div>
+    {{ strip(r.steps, large=True) }}
+    {% if r.failed_step %}<div class="err review-error"><strong>{{ t("reviews.failed_at", step=r.failed_step) }}</strong><span class="mono">{{ r.error }}</span></div>{% endif %}
+    <div class="table-wrap">
+    <table class="steps-table">
+      <thead><tr><th class="right">#</th><th>{{ t("col.step") }}</th><th>{{ t("col.does") }}</th><th>{{ t("col.service") }}</th><th>{{ t("col.state") }}</th><th class="right">{{ t("col.seconds") }}</th></tr></thead>
+      <tbody>
+      {% for row in r.steps %}
+        <tr>
+          <td class="right muted">{{ loop.index }}</td>
+          <td class="mono name">{{ row.name }}</td>
+          <td>{{ t("step.does." ~ row.name) }}</td>
+          <td class="tech">{{ row.runs_on }}</td>
+          <td><span class="pill {{ state_pills.get(row.state, '') }}">{{ t("step." ~ row.state) }}</span></td>
+          <td class="right">{% if row.seconds is not none %}{{ t("reviews.seconds", n=row.seconds) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% elif view.reviews.ok %}
+    <p class="muted">{{ t("reviews.no_review") }}</p>
+    {% else %}{% with panel = view.reviews %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+  </section>
+
+  <aside>
+    {% if r and r.findings %}
+    <section id="panel-findings" class="card">
+      <h2>{{ t("findings.title") }}<span class="tech">{{ services.build }} · {{ services.logs }}</span></h2>
+      {% if r.findings.ok %}
+      {% set f = r.findings.value %}
+      {% if not f.log %}<p class="muted">{{ t("findings.no_log") }}</p>
+      {% else %}
+      {% if f.lines %}<pre class="findings">{{ f.lines | join("\n") }}</pre>{% else %}<p class="muted">{{ t("findings.none") }}</p>{% endif %}
+      <p class="hint">{{ t("findings.hint") }}</p>
+      <p class="tech">{{ f.log }}</p>
+      {% endif %}
+      {% else %}{% with panel = r.findings %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+    </section>
+    {% endif %}
+
+    <section id="panel-reject" class="card">
+      <h2>{{ t("reject.title") }}</h2>
+      <p class="hint">{{ t("reject.hint") }}</p>
+      {% if a.can_reject %}
+      {% if r and r.status == "RUNNING" %}<p class="warn">{{ t("reject.while_running") }}</p>{% endif %}
+      <form method="post" action="/reviews/{{ agent }}/reject">
+        <input type="hidden" name="token" value="{{ token }}">
+        <label for="reason">{{ t("reject.reason") }}</label>
+        <textarea id="reason" name="reason" maxlength="{{ max_reason }}" required placeholder="{{ t('reject.placeholder') }}"></textarea>
+        <div class="actions"><button class="danger" type="submit" data-busy="{{ t('reject.busy') }}">{{ t("reject.button") }}</button></div>
+      </form>
+      {% elif a.status not in rejectable %}
+      <p class="muted">{{ t("reject.not_status", status=a.status) }}</p>
+      {% else %}
+      <p class="muted">{{ t("reject.job_running") }}</p>
+      {% endif %}
+    </section>
+  </aside>
+</div>
+{% endif %}
+{% endblock %}

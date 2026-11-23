@@ -42,16 +42,16 @@ from platform_team.shared_code.hub_state import NotDeployed, Platform
 
 DEFAULT_PORT = 8300
 DEFAULT_LANG = "ko"
-SCREENS = ("home",)                     # the modules under platform_team/hub_ui whose `router` the app includes
+SCREENS = ("home", "reviews")           # the modules under platform_team/hub_ui whose `router` the app includes
 HERE = Path(__file__).parent
 COOKIE_SECONDS = 60 * 60 * 24 * 365
 # The pill color of a state AWS or a job gives (base.html: .pill.ok, .pending, .draft, .bad); another state is grey.
 PILLS = {
-    "ok": ("APPROVED", "READY", "ACTIVE", "OK", "done"),
-    "pending": ("PENDING_APPROVAL", "LOG_ONLY", "INSUFFICIENT_DATA", "CREATING", "UPDATING", "running"),
+    "ok": ("APPROVED", "READY", "ACTIVE", "OK", "SUCCEEDED", "done"),
+    "pending": ("PENDING_APPROVAL", "LOG_ONLY", "INSUFFICIENT_DATA", "CREATING", "UPDATING", "RUNNING", "running"),
     "draft": ("DRAFT",),
     "bad": ("REJECTED", "ALARM", "FAILED", "CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED", "UPDATE_UNSUCCESSFUL",
-            "DELETING", "failed"),
+            "DELETING", "TIMED_OUT", "ABORTED", "failed"),
 }
 
 
@@ -61,9 +61,11 @@ def pill(state: Any) -> str:
 
 
 class Hub:
-    """What the routes share: the settings, the AWS clients, the platform values, the cache, the jobs, the page
-    token and the script nonce (both new at every start). The platform values are read once, at the first page that
-    needs them (a hub that is not deployed is asked again at the next page)."""
+    """What the routes share: the settings, the AWS clients, the platform values, the cache, the values kept for good,
+    the jobs, the page token and the script nonce (both new at every start). The platform values are read once, at
+    the first page that needs them (a hub that is not deployed is asked again at the next page). `kept` holds what
+    never changes once AWS has it (an execution's input, a finished execution's history) while the app runs; a job
+    does not clear it."""
 
     def __init__(self, s: Settings, c, platform: Platform | None, *, port: int, cache_seconds: float, lang: str,
                  zone: str):
@@ -71,6 +73,7 @@ class Hub:
         self._platform = platform
         self._lock = threading.Lock()
         self.cache = Cache(cache_seconds)
+        self.kept: dict[str, Any] = {}
         self.jobs = Jobs(on_end=self.cache.clear)
         self.token = safety.new_token()
         self.nonce = safety.new_nonce()

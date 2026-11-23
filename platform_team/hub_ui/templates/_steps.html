@@ -1,0 +1,16 @@
+{# The seven steps of a review as a strip of boxes: number and step, the AWS service that runs it (class tech), a mark
+   and the word of its state, and its seconds. Colors from base.html (ol.steps): passed green, running coral, failed
+   red, skipped dashed, waiting grey; the mark says the same without color.
+   {% from "_steps.html" import strip with context %} ... {{ strip(review.steps, large=True) }} #}
+{% macro strip(steps, large=False) -%}
+{% set marks = {"waiting": "○", "running": "●", "passed": "✓", "failed": "✕", "skipped": "–"} %}
+<ol class="steps review{{ ' large' if large }}" aria-label="{{ t('reviews.steps.title') }}">
+  {% for row in steps %}
+  <li class="step {{ row.state }}">
+    <span class="head"><span class="n">{{ loop.index }}</span> <span class="name">{{ row.name }}</span></span>
+    <span class="tech">{{ row.runs_on }}</span>
+    <span class="state"><span class="word"><span class="mark" aria-hidden="true">{{ marks[row.state] }}</span> {{ t("step." ~ row.state) }}</span>{% if row.seconds is not none %} <span class="secs">{{ t("reviews.seconds", n=row.seconds) }}</span>{% endif %}</span>
+  </li>
+  {% endfor %}
+</ol>
+{%- endmacro %}
