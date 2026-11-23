@@ -562,6 +562,7 @@ class _Cw(_Client):
     def get_metric_data(self, MetricDataQueries, **kw):
         """Each query's points from `metric_data` ((metric name, the value of its Name dimension) -> [(time, value)])."""
         out = []
+        self.o.metric_queries.extend(MetricDataQueries)
         for q in MetricDataQueries:
             metric = q["MetricStat"]["Metric"]
             name = next((d["Value"] for d in metric["Dimensions"] if d["Name"] == "Name"), "")
@@ -634,6 +635,7 @@ class FakeClients:
         self.gateways = {PLATFORM.agent_gw["id"]: {"name": "hub-agents", "status": "READY", "interceptorConfigurations": []},
                          PLATFORM.tool_gw["id"]: {"name": "hub-tools", "status": "READY"}}
         self.alarms, self.errors, self.metric_data, self.statistics = [], {}, {}, {}
+        self.metric_queries = []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
         self.sns, self.cw = _Sns(self), _Cw(self)

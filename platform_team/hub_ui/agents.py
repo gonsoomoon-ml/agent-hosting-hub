@@ -46,7 +46,7 @@ def _alarm_series(hub: Hub, alarm: dict) -> list[tuple[str, int]]:
     start = (now - timedelta(minutes=ALARM_MINUTES - 1)).replace(second=0, microsecond=0)
     query = {"Id": "calls", "MetricStat": {"Metric": {"Namespace": alarm["Namespace"], "MetricName": alarm["MetricName"],
                                                       "Dimensions": alarm["Dimensions"]},
-                                           "Period": 60, "Stat": "Sum"}}
+                                           "Period": alarm.get("Period", 60), "Stat": alarm.get("Statistic", "Sum")}}
     pages = hub.c.cw.get_paginator("get_metric_data").paginate(MetricDataQueries=[query], StartTime=start, EndTime=now)
     points: dict[str, float] = {}
     for pg in pages:
@@ -85,7 +85,7 @@ def _row(hub: Hub, agent: str, arn: str, records: dict, entries: dict | None, en
     record = records.get(agent)
     row = {"agent": agent, "team": "", "framework": "", "status": (record or {}).get("status", ""),
            "hosted_as": hosted_as, "stopped": False, "stop_error": entries_error, "app_error": "",
-           "can_stop": entries is not None and hub.s.target_name(agent) in entries, "usage": None}
+           "can_stop": None if entries is None else hub.s.target_name(agent) in entries, "usage": None}
     if record is not None:
         try:
             app = application(hub, record)
@@ -140,6 +140,10 @@ def _stop_job(hub: Hub, agent: str, say) -> dict:
     """What stop.sh does: stop_agent.stop (its lines go to the job), then one line for the sessions."""
     out = stop_agent.stop(hub.c, hub.s, hub.platform(), agent, say=say)
     say(f"sessions: {len(out['stopped'])} stopped, {len(out['ended'])} already ended, {len(out['failed'])} not stopped")
+    if out["failed"]:                   # the command exits 1 here, with this line
+        raise RuntimeError(f"{agent} is blocked at the entry by {out['policy']}; {len(out['failed'])} of "
+                           f"{len(out['failed']) + len(out['stopped'])} sessions not stopped: run stop again, or give "
+                           "the session with --session <ID>")
     return out
 
 
@@ -152,8 +156,8 @@ def _resume_job(hub: Hub, agent: str, say) -> dict:
 
 def _press(request: Request, agent: str, kind: str, run):
     hub: Hub = request.app.state.hub
-    if name_problems(agent):
-        return back(request, "/agents", err="agent")
+    if name_problems(agent) or agent not in usage_report.hosted_agents(hub.c, hub.s):
+        return back(request, "/agents", err="agent")        # a name the form refuses, or no hosted agent of that name
     hub.jobs.start(kind, agent, lambda say: run(hub, agent, say))       # jobs.Busy: the app answers
     return back(request, "/agents", msg="started")
 

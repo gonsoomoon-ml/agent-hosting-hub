@@ -79,7 +79,7 @@ Step Functions 콘솔 링크는 `/reviews/<에이전트>/console`을 거친다. 
 | 기록 모드로 걸기, 적용 모드로 올리기, 끄기 | `POST /policies/guard_prompt/mode`, 폼 값 `token`과 `mode`(`log-only`, `active`, `off`) | `policy_rollout.rollout(…, "log-only" 또는 "active")`, `policy_rollout.remove`(`rollout.sh`와 같다) |
 | 커스텀 가드레일 붙이기, 떼기 | `POST /guardrail/attach`, `POST /guardrail/detach`, 폼 값 `token` | `guardrail_attach.attach`, `guardrail_attach.detach`(`guardrail.sh`와 같다) |
 
-지금 모드의 버튼은 눌리지 않는다. 모르는 전사 정책이나 모드, 모르는 동작은 작업을 시작하지 않고 빨간 칸에 문장을 보인다. 모드 작업은 함수가 끝난 뒤에 에이전트마다 정책 엔진에서 다시 읽은 모드를 한 줄씩 작업 칸에 적는다.
+지금 모드의 버튼은 눌리지 않는다. 작업은 명령이 1로 끝나는 경우(에이전트가 실패했거나, 정책 엔진에서 다시 읽은 모드가 다를 때)에 실패로 끝나고 이유는 명령이 찍는 한 줄과 같다. 모르는 전사 정책이나 모드, 모르는 동작은 작업을 시작하지 않고 빨간 칸에 문장을 보인다. 모드 작업은 함수가 끝난 뒤에 에이전트마다 정책 엔진에서 다시 읽은 모드를 한 줄씩 작업 칸에 적는다.
 
 ## 에이전트
 
@@ -98,9 +98,9 @@ harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추�
 | 멈추기 | `POST /agents/<에이전트>/stop`, 폼 값 `token` | `stop_agent.stop`(`stop.sh`와 같다) |
 | 재개 | `POST /agents/<에이전트>/resume`, 폼 값 `token` | `stop_agent.resume`(`resume.sh`와 같다) |
 
-에이전트 이름이 신청서의 이름 규칙에 맞지 않으면 작업을 시작하지 않고 빨간 칸에 문장을 보인다.
+멈추기는 끝내지 못한 세션이 있으면 명령처럼 실패로 끝난다. 에이전트 이름이 신청서의 이름 규칙에 맞지 않거나 호스팅된 에이전트가 아니면 작업을 시작하지 않고 빨간 칸에 문장을 보인다.
 
-두 페이지는 가짜 AWS 값으로만 확인했다(1920×1080의 밝은 테마, 한국어). 올라와 있는 허브에서는 아직 띄워 보지 않았다.
+두 페이지는 2026-11-23에 가짜 AWS 값으로 확인했다. 올라와 있는 허브에서는 아직 띄워 보지 않았다.
 
 ## 작업(버튼)
 

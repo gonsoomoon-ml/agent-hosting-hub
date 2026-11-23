@@ -84,7 +84,7 @@ def test_the_company_panel_shows_both_policies_in_each_mode():
         web = screen(fleet(mode))
         company = policies.view(web.app.state.hub)["company"]["value"]
         assert company["guard_secret"] == {"key": "guard_secret", "fixed": True, "agents": 2}
-        assert company["guard_prompt"] == {"key": "guard_prompt", "mode": mode}
+        assert company["guard_prompt"] == {"key": "guard_prompt", "mode": mode, "error": ""}
         text = panel(web.get("/policies?lang=ko").text, "panel-company")
         assert STRINGS["ko"]["policy.guard_secret.says"] in text and STRINGS["ko"]["policy.guard_prompt.says"] in text
         assert f"guard_prompt {word}" in text, (mode, text)
@@ -297,3 +297,49 @@ def test_one_failing_read_is_one_line_and_the_other_panels_show():
 
 def test_the_menu_marks_the_page():
     assert 'aria-current="page" class="active" href="/policies"' in screen(fleet("LOG_ONLY")).get("/policies").text
+
+
+def rolled(c, monkeypatch, out, word="log-only"):
+    monkeypatch.setattr(policy_rollout, "rollout", lambda c_, s, p, key, w, say=print: out)
+    monkeypatch.setattr(policy_rollout, "remove", lambda c_, s, p, key, say=print: out)
+    web = screen(c)
+    web.post("/policies/guard_prompt/mode", headers=ORIGIN, data={"token": token(web.get("/policies").text),
+                                                                 "mode": word})
+    job = web.app.state.hub.jobs.current()
+    assert job.wait(5)
+    return job
+
+
+def test_a_rollout_ends_failed_where_the_command_exits_1(monkeypatch):
+    ok = {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {"a": "created", "b": "created"},
+          "read": {"a": "LOG_ONLY", "b": "LOG_ONLY"}}
+    assert rolled(fleet(None), monkeypatch, ok).state == "done"
+    failed = {**ok, "agents": {"a": "created", "b": "failed"}, "read": {"a": "LOG_ONLY", "b": None}}
+    job = rolled(fleet(None), monkeypatch, failed)
+    assert job.state == "failed"
+    assert job.error.endswith("guard_prompt is LOG_ONLY in SSM; 1 of 2 agents failed: run the command again")
+    assert len(job.lines) == 2                                      # the read-back lines are still there
+    other = {**ok, "read": {"a": "LOG_ONLY", "b": "ACTIVE"}}
+    job = rolled(fleet(None), monkeypatch, other)
+    assert job.state == "failed" and job.error.endswith(
+        "guard_prompt is LOG_ONLY in SSM; b reads another mode: run the command again")
+    left = {"policy": "guard_prompt", "agents": {"a": "removed"}, "read": {"a": None, "b": "ACTIVE"}}
+    job = rolled(fleet("LOG_ONLY"), monkeypatch, left, "off")
+    assert job.state == "failed" and job.error.endswith(
+        "guard_prompt is off in SSM; b still has the policy: run the command again")
+    gone = {"policy": "guard_prompt", "agents": {"a": "removed"}, "read": {"a": None}}
+    assert rolled(fleet("LOG_ONLY"), monkeypatch, gone, "off").state == "done"
+
+
+def test_a_bad_mode_in_ssm_keeps_the_guard_secret_card_and_the_turn_off_button():
+    c = fleet("LOG_ONLY")
+    c.parameters[S.ssm("policies", "guard_prompt")] = "LOUD"
+    web = screen(c)
+    page = web.get("/policies?lang=ko").text
+    text = panel(page, "panel-company")
+    assert STRINGS["ko"]["panel.error"] in text and "LOUD" in text and "guard_secret" in text
+    (form, controls), = forms(page, "panel-company")
+    assert form["action"] == "/policies/guard_prompt/mode"
+    assert [b["value"] for b in controls if b["tag"] == "button"] == ["off"]
+    assert "disabled" not in next(b for b in controls if b["tag"] == "button")
+

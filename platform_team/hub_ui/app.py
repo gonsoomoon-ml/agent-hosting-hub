@@ -42,7 +42,8 @@ from platform_team.shared_code.hub_state import NotDeployed, Platform
 
 DEFAULT_PORT = 8300
 DEFAULT_LANG = "ko"
-SCREENS = ("home", "reviews", "policies", "agents")           # the modules under platform_team/hub_ui whose `router` the app includes
+# the modules under platform_team/hub_ui whose `router` the app includes
+SCREENS = ("home", "reviews", "policies", "agents")
 HERE = Path(__file__).parent
 COOKIE_SECONDS = 60 * 60 * 24 * 365
 # The pill color of a state AWS or a job gives (base.html: .pill.ok, .pending, .draft, .bad); another state is grey.

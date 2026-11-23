@@ -25,11 +25,12 @@
       </div>
       <p class="says">{{ t("policy.guard_prompt.says") }}</p>
       <p class="hint">{{ t("policy.guard_prompt.modes") }}</p>
+      {% if prompt.error %}{% with panel = {"error": prompt.error} %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
       <form method="post" action="/policies/guard_prompt/mode">
         <input type="hidden" name="token" value="{{ token }}">
         <div class="actions">
-          {% for word, now_mode in (("log-only", "LOG_ONLY"), ("active", "ACTIVE"), ("off", none)) %}
-          <button class="{{ 'danger' if word == 'off' else 'primary' if word == 'log-only' else 'secondary' }}" type="submit" name="mode" value="{{ word }}"{% if view.busy or prompt.mode == now_mode %} disabled{% endif %}{% if prompt.mode == now_mode %} title="{{ t('policy.is_now') }}"{% endif %} data-busy="{{ t('policy.busy') }}">{{ t("policy.btn." ~ word) }}</button>
+          {% for word, now_mode in (("log-only", "LOG_ONLY"), ("active", "ACTIVE"), ("off", none)) if not (prompt.error and word != "off") %}
+          <button class="{{ 'danger' if word == 'off' else 'primary' if word == 'log-only' else 'secondary' }}" type="submit" name="mode" value="{{ word }}"{% if view.busy or (prompt.mode == now_mode and not prompt.error) %} disabled{% endif %}{% if prompt.mode == now_mode and not prompt.error %} title="{{ t('policy.is_now') }}"{% endif %} data-busy="{{ t('policy.busy') }}">{{ t("policy.btn." ~ word) }}</button>
           {% endfor %}
         </div>
       </form>

@@ -110,7 +110,7 @@ def test_the_page_lists_hosted_agents_with_usage_and_stop_state():
     assert "최근 60분" in text
     actions = {a["action"] for tag, a in panel_elements(page, "panel-agents") if tag == "form"}
     assert actions == {"/agents/docs_adk/stop", "/agents/quality_agent/stop", "/agents/release_review/resume"}
-    assert "/agents/parts_harness/stop" not in actions 
+    assert "/agents/parts_harness/stop" not in actions
     english = panel(web.get("/agents?lang=en").text, "panel-agents")
     assert STRINGS["en"]["agent.no_entry"] in english and "Stopped" in english and "Stop" in english
 
@@ -166,7 +166,7 @@ def test_stop_and_resume_call_the_same_functions_as_the_commands(monkeypatch):
         calls.append(("stop", c, s, p, agent))
         say("blocking the entry")
         return {"agent": agent, "policy": f"stop_agent_{agent}", "stopped": ["s1", "s2"], "ended": ["s3"],
-                "failed": {"s4": "denied"}}
+                "failed": {}}
 
     def resume(c, s, p, agent):
         calls.append(("resume", c, s, p, agent))
@@ -177,7 +177,7 @@ def test_stop_and_resume_call_the_same_functions_as_the_commands(monkeypatch):
     web = screen(c)
     hub = web.app.state.hub
     page = web.get("/agents").text
-    for action, agent, line in (("stop", "quality_agent", "sessions: 2 stopped, 1 already ended, 1 not stopped"),
+    for action, agent, line in (("stop", "quality_agent", "sessions: 2 stopped, 1 already ended, 0 not stopped"),
                                 ("resume", "release_review", "resumed")):
         r = web.post(f"/agents/{agent}/{action}", headers=ORIGIN, data={"token": token(page)}, follow_redirects=False)
         assert r.status_code == 303 and r.headers["location"] == "/agents?msg=started"
@@ -301,3 +301,57 @@ def test_a_record_with_markup_is_shown_as_text():
 
 def test_the_menu_marks_the_page():
     assert 'aria-current="page" class="active" href="/agents"' in screen(fleet()).get("/agents").text
+
+
+def test_a_well_formed_name_that_is_not_hosted_is_refused_before_any_job(monkeypatch):
+    calls = []
+    monkeypatch.setattr(stop_agent, "stop", lambda *a, **kw: calls.append("stop"))
+    monkeypatch.setattr(stop_agent, "resume", lambda *a, **kw: calls.append("resume"))
+    c = fleet()
+    web = screen(c)
+    hub = web.app.state.hub
+    right = token(web.get("/agents").text)
+    for action in ("stop", "resume"):
+        r = web.post(f"/agents/ghost/{action}", headers=ORIGIN, data={"token": right}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/agents?err=agent", action
+    assert hub.jobs.current() is None and calls == []
+    assert panel(web.get("/agents?err=agent&lang=ko").text, "page-err") == STRINGS["ko"]["err.agent"]
+    r = web.post("/agents/docs_adk/resume", headers=ORIGIN, data={"token": right}, follow_redirects=False)
+    assert r.headers["location"] == "/agents?msg=started" and hub.jobs.current().wait(5)     # a hosted one goes on
+
+
+def test_a_stop_that_leaves_sessions_running_ends_the_job_failed(monkeypatch):
+    def stop(c, s, p, agent, sessions=None, say=print):
+        say("session s4: not stopped (denied)")
+        return {"agent": agent, "policy": f"stop_agent_{agent}", "stopped": ["s1", "s2"], "ended": [],
+                "failed": {"s4": "denied"}}
+    monkeypatch.setattr(stop_agent, "stop", stop)
+    web = screen(fleet())
+    web.post("/agents/quality_agent/stop", headers=ORIGIN, data={"token": token(web.get("/agents").text)})
+    job = web.app.state.hub.jobs.current()
+    assert job.wait(5) and job.state == "failed"
+    assert job.error.endswith("quality_agent is blocked at the entry by stop_agent_quality_agent; 1 of 3 sessions not "
+                              "stopped: run stop again, or give the session with --session <ID>"), job.error
+    assert job.lines[0] == "session s4: not stopped (denied)" and job.lines[-1].startswith("sessions: 2 stopped")
+
+
+def test_the_no_entry_sentence_is_shown_only_when_it_is_known_to_be_true():
+    c = fleet()
+    c.errors[("ctl", "list_gateway_targets")] = denied("ListGatewayTargets")
+    web = screen(c)
+    assert row(web, "quality_agent")["can_stop"] is None
+    page = web.get("/agents?lang=ko").text
+    text = panel(page, "panel-agents")
+    assert STRINGS["ko"]["agent.no_entry"] not in text and "AccessDeniedException" in text
+    assert not [1 for tag, a in panel_elements(page, "panel-agents") if tag == "form"
+                and a["action"].endswith("/stop")]
+    assert row(screen(fleet()), "parts_harness")["can_stop"] is False
+
+
+def test_the_bars_use_the_alarms_own_period_and_statistic():
+    c = fleet()
+    c.alarms = [{**ALARM, "Period": 300, "Statistic": "Maximum"}]
+    screen(c).get("/agents")
+    stat = c.metric_queries[-1]["MetricStat"] if c.metric_queries else None
+    queries = [q["MetricStat"] for q in c.metric_queries if q["Id"] == "calls"]
+    assert queries and queries[0]["Period"] == 300 and queries[0]["Stat"] == "Maximum" and stat

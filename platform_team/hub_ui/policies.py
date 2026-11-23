@@ -62,14 +62,18 @@ def _gateways(hub: Hub) -> list[dict]:
 def _company(hub: Hub) -> dict:
     """The two company policies. guard_secret is set at approval and has no switch: `agents` is how many agents have
     its policy (None when the policy list cannot be read; the rest of the panel shows). guard_prompt: `mode` is what
-    rollout keeps in SSM (None: off)."""
-    mode = policy_rollout.deployed(hub.c, hub.s).get(COMPANY_POLICY)
+    rollout keeps in SSM (None: off); `error` says why when the value there is not one rollout writes (mode is then
+    None, and the card shows the error with the Turn off button, which repairs it)."""
+    try:
+        mode, mode_error = policy_rollout.deployed(hub.c, hub.s).get(COMPANY_POLICY), ""
+    except ValueError as e:             # a value rollout would not write: the card says so and still offers Turn off
+        mode, mode_error = None, hub.mask(str(e))
     try:
         agents = sum(1 for name in _policies(hub) if kind_of(name)[0] == "guard_secret")
     except Exception:                   # this count only: the mode stays on the page
         agents = None
     return {"guard_secret": {"key": "guard_secret", "fixed": True, "agents": agents},
-            "guard_prompt": {"key": COMPANY_POLICY, "mode": mode}}
+            "guard_prompt": {"key": COMPANY_POLICY, "mode": mode, "error": mode_error}}
 
 
 def _guardrail(hub: Hub) -> dict:
@@ -108,7 +112,29 @@ def _mode_job(hub: Hub, key: str, mode: str, t, say) -> dict:
     for agent, read in out["read"].items():
         word = t(f"mode.{read}") + f" ({read})" if read else t("mode.off")
         say(t("job.read_back", agent=agent, mode=word))
+    problem = _command_problem(key, mode, out)
+    if problem:                         # the command exits 1 here, with this line
+        raise RuntimeError(problem)
     return out
+
+
+def _command_problem(key: str, mode: str, out: dict) -> str:
+    """The one line policy_rollout.main prints when it exits 1 after a rollout or a remove, "" when it exits 0."""
+    asked = None if mode == "off" else out.get("mode")
+    differ = [a for a, got in out["read"].items() if got != asked]
+    if mode == "off":
+        if not differ:
+            return ""
+        return (f"{key} is off in SSM; {', '.join(differ)} still {'has' if len(differ) == 1 else 'have'} the policy: "
+                "run the command again")
+    failed = [a for a, word in out["agents"].items() if word == "failed"]
+    other = [a for a in differ if a not in failed]
+    problems = []
+    if failed:
+        problems.append(f"{len(failed)} of {len(out['agents'])} agents failed")
+    if other:
+        problems.append(f"{', '.join(other)} read{'s' if len(other) == 1 else ''} another mode")
+    return f"{key} is {out['mode']} in SSM; {'; '.join(problems)}: run the command again" if problems else ""
 
 
 @router.post("/policies/{key}/mode")
