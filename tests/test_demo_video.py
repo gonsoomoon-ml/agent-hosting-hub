@@ -403,11 +403,12 @@ def _refused(spec, tmp_path, says):
     return says
 
 
-def _with_beat(text):
+def _with_beat(text, at="shot:wide"):
+    """The build's SPEC with one caption on the first piece of 00-home instead of its own."""
     import copy
     build = _build()
     spec = copy.deepcopy(build.SPEC)
-    spec["clips"]["00-home"]["beats"]["ko"] = [{"at": "shot:wide", "text": text}]
+    spec["clips"]["00-home"][0]["beats"]["ko"] = [{"at": at, "text": text}]
     return spec
 
 
@@ -420,7 +421,15 @@ def test_a_caption_over_45_characters_stops_the_build(tmp_path, capsys):
     ok = "허브가 신청을 자동으로 심사합니다"
     build = _build()
     build.run(_with_beat(ok), lang="ko", out=tmp_path / "ok", check_only=True)      # 45 or fewer passes
-    assert (tmp_path / "ok" / "scripts" / "ko" / "00-home.json").exists()
+    assert (tmp_path / "ok" / "scripts" / "ko" / "00-home.1.json").exists()
+
+
+def test_a_caption_anchored_to_raw_seconds_stops_the_build(tmp_path, capsys):
+    # a caption is anchored to a shot or a note of the take's camlog, so it stays on the event it names
+    text = "허브가 신청을 자동으로 심사합니다"
+    _refused(_with_beat(text, at=12.5), tmp_path, text)
+    err = capsys.readouterr().err
+    assert text in err and "raw seconds" in err
 
 
 @pytest.mark.parametrize("bad", ["—", "·", "→"])
@@ -459,9 +468,23 @@ def test_a_stage_over_its_caption_budget_stops_the_build(tmp_path, capsys):
     assert build.BUDGET == {0: 5, 1: 11, 2: 12, 3: 8, 4: 10, 5: 18}
     import copy
     spec = copy.deepcopy(build.SPEC)
-    spec["clips"]["00-home"]["beats"]["ko"] = [{"at": "shot:wide", "text": "허브가 신청을 자동으로 심사합니다"}] * 6
+    spec["clips"]["00-home"][0]["beats"]["ko"] = [{"at": "shot:wide", "text": "허브가 신청을 자동으로 심사합니다"}] * 6
     _refused(spec, tmp_path, "준비")
     assert "준비" in capsys.readouterr().err
+    # the budget counts every piece of a stage's takes: 12-make (cut from the 11-find recording) is stage 1
+    assert build.stage("12-make") == 1 and build.stage("00-home") == 0 and build.stage("57-back") == 5
+    spec = copy.deepcopy(build.SPEC)
+    spare = 11 - sum(len(p["beats"]["ko"]) for t in spec["clips"] if build.stage(t) == 1 for p in spec["clips"][t])
+    spec["clips"]["12-make"][-1]["beats"]["ko"] += [{"at": "shot:made", "text": "허브가 신청을 자동으로 심사합니다"}] * (spare + 1)
+    _refused(spec, tmp_path, "1단계")
+    assert "1단계" in capsys.readouterr().err
+
+
+# the takes of the video, in the order they are recorded (12-make is cut from the 11-find recording)
+CLIP_TAKES = ["00-home", "11-find", "12-make", "13-submit", "21-review", "22-works", "23-reject", "24-again",
+              "25-approved", "26-answers", "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked",
+              "43-before", "44-attach", "45-after", "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours",
+              "56-cause", "57-back"]
 
 
 def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
@@ -471,14 +494,10 @@ def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
     assert set(spec["reels"]) == {"main", "stage-1", "stage-2", "stage-3", "stage-4", "stage-5"}
     for reel, segments in spec["reels"].items():
         for seg in segments:
-            assert build.segment_name(seg) in names, (reel, seg)
+            assert seg in names, (reel, seg)
     # every take of the script is a clip of the main reel, in the order the takes are recorded
-    takes = ["00-home", "11-find", "12-make", "13-submit", "21-review", "22-works", "23-reject", "24-again",
-             "25-approved", "26-answers", "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked",
-             "43-before", "44-attach", "45-after", "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours",
-             "56-cause", "57-back"]
-    main = [build.segment_name(s) for s in spec["reels"]["main"]]
-    assert [n for n in main if n in spec["clips"]] == takes
+    main = spec["reels"]["main"]
+    assert [n for n in main if n in spec["clips"]] == CLIP_TAKES
     assert main[0] == "card-intro" and main[-2:] == ["card-summary", "card-closing"]
     # a reel that names something the build does not define is refused before anything is written
     import copy
@@ -486,6 +505,54 @@ def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
     bad["reels"]["stage-2"].append("27-nowhere")
     _refused(bad, tmp_path, "27-nowhere")
     assert "27-nowhere" in capsys.readouterr().err
+
+
+def test_the_stage_reels_are_the_main_reels_stages_and_stage_1_opens_with_the_preparation():
+    build = _build()
+    reels = build.SPEC["reels"]
+    # the preparation (its chapter card and the home page) opens the main reel and the stage-1 reel
+    assert reels["main"][1:3] == ["card-ch0", "00-home"]
+    assert reels["stage-1"][:3] == ["card-ch0", "00-home", "card-ch1"]
+    # each stage reel is the main reel's run of that stage, so a caption reads the same in every reel
+    for n in range(1, 6):
+        stage = reels[f"stage-{n}"]
+        start = reels["main"].index("card-ch0" if n == 1 else f"card-ch{n}")
+        assert reels["main"][start:start + len(stage)] == stage, n
+    takes = [t for n in range(1, 6) for t in reels[f"stage-{n}"] if t in build.SPEC["clips"]]
+    assert takes == CLIP_TAKES
+
+
+def test_the_pieces_of_one_take_are_joined_with_hard_cuts():
+    build = _build()
+    spec = {"clips": {"21-review": [build.piece("21-review", 4.5, 11.5), build.piece("21-review", 30.0, 38.6, speed=4),
+                                    build.piece("21-review", 38.6, 60.0)],
+                      "22-works": [build.piece("22-works", 11.0, 36.5)]},
+            "cards": {"ko": {"card-ch2": {"seconds": 3}}}, "reels": {"r": ["card-ch2", "21-review", "22-works"]}}
+    assert build.reel_manifest(spec, "r", "ko") == {"fade": 0.4, "segments": [
+        {"file": "cards/ko/card-ch2.mp4"},
+        {"file": "clips/ko/21-review.1.mp4", "fade_out": 0},
+        {"file": "clips/ko/21-review.2.mp4", "fade_in": 0, "fade_out": 0},
+        {"file": "clips/ko/21-review.3.mp4", "fade_in": 0},
+        {"file": "clips/ko/22-works.1.mp4"}]}
+    # in the main reel every edge between two pieces of one take is a hard cut, and only those
+    segments = build.reel_manifest(build.SPEC, "main", "ko")["segments"]
+    take = [s["file"].split("/")[-1].rsplit(".", 2)[0] for s in segments]
+    for i in range(len(segments) - 1):
+        same = take[i] == take[i + 1] and segments[i]["file"].startswith("clips/")
+        assert (segments[i].get("fade_out") == 0) == same and (segments[i + 1].get("fade_in") == 0) == same, i
+    # interactions play at 1.25 and waits at 4; one window plays slower, to hold a line that is on screen briefly
+    speeds = [p["speed"] for pieces in build.SPEC["clips"].values() for p in pieces]
+    assert set(speeds) - {1.25, 4} == {0.13} and speeds.count(0.13) == 1
+
+
+def test_the_main_reel_runs_between_8_and_11_minutes():
+    build = _build()
+    spec = {"clips": {"t": [build.piece("t", 10.0, 20.0), build.piece("t", 20.0, 60.0, speed=4)]},
+            "cards": {"ko": {"c": {"seconds": 3}}}, "reels": {"r": ["c", "t"]}}
+    assert build.reel_seconds(spec, "r", "ko") == 3 + 8 + 10
+    main = build.reel_seconds(build.SPEC, "main", "ko")
+    assert 8 * 60 <= main <= 11 * 60
+    assert sum(build.reel_seconds(build.SPEC, f"stage-{n}", "ko") for n in range(1, 6)) < main + 60
 
 
 CARDS_OF_THE_PLAN = {
@@ -514,7 +581,7 @@ def test_the_cards_of_the_plan_pass_the_rules(tmp_path):
     cards = build.SPEC["cards"]["ko"]
     assert {name: build.card_texts(card) for name, card in cards.items()} == CARDS_OF_THE_PLAN
     assert {n: cards[n]["seconds"] for n in SECONDS_OF_THE_PLAN} == SECONDS_OF_THE_PLAN
-    # the whole build file passes its own rules: the plan's cards, and every clip with no beats yet
+    # the whole build file passes its own rules: the plan's cards, and every caption of every piece
     r = subprocess.run([sys.executable, str(BUILD), "--check", "--lang", "ko", "--out", str(tmp_path / "out")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -525,9 +592,12 @@ def test_the_cards_of_the_plan_pass_the_rules(tmp_path):
     assert written["card-ch1"]["lines"][0] == ["kicker", "1단계. 호스팅 신청"]
     manifest = json.loads((tmp_path / "out" / "reels" / "hosting-hub-main-ko.json").read_text(encoding="utf-8"))
     assert manifest["segments"][0]["file"] == "cards/ko/card-intro.mp4"
-    assert {"file": "clips/ko/00-home.mp4"} in [{"file": s["file"]} for s in manifest["segments"]]
-    script = json.loads((tmp_path / "out" / "scripts" / "ko" / "00-home.json").read_text(encoding="utf-8"))
-    assert script["beats"] == [] and script["speed"] == 1.25 and "title" not in script
+    assert {"file": "clips/ko/00-home.1.mp4"} in [{"file": s["file"]} for s in manifest["segments"]]
+    # each piece's script for the plugin: its window, its speed, its captions, and no title (the cards carry it)
+    script = json.loads((tmp_path / "out" / "scripts" / "ko" / "00-home.1.json").read_text(encoding="utf-8"))
+    home = build.SPEC["clips"]["00-home"][0]
+    assert script == {"start": home["start"], "end": home["end"], "speed": 1.25, "beats": home["beats"]["ko"]}
+    assert script["beats"] and all(isinstance(b["at"], str) for b in script["beats"])
 
 
 def test_a_card_title_or_row_that_breaks_a_rule_stops_the_build(tmp_path, capsys):
@@ -558,8 +628,52 @@ def test_a_clip_with_no_beats_is_cut_without_captions(tmp_path):
     # the plugin's clip falls back to the camera's shot labels when a script has no beats: those are notes for the
     # person who records, never captions
     build = _build()
-    cmd = build.clip_command(Path("/plugin"), "00-home", build.SPEC["clips"]["00-home"], "ko", tmp_path)
+    cmd = build.clip_command(Path("/plugin"), "21-review.2", build.piece("21-review", 30.0, 38.6, speed=4), "ko",
+                             tmp_path)
     assert "--no-captions" in cmd and "--title" not in cmd
+    assert cmd[3] == str(tmp_path / "raw" / "21-review.webm")
+    assert cmd[cmd.index("--out") + 1] == str(tmp_path / "clips" / "ko" / "21-review.2.mp4")
+    cmd = build.clip_command(Path("/plugin"), "00-home.1", build.SPEC["clips"]["00-home"][0], "ko", tmp_path)
+    assert "--no-captions" not in cmd and "--title" not in cmd
+
+
+CAMLOG = {"log": [{"t": 3.9, "kind": "shot", "key": "wide"}, {"t": 14.91, "kind": "shot", "key": "flow1"},
+                  {"t": 20.0, "kind": "asked"}, {"t": 41.93, "kind": "shot", "key": "end"}]}
+
+
+@pytest.mark.parametrize("at, offset, says", [
+    ("shot:flow1", 0, "outside"),            # 14.91 s lies after the piece's window 3.5..12
+    ("shot:wide", 0, None),                  # 3.9 s: inside
+    ("shot:wide", 7.0, "outside"),           # 10.9 s: inside the window, but less than 2 s of the piece is left
+    ("asked#2", 0, "does not hold"),         # the camlog has one note asked
+    ("shot:nowhere", 0, "does not hold")])
+def test_a_caption_outside_its_piece_or_off_the_camlog_stops_the_build_before_anything_is_cut(
+        tmp_path, capsys, monkeypatch, at, offset, says):
+    build = _build()
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    text = "허브 화면에서 흐름 1을 봅니다"
+    spec["clips"] = {"00-home": [build.piece("00-home", 3.5, 12.0, ko=[build.beat(at, text, offset=offset)])]}
+    spec["reels"] = {"main": ["card-intro", "00-home"]}
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+    (out / "raw" / "00-home.webm").write_bytes(b"")
+    (out / "raw" / "00-home.camlog.json").write_text(json.dumps(CAMLOG))
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    for f in ("edit_demo.py", "make_cards.py"):         # a stand-in that only notes that it was called
+        (plugin / f).write_text("import pathlib, sys\npathlib.Path(sys.argv[0]).with_suffix('.called').touch()\n")
+    monkeypatch.setenv("DEMO_VIDEO_PLUGIN", str(plugin))
+    if says is None:
+        build.run(spec, lang="ko", out=out)
+        assert (plugin / "edit_demo.called").exists() and (plugin / "make_cards.called").exists()
+        return
+    with pytest.raises(SystemExit) as stop:
+        build.run(spec, lang="ko", out=out)
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert text in err and says in err and "00-home.1" in err
+    assert not list(plugin.glob("*.called"))                  # nothing was cut
 
 
 # ------------------------------------------------------------------ the recording: record.sh, the user's shell, storyboards
