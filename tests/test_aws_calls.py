@@ -358,10 +358,12 @@ def test_rollout_calls_match_the_service_models(aws):
                                                          "createdAt": NOW, "updatedAt": NOW}]},
                      {"gatewayIdentifier": GW, "maxResults": 100})
     ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
-    _made_policy(ctl, "guard_prompt_quality_agent",
-                 {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", AGENT_GW_ARN)}}, mode="LOG_ONLY")
+    pol = _made_policy(ctl, "guard_prompt_quality_agent",
+                       {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", AGENT_GW_ARN)}}, mode="LOG_ONLY")
+    ctl.add_response("list_policies", {"policies": [{**pol, "enforcementMode": "LOG_ONLY"}]},      # the read-back
+                     {"policyEngineId": ENGINE, "maxResults": 100})
     out = policy_rollout.rollout(c, S, ROLLOUT_P, "guard_prompt", "log-only", say=lambda line: None)
-    assert out == {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {AGENT: "created"}}
+    assert out == {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {AGENT: "created"}, "read": {AGENT: "LOG_ONLY"}}
 
 
 def test_remove_and_forget_calls_match_the_service_models(aws):
@@ -374,8 +376,10 @@ def test_remove_and_forget_calls_match_the_service_models(aws):
     ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
     ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
                          expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_response("list_policies", {"policies": [_policy("entry_permit_quality_agent")]},         # the read-back
+                     {"policyEngineId": ENGINE, "maxResults": 100})
     assert policy_rollout.remove(c, S, ROLLOUT_P, "guard_prompt", say=lambda line: None) == {
-        "policy": "guard_prompt", "agents": {AGENT: "removed"}}
+        "policy": "guard_prompt", "agents": {AGENT: "removed"}, "read": {AGENT: None}}
     ssm.add_response("get_parameters_by_path", {"Parameters": [
         {"Name": "/hub/policies/guard_prompt", "Type": "String", "Value": "ACTIVE"}]}, {"Path": "/hub/policies"})
     ssm.add_response("delete_parameter", {}, {"Name": "/hub/policies/guard_prompt"})

@@ -83,6 +83,68 @@ def test_an_agent_that_fails_is_told_and_the_others_still_get_the_policy():
     assert c.parameters["/hub/policies/guard_prompt"] == "ACTIVE"         # the mode stays written
 
 
+def _after_the_loop(c) -> list:
+    """The fake calls after the last call that makes, waits on, switches or deletes a policy."""
+    last = max(i for i, call in enumerate(c.calls)
+               if call[1] in ("create_policy", "get_policy", "update_policy", "delete_policy", "get_waiter"))
+    return c.calls[last + 1:]
+
+
+def _stuck(c, policy):
+    """The policy engine takes UpdatePolicy for `policy` and answers it, but the policy keeps its mode."""
+    switch = c.ctl.update_policy
+    c.ctl.update_policy = lambda **kw: ({"policyId": kw["policyId"], "status": "UPDATING"}
+                                        if kw["policyId"] == f"{policy}-id" else switch(**kw))
+
+
+def test_rollout_reports_the_mode_it_reads_back():
+    c = hub()
+    out = rollout(c, Settings(), PLATFORM, "guard_prompt", "log-only", say=quiet)
+    assert out["read"] == {"quality_agent": "LOG_ONLY", "release_review": "LOG_ONLY"}
+    assert _after_the_loop(c) == [("ctl", "list_policies")]                # one ListPolicies after the loop
+    c = hub(existing_policies={"guard_prompt_quality_agent", "guard_prompt_release_review"}, policy_mode="LOG_ONLY")
+    _stuck(c, "guard_prompt_release_review")
+    out = rollout(c, Settings(), PLATFORM, "guard_prompt", "active", say=quiet)
+    assert out["agents"] == {"quality_agent": "switched", "release_review": "switched"}       # the call returned
+    assert out["read"] == {"quality_agent": "ACTIVE", "release_review": "LOG_ONLY"}           # what the engine shows
+    c = hub(policy_status="CREATE_FAILED", policy_reasons=["no"])          # a policy that failed is deleted: None
+    assert rollout(c, Settings(), PLATFORM, "guard_prompt", "active", say=quiet)["read"] == {
+        "quality_agent": None, "release_review": None}
+
+
+def test_rollout_exits_1_when_a_mode_reads_differently(command, capsys):
+    c = hub(existing_policies={"guard_prompt_quality_agent", "guard_prompt_release_review"}, policy_mode="LOG_ONLY")
+    _stuck(c, "guard_prompt_release_review")
+    assert command(c, "guard_prompt", "active") == 1
+    assert capsys.readouterr().out.splitlines()[1:] == [
+        "quality_agent: switched", "release_review: switched",
+        "quality_agent: reads ACTIVE", "release_review: reads LOG_ONLY, asked for ACTIVE",
+        "guard_prompt is ACTIVE in SSM; release_review reads another mode: run the command again"]
+
+
+def test_remove_reads_back_that_no_policy_is_left(command, capsys):
+    c = hub(existing_policies={"guard_prompt_ghost"})
+    rollout(c, Settings(), PLATFORM, "guard_prompt", "active", say=quiet)
+    out = remove(c, Settings(), PLATFORM, "guard_prompt", say=quiet)
+    assert out["read"] == {"ghost": None, "quality_agent": None, "release_review": None}
+    assert _after_the_loop(c) == [("ctl", "list_policies")]
+    # a policy that is there after the deletes (an approval that read the mode just before it was deleted): exit 1
+    c = hub()
+    rollout(c, Settings(), PLATFORM, "guard_prompt", "active", say=quiet)
+    drop = c.ctl.delete_policy
+    def drop_and_approve(**kw):
+        drop(**kw)
+        if "guard_prompt_docs_adk" not in c.policies and kw["policyId"] == "guard_prompt_release_review-id":
+            c.ctl.create_policy(name="guard_prompt_docs_adk", definition={"policy": {"statement": "s"}})
+    c.ctl.delete_policy = drop_and_approve
+    capsys.readouterr()
+    assert command(c, "guard_prompt", "off") == 1
+    assert capsys.readouterr().out.splitlines()[1:] == [
+        "quality_agent: removed", "release_review: removed",
+        "docs_adk: reads ACTIVE, asked for no policy", "quality_agent: reads no policy", "release_review: reads no policy",
+        "guard_prompt is off in SSM; docs_adk still has the policy: run the command again"]
+
+
 # ------------------------------------------------------------------ off, unknown words
 
 def test_off_removes_the_policies_and_the_mode():
@@ -91,12 +153,14 @@ def test_off_removes_the_policies_and_the_mode():
     rollout(c, Settings(), PLATFORM, "guard_prompt", "active", say=quiet)
     out = remove(c, Settings(), PLATFORM, "guard_prompt", say=quiet)
     assert out == {"policy": "guard_prompt",
-                   "agents": {"ghost": "removed", "quality_agent": "removed", "release_review": "removed"}}
+                   "agents": {"ghost": "removed", "quality_agent": "removed", "release_review": "removed"},
+                   "read": {"ghost": None, "quality_agent": None, "release_review": None}}
     assert set(c.policies) == {"entry_permit_quality_agent", "guard_secret_quality_agent"}
     assert "/hub/policies/guard_prompt" not in c.parameters
     # the mode goes first: an agent approved while the policies are removed is not given the policy again
     assert c.calls.index(("ssm", "delete_parameter")) < c.calls.index(("ctl", "delete_policy"))
-    assert remove(c, Settings(), PLATFORM, "guard_prompt", say=quiet) == {"policy": "guard_prompt", "agents": {}}
+    assert remove(c, Settings(), PLATFORM, "guard_prompt", say=quiet) == {"policy": "guard_prompt", "agents": {},
+                                                                          "read": {}}
 
 
 @pytest.mark.parametrize("call", [
@@ -259,10 +323,12 @@ def test_the_command_rolls_out_reports_and_turns_off(command, capsys):
     c = hub()
     assert command(c, "guard_prompt", "log-only") == 0
     assert capsys.readouterr().out.splitlines()[1:] == [
-        "quality_agent: created", "release_review: created", "guard_prompt is LOG_ONLY on 2 agents"]
+        "quality_agent: created", "release_review: created", "quality_agent: reads LOG_ONLY",
+        "release_review: reads LOG_ONLY", "guard_prompt is LOG_ONLY on 2 agents"]
     assert command(c, "guard_prompt", "off") == 0
     assert capsys.readouterr().out.splitlines()[1:] == [
-        "quality_agent: removed", "release_review: removed", "guard_prompt is off: removed from 2 agents"]
+        "quality_agent: removed", "release_review: removed", "quality_agent: reads no policy",
+        "release_review: reads no policy", "guard_prompt is off: removed from 2 agents"]
     assert c.policies == {} and c.parameters.get("/hub/policies/guard_prompt") is None
 
 

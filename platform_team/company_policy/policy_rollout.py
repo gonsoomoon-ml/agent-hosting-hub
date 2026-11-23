@@ -103,9 +103,11 @@ def _ensure(c, s: Settings, p: Platform, policy: CompanyPolicy, agent: str, mode
 def rollout(c, s: Settings, p: Platform, key: str, mode_word: str, say=print) -> dict:
     """Turn a company policy on in this mode (MODE_WORDS) for every hosted agent. The mode is written to SSM first,
     then each hosted agent's policy is made in it or switched to it. Returns {"policy", "mode", "agents": {agent:
-    "created" | "switched" | "unchanged" | "failed"}}. An agent that fails is told through `say` with the cause and
-    the others still get the policy; the mode stays written, so the next rollout or approval uses it. An unknown
-    policy or mode raises ValueError before anything changes."""
+    "created" | "switched" | "unchanged" | "failed"}, "read": {agent: mode | None}}: "read" is the enforcement mode
+    each hosted agent's policy shows in one ListPolicies after the loop (None: the agent has no such policy). The wait
+    of a switch ends on the policy's status alone; "read" says which mode the policy engine then shows. An agent that
+    fails is told through `say` with the cause and the others still get the policy; the mode stays written, so the
+    next rollout or approval uses it. An unknown policy or mode raises ValueError before anything changes."""
     policy = _policy(key)
     if mode_word not in MODE_WORDS:
         raise ValueError(f"unknown mode {mode_word!r}: one of {', '.join(MODE_WORDS)} (off removes the policy)")
@@ -125,7 +127,9 @@ def rollout(c, s: Settings, p: Platform, key: str, mode_word: str, say=print) ->
         out[agent] = ("created" if not found else
                       "switched" if found.get("enforcementMode", mode) != mode else "unchanged")
         say(f"{agent}: {out[agent]}")
-    return {"policy": key, "mode": mode, "agents": out}
+    after = list_policies(c, p.engine_id)
+    read = {agent: after.get(policy.name(agent), {}).get("enforcementMode") for agent in agents}
+    return {"policy": key, "mode": mode, "agents": out, "read": read}
 
 
 def _with_policy(c, p: Platform, policy: CompanyPolicy) -> dict[str, dict]:
@@ -142,15 +146,19 @@ def _with_policy(c, p: Platform, policy: CompanyPolicy) -> dict[str, dict]:
 def remove(c, s: Settings, p: Platform, key: str, say=print) -> dict:
     """Turn a company policy off: delete its SSM value first (an approval that reads the mode from now on gives no
     policy; see the module docstring for one that read it just before), then the policy of every agent that has it,
-    hosted or not. Returns {"policy", "agents": {agent: "removed"}}."""
+    hosted or not. Returns {"policy", "agents": {agent: "removed"}, "read": {agent: mode | None}}: "read" is what one
+    ListPolicies after the deletes shows for every agent that had the policy before them and every agent that has it
+    after them (None: no such policy is left; a mode: the policy is there, made by an approval that read the mode
+    just before it was deleted, and running remove again deletes it)."""
     policy = _policy(key)
     _delete_parameter(c, s.ssm("policies", key))
-    out = {}
-    for agent, entry in _with_policy(c, p, policy).items():
+    out, found = {}, _with_policy(c, p, policy)
+    for agent, entry in found.items():
         if drop_policy(c, p.engine_id, entry["policyId"]):
             out[agent] = "removed"
             say(f"{agent}: removed")
-    return {"policy": key, "agents": out}
+    left = {agent: entry.get("enforcementMode") for agent, entry in _with_policy(c, p, policy).items()}
+    return {"policy": key, "agents": out, "read": dict(sorted({**dict.fromkeys(found), **left}.items()))}
 
 
 def apply_to_agent(c, s: Settings, p: Platform, agent: str, wait: int = POLICY_WAIT) -> dict[str, str]:
@@ -253,19 +261,44 @@ def main(argv: list[str]) -> int:
             return 0
         if action == "off":
             out = remove(c, s, p, key)
-            print(f"{key} is off: removed from {len(out['agents'])} agents")
-            return 0
-        out = rollout(c, s, p, key, action)
+        else:
+            out = rollout(c, s, p, key, action)
     except Exception as e:          # say what failed in one line, no traceback
         print(f"{action} of {key} stopped ({hub}): {e if isinstance(e, ValueError) else cause(e)}")
         return 1
+    differ = _say_read(out["read"], out.get("mode"))
+    if action == "off":
+        if differ:
+            print(f"{key} is off in SSM; {', '.join(differ)} still {'has' if len(differ) == 1 else 'have'} the "
+                  "policy: run the command again")
+            return 1
+        print(f"{key} is off: removed from {len(out['agents'])} agents")
+        return 0
     failed = [a for a, word in out["agents"].items() if word == "failed"]
+    other = [a for a in differ if a not in failed]          # a failed agent's line says so already
+    problems = []
     if failed:
-        print(f"{key} is {out['mode']} in SSM; {len(failed)} of {len(out['agents'])} agents failed: "
-              "run the command again")
+        problems.append(f"{len(failed)} of {len(out['agents'])} agents failed")
+    if other:
+        problems.append(f"{', '.join(other)} read{'s' if len(other) == 1 else ''} another mode")
+    if problems:
+        print(f"{key} is {out['mode']} in SSM; {'; '.join(problems)}: run the command again")
         return 1
     print(f"{key} is {out['mode']} on {len(out['agents'])} agents")
     return 0
+
+
+def _say_read(read: dict, mode: str | None) -> list[str]:
+    """Print one line per agent with the mode its policy reads after the command (mode None: off, no policy asked
+    for). Returns the agents whose policy reads otherwise."""
+    differ = []
+    for agent, got in read.items():
+        if got == mode:
+            print(f"{agent}: reads {got or 'no policy'}")
+        else:
+            print(f"{agent}: reads {got or 'no policy'}, asked for {mode or 'no policy'}")
+            differ.append(agent)
+    return differ
 
 
 if __name__ == "__main__":
