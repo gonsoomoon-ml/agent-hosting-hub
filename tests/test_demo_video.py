@@ -362,3 +362,177 @@ def test_check_masks_standard_error_and_shows_that_dev_holds_no_capability(fake_
     assert "234567890123" not in r.stdout + r.stderr and "<ACCOUNT>" in r.stdout + r.stderr
     assert "CapEff:\t0000000000000000 (the user dev holds no effective capability)" in r.stdout
     assert "the user dev cannot delete the route: RTNETLINK answers: Operation not permitted" in r.stdout
+
+
+# ------------------------------------------------------------------ the build script: captions, cards, clips and reels
+
+BUILD = VIDEO / "scripts" / "build.py"
+
+
+def _build():
+    """demo_video/scripts/build.py as a module (it is a script, not a package)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("demo_video_build", BUILD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _refused(spec, tmp_path, says):
+    """The build stops before it writes anything, and its message names the text that broke a rule."""
+    build = _build()
+    with pytest.raises(SystemExit) as stop:
+        build.run(spec, lang="ko", out=tmp_path / "out", check_only=True)
+    assert stop.value.code == 2
+    assert not (tmp_path / "out").exists()
+    return says
+
+
+def _with_beat(text):
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"]["00-home"]["beats"]["ko"] = [{"at": "shot:wide", "text": text}]
+    return spec
+
+
+def test_a_caption_over_45_characters_stops_the_build(tmp_path, capsys):
+    text = "허브는 팀이 올린 에이전트를 자동으로 심사하고 통과한 것만 호스팅해서 모두가 쓰게 합니다"
+    assert len(text) > 45
+    _refused(_with_beat(text), tmp_path, text)
+    out = capsys.readouterr()
+    assert text in out.err and "45" in out.err
+    ok = "허브가 신청을 자동으로 심사합니다"
+    build = _build()
+    build.run(_with_beat(ok), lang="ko", out=tmp_path / "ok", check_only=True)      # 45 or fewer passes
+    assert (tmp_path / "ok" / "scripts" / "ko" / "00-home.json").exists()
+
+
+@pytest.mark.parametrize("bad", ["—", "·", "→"])
+def test_a_caption_with_a_middle_dot_dash_or_arrow_stops_the_build(tmp_path, capsys, bad):
+    text = f"팀이 신청하면 {bad} 허브가 심사합니다"
+    _refused(_with_beat(text), tmp_path, text)
+    assert text in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("text", ["허브가 신청을 자동으로 심사", "허브가 신청을 자동으로 심사한다", "허브가 심사합니다. 그리고 올립니다",
+                                  "허브가 심사할까요?"])
+def test_a_caption_that_is_not_hamnida_style_stops_the_build(tmp_path, capsys, text):
+    # one sentence in the 합니다 style: it ends in 니다, and nothing ends before it
+    _refused(_with_beat(text), tmp_path, text)
+    assert text in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("text", ["4배속으로 심사가 끝납니다", "이 녹화에서는 반려 버튼을 누르지 않았습니다"])
+def test_a_caption_with_a_speed_label_or_a_recording_note_stops_the_build(tmp_path, capsys, text):
+    _refused(_with_beat(text), tmp_path, text)
+    assert text in capsys.readouterr().err
+
+
+def test_a_stage_over_its_caption_budget_stops_the_build(tmp_path, capsys):
+    # 준비 may carry five captions in all; a sixth is refused
+    build = _build()
+    assert build.BUDGET == {0: 5, 1: 11, 2: 12, 3: 8, 4: 10, 5: 18}
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"]["00-home"]["beats"]["ko"] = [{"at": "shot:wide", "text": "허브가 신청을 자동으로 심사합니다"}] * 6
+    _refused(spec, tmp_path, "준비")
+    assert "준비" in capsys.readouterr().err
+
+
+def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
+    build = _build()
+    spec = build.SPEC
+    names = set(spec["clips"]) | set(spec["cards"]["ko"])
+    assert set(spec["reels"]) == {"main", "stage-1", "stage-2", "stage-3", "stage-4", "stage-5"}
+    for reel, segments in spec["reels"].items():
+        for seg in segments:
+            assert build.segment_name(seg) in names, (reel, seg)
+    # every take of the script is a clip of the main reel, in the order the takes are recorded
+    takes = ["00-home", "11-find", "12-make", "13-submit", "21-review", "22-works", "23-reject", "24-again",
+             "25-approved", "26-answers", "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked",
+             "43-before", "44-attach", "45-after", "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours",
+             "56-cause", "57-back"]
+    main = [build.segment_name(s) for s in spec["reels"]["main"]]
+    assert [n for n in main if n in spec["clips"]] == takes
+    assert main[0] == "card-intro" and main[-2:] == ["card-summary", "card-closing"]
+    # a reel that names something the build does not define is refused before anything is written
+    import copy
+    bad = copy.deepcopy(spec)
+    bad["reels"]["stage-2"].append("27-nowhere")
+    _refused(bad, tmp_path, "27-nowhere")
+    assert "27-nowhere" in capsys.readouterr().err
+
+
+CARDS_OF_THE_PLAN = {
+    "card-intro": ["AI 에이전트 호스팅 허브 on Amazon Bedrock AgentCore", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다"],
+    "card-ch0": ["준비", "플랫폼팀이 허브를 한 번 만들어 둡니다", "허브 화면의 홈"],
+    "card-ch1": ["1단계. 호스팅 신청", "팀은 플랫폼팀 없이 찾고, 만들고, 신청합니다", "Claude Code와 AWS Agent Registry"],
+    "card-ch2": ["2단계. 호스팅 심사", "신청이 들어오면 허브가 자동으로 심사합니다", "심사 파이프라인과 AgentCore Runtime"],
+    "card-ch3": ["3단계. 전사 정책 시험", "새 전사 정책을 막지 않고 먼저 시험합니다", "Policy in AgentCore의 기록 모드"],
+    "card-ch4": ["4단계. 전사 정책 적용", "전사 정책 하나가 모든 에이전트에 걸립니다", "AgentCore Gateway와 커스텀 가드레일"],
+    "card-ch5": ["5단계. 이상 대응", "문제를 일으킨 에이전트 하나만 멈춥니다", "CloudWatch 알람과 AgentCore Runtime"],
+    "card-compare": ["가드레일 두 가지", "기본 제공 가드레일과 커스텀 가드레일", "기본 제공은 설정으로 걸고 기록 모드로 먼저 시험합니다",
+                     "커스텀은 사내 코드로 막고 민감 정보를 가립니다", "둘 다 게이트웨이에 걸려 모든 에이전트에 적용됩니다"],
+    "card-summary": ["정리", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다", "팀은 카탈로그에서 찾고 템플릿으로 만들어 스스로 신청합니다",
+                     "허브가 자동으로 심사하고 통과한 것만 올립니다", "전사 정책은 게이트웨이에 한 번 걸면 모두에 적용됩니다",
+                     "이상 에이전트 하나만 멈추고 이웃은 계속 답합니다"],
+    # the script's one row "AgentCore는 Runtime, Gateway, Policy, Registry, 관측을 줍니다" is 54 characters: the same
+    # words in two rows of at most 45
+    "card-closing": ["누가 무엇을 맡나", "AgentCore가 주는 것과 플랫폼팀이 만드는 것", "AgentCore는 Runtime, Gateway, Policy를 줍니다",
+                     "AgentCore는 Registry와 관측도 줍니다", "플랫폼팀은 심사 파이프라인과 운영 명령, 허브 화면을 만듭니다"],
+}
+SECONDS_OF_THE_PLAN = {"card-intro": 4, "card-compare": 8, "card-summary": 9, "card-closing": 7}
+
+
+def test_the_cards_of_the_plan_pass_the_rules(tmp_path):
+    build = _build()
+    cards = build.SPEC["cards"]["ko"]
+    assert {name: build.card_texts(card) for name, card in cards.items()} == CARDS_OF_THE_PLAN
+    assert {n: cards[n]["seconds"] for n in SECONDS_OF_THE_PLAN} == SECONDS_OF_THE_PLAN
+    # the whole build file passes its own rules: the plan's cards, and every clip with no beats yet
+    r = subprocess.run([sys.executable, str(BUILD), "--check", "--lang", "ko", "--out", str(tmp_path / "out")],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+    written = json.loads((tmp_path / "out" / "cards" / "ko" / "cards.json").read_text(encoding="utf-8"))
+    # the plugin's card format: the last row of the comparison and of the summary card is the accent
+    assert written["card-summary"]["lines"][-1] == ["row", "이상 에이전트 하나만 멈추고 이웃은 계속 답합니다", "accent"]
+    assert written["card-compare"]["lines"][-1][-1] == "accent" and written["card-intro"]["seconds"] == 4
+    assert written["card-ch1"]["lines"][0] == ["kicker", "1단계. 호스팅 신청"]
+    manifest = json.loads((tmp_path / "out" / "reels" / "hosting-hub-main-ko.json").read_text(encoding="utf-8"))
+    assert manifest["segments"][0]["file"] == "cards/ko/card-intro.mp4"
+    assert {"file": "clips/ko/00-home.mp4"} in [{"file": s["file"]} for s in manifest["segments"]]
+    script = json.loads((tmp_path / "out" / "scripts" / "ko" / "00-home.json").read_text(encoding="utf-8"))
+    assert script["beats"] == [] and script["speed"] == 1.25 and "title" not in script
+
+
+def test_a_card_title_or_row_that_breaks_a_rule_stops_the_build(tmp_path, capsys):
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    spec["cards"]["ko"]["card-summary"]["rows"][0] = "팀은 카탈로그에서 찾고 템플릿으로 만들어 스스로 신청"
+    _refused(spec, tmp_path, "신청")
+    assert "팀은 카탈로그에서 찾고 템플릿으로 만들어 스스로 신청" in capsys.readouterr().err
+
+
+def test_without_check_the_build_needs_the_plugin_and_the_raw_takes(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "DEMO_VIDEO_PLUGIN"}
+    r = subprocess.run([sys.executable, str(BUILD), "--lang", "ko", "--out", str(tmp_path / "out")],
+                       capture_output=True, text=True, env=env, timeout=60)
+    assert r.returncode == 2 and "DEMO_VIDEO_PLUGIN" in r.stderr
+    assert "https://github.com/gonsoomoon-ml/claude-extensions/tree/main/plugins/demo-video" in r.stderr
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    for f in ("edit_demo.py", "make_cards.py"):
+        (plugin / f).write_text("raise SystemExit(9)\n")
+    r = subprocess.run([sys.executable, str(BUILD), "--lang", "ko", "--out", str(tmp_path / "out")],
+                       capture_output=True, text=True, env=env | {"DEMO_VIDEO_PLUGIN": str(plugin)}, timeout=60)
+    assert r.returncode == 1 and "raw/00-home.webm" in r.stderr                 # no raw take: nothing is cut
+
+
+def test_a_clip_with_no_beats_is_cut_without_captions(tmp_path):
+    # the plugin's clip falls back to the camera's shot labels when a script has no beats: those are notes for the
+    # person who records, never captions
+    build = _build()
+    cmd = build.clip_command(Path("/plugin"), "00-home", build.SPEC["clips"]["00-home"], "ko", tmp_path)
+    assert "--no-captions" in cmd and "--title" not in cmd

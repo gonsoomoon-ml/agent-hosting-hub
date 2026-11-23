@@ -2,6 +2,19 @@
 
 허브의 시연 영상을 만드는 데 쓰는 것을 모은 폴더다. 영상의 결과물과 녹화의 원본, 개발자 PC의 홈과 자격 증명 파일은 `out/` 아래에 생기고 git에 올라가지 않는다(`.gitignore`).
 
+녹화와 편집은 영상 플러그인 [demo-video](https://github.com/gonsoomoon-ml/claude-extensions/tree/main/plugins/demo-video)의 스크립트(`record_demo.mjs`, `term.mjs`, `edit_demo.py`, `make_cards.py`)로 한다. 이 폴더의 스크립트는 그 플러그인의 `scripts` 폴더를 환경 변수 `DEMO_VIDEO_PLUGIN`으로 찾고, 없으면 그렇게 말하고 멈춘다.
+
+## 영상 한 벌 (`scripts/build.py`)
+
+영상의 글은 모두 이 파일 하나에 언어별로 있다: 클립마다 녹화 원본(`out/raw/<장면>.webm`), 속도, 쓰는 구간, 자막. 그리고 카드(처음, 장마다, 비교, 정리, 마무리)와 릴 여섯(`hosting-hub-main-ko.mp4`, `hosting-hub-stage-<1..5>-ko.mp4`).
+
+```
+python3 demo_video/scripts/build.py --check     # 플러그인의 스크립트 파일을 쓰고 글만 검사한다
+python3 demo_video/scripts/build.py             # 그다음 클립, 카드, 릴을 만든다 (make_cards.py에 Pillow가 필요하다)
+```
+
+무엇을 쓰기 전에 모든 글을 플러그인의 자막 규칙으로 검사하고, 어긋난 글이 하나라도 있으면 글마다 한 줄로 말하고 멈춘다(종료 값 2). 규칙은 이렇다. 45자 이하, em dash, 가운뎃점, 화살표(U+2014, U+00B7, U+2192)를 쓰지 않는다, 속도 표시나 녹화에 대한 말을 쓰지 않는다. 자막, 장의 제목, 카드의 줄은 합니다체 한 문장이다(`니다`로 끝난다). 단계마다 자막 수의 한도(준비 5, 1단계 11, 2단계 12, 3단계 8, 4단계 10, 5단계 18)를 넘지 않는다. 릴은 이 파일이 정한 클립과 카드만 쓴다. 자막이 없는 클립은 자막 없이 자른다(플러그인은 자막이 없으면 카메라의 샷 이름을 대신 넣는데, 그것은 녹화하는 사람의 메모다).
+
 ## 개발자 PC (`tools/dev_pc/`)
 
 개발자 장면을 찍는 PC다. Docker 컨테이너 하나이고, 이 안에서 개발자가 Claude Code로 에이전트를 만들고, 카탈로그를 검색하고, 에이전트를 올리고, 로그를 본다. 사용자는 `dev`, 호스트 이름은 `dev-pc`, 작업 폴더는 `/home/dev/work`, 프롬프트는 `개발자 $ `다.
