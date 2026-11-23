@@ -184,21 +184,23 @@
 <div class="frame">
 {% include "_nav.html" %}
 <main id="main">
-  {% if msg %}<div class="warn" role="status" aria-live="polite">{{ t("msg." + msg) }}</div>{% endif %}
+  {% if msg %}<div class="msg" id="page-msg" role="status" aria-live="polite">{{ t("msg." + msg) }}</div>{% endif %}
+  {% if err %}<div class="err" id="page-err" role="alert">{{ t("err." + err) }}</div>{% endif %}
   {% include "_job.html" %}
   {% block content %}{% endblock %}
 </main>
 </div>
-<script>
+<script nonce="{{ nonce }}">
   // The page keeps itself current. While a job runs it asks /jobs/<id> every 2 s and redraws the job's lines; when
-  // the job ends it reloads once. Otherwise it fetches this page every 5 s and swaps the content of <main> and the
-  // menu's badges, unless something in <main> has focus or a text field holds text. Focus and scroll stay where they
-  // are. A page that answered a form (not a GET) is not fetched again.
+  // the job ends, or is gone because the app was started again (404), it reloads once without ?msg= and ?err=.
+  // Otherwise it fetches this page every 5 s and swaps the content of <main> and the menu's badges, unless a form
+  // field in <main> (input, textarea, select) has focus or a text field holds text. The scroll position stays; a link
+  // or a button that had focus loses it. A page that is not a GET answer is not fetched again.
   (function () {
     var main = document.getElementById("main"), live = document.body.dataset.live === "1";
     function inUse() {
       var a = document.activeElement;
-      if (a && a !== document.body && main.contains(a)) return true;
+      if (a && main.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
       var fields = main.querySelectorAll("textarea, input[type=text], input[type=search], input:not([type])");
       for (var i = 0; i < fields.length; i++) { if (fields[i].value) return true; }
       return false;
@@ -210,11 +212,16 @@
     function reloadOnce() {
       if (!live) return;
       var u = new URL(location.href);
-      if (u.searchParams.has("msg")) { u.searchParams.delete("msg"); location.replace(u.href); } else { location.reload(); }
+      if (u.searchParams.has("msg") || u.searchParams.has("err")) {
+        u.searchParams.delete("msg"); u.searchParams.delete("err"); location.replace(u.href);
+      } else { location.reload(); }
     }
     function followJob(id) {
       fetch("/jobs/" + encodeURIComponent(id), {cache: "no-store"})
-        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (r) {
+          if (r.status === 404) return {state: "gone", lines: []};
+          return r.ok ? r.json() : null;
+        })
         .then(function (job) {
           if (job) {
             var pre = document.querySelector("#panel-job .lines");
@@ -251,7 +258,7 @@
     follow();
   })();
 </script>
-<script>
+<script nonce="{{ nonce }}">
   // One submit at a time: the form gets .busy and a button with data-busy shows its waiting text.
   document.addEventListener("submit", function (e) {
     var f = e.target;

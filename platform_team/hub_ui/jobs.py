@@ -60,9 +60,11 @@ class Jobs:
         return job
 
     def _run(self, job: Job, run) -> None:
+        # Whatever the function raises ends the job, SystemExit too, so the slot is never held for ever. Ctrl+C
+        # (KeyboardInterrupt) goes to the main thread only, not to this one.
         try:
             result, state, error = run(lambda line: job.lines.append(str(line))), DONE, ""
-        except Exception as e:              # the job fails; the app and the next job go on
+        except BaseException as e:
             result, state, error = None, FAILED, cause(e)
         try:
             self._on_end()

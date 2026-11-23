@@ -176,24 +176,110 @@ def test_a_second_press_while_a_job_runs_is_refused_with_the_sentence():
     hub = web.app.state.hub
 
     @web.app.post("/test-job")
-    def test_job():
+    def test_job(request: Request):
         hub.jobs.start("test", "slow", lambda say: gate.wait(5) and {})
-        return PlainTextResponse("started")
+        return hub_app.back(request, "/", msg="started")
 
     right = token(web.get("/").text)
-    assert web.post("/test-job", headers=ORIGIN, data={"token": right}).text == "started"
+    r = web.post("/test-job", headers=ORIGIN, data={"token": right}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/?msg=started"
     first = hub.jobs.current()
-    r = web.post("/test-job", headers={**ORIGIN, "Referer": f"{BASE}/?lang=ko"}, data={"token": right},
+    r = web.post("/test-job", headers={**ORIGIN, "Referer": f"{BASE}/?lang=ko&msg=started"}, data={"token": right},
                  follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == "/?lang=ko&msg=busy"
+    assert r.status_code == 303 and r.headers["location"] == "/?lang=ko&err=busy"   # the page it was pressed on
     shown = web.get(r.headers["location"]).text
-    assert STRINGS["ko"]["msg.busy"] in shown and panel(shown, "panel-job")
+    assert STRINGS["ko"]["err.busy"] in panel(shown, "page-err") and panel(shown, "panel-job")
+    assert STRINGS["ko"]["msg.started"] not in shown
     assert hub.jobs.current() is first and first.state == "running"     # no second job
-    r = web.post("/test-job", headers={**ORIGIN, "Referer": "http://evil.example/x"}, data={"token": right},
-                 follow_redirects=False)
-    assert r.headers["location"] == "/?msg=busy"                         # back only to this screen's own pages
+    for referer in ("http://evil.example/x", f"{BASE}/test-job"):         # another site; the POST path itself
+        r = web.post("/test-job", headers={**ORIGIN, "Referer": referer}, data={"token": right}, follow_redirects=False)
+        assert r.headers["location"] == "/?err=busy", referer
     gate.set()
     assert first.wait(5)
+
+
+def test_a_press_goes_back_to_a_page_with_its_sentence_in_both_languages():
+    web = screen()
+
+    @web.app.post("/test-refuse")
+    def test_refuse(request: Request):
+        return hub_app.back(request, "/?lang=en", err="busy")
+
+    @web.app.post("/test-start")
+    def test_start(request: Request):
+        return hub_app.back(request, "//evil.example/x", msg="started")
+
+    right = token(web.get("/").text)
+    r = web.post("/test-refuse", headers=ORIGIN, data={"token": right}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/?lang=en&err=busy"
+    english = web.get(r.headers["location"]).text
+    assert panel(english, "page-err") == STRINGS["en"]["err.busy"]
+    assert panel(web.get("/?lang=ko&err=busy").text, "page-err") == STRINGS["ko"]["err.busy"]
+    r = web.post("/test-start", headers=ORIGIN, data={"token": right}, follow_redirects=False)
+    assert r.headers["location"] == "/evil.example/x?msg=started"           # a path of this screen, never another host
+    assert panel(web.get("/?lang=ko&msg=started").text, "page-msg") == STRINGS["ko"]["msg.started"]
+
+
+def test_a_message_key_that_the_texts_do_not_have_shows_nothing():
+    page = screen().get("/", params={"msg": "<script>alert(1)</script>", "err": "nothing-like-this"}).text
+    assert 'id="page-msg"' not in page and 'id="page-err"' not in page
+    assert "nothing-like-this" not in page and "alert(1)" not in page
+
+
+def test_markup_in_a_value_is_shown_as_text():
+    script, image = "<script>alert(1)</script>", "<img src=x onerror=alert(1)>"
+    c = FakeClients(record_status=None)
+    c.other_records = [{"name": script, "recordId": "rec-x", "recordType": "AGENT", "status": image}]
+    c.alarms = [{"AlarmName": f"hub-{script}", "StateValue": "OK"}]
+    c.errors[("sns", "get_topic_attributes")] = ClientError({"Error": {"Code": "AccessDenied", "Message": image}},
+                                                            "GetTopicAttributes")
+    web = screen(c)
+    assert web.app.state.templates.env.autoescape is True             # whatever a template's file name is
+    job = web.app.state.hub.jobs.start("test", image, lambda say: say(script) or {})
+    assert job.wait(5)
+    html = web.get("/").text
+    assert script not in html and image not in html and "onerror=alert(1)>" not in html
+    escaped_script, escaped_image = "&lt;script&gt;alert(1)&lt;/script&gt;", "&lt;img src=x onerror=alert(1)&gt;"
+    for element in ("panel-catalog", "panel-alarms", "panel-job"):
+        assert escaped_script in html.split(f'id="{element}"', 1)[1], element
+    for element in ("panel-catalog", "panel-job", "panel-platform"):        # status, target, the panel's error
+        assert escaped_image in html.split(f'id="{element}"', 1)[1], element
+    assert script in panel(html, "panel-catalog") and image in panel(html, "panel-platform")   # shown as text
+    data = web.get(f"/jobs/{job.id}").json()
+    assert data["target"] == image and data["lines"] == [script]           # the page script writes them as text
+
+
+def test_an_unknown_path_gets_a_framed_page_that_says_so():
+    web = screen()
+    for lang in ("ko", "en"):
+        r = web.get(f"/no-such-page?lang={lang}")
+        assert r.status_code == 404 and STRINGS[lang]["sample"] in r.text
+        assert panel(r.text, "main").startswith(STRINGS[lang]["not_found.title"])
+    r = web.get("/jobs/no-such-job")
+    assert r.status_code == 404 and r.headers["content-type"] == "application/json"   # the page script reads it
+
+
+def test_the_page_scripts_carry_the_nonce_of_the_policy():
+    web = screen()
+    pages = [web.get("/"), web.get("/no-such-page"), screen(platform=None).get("/")]
+    policy = pages[0].headers["content-security-policy"]
+    script_src = re.search(r"script-src ([^;]+)", policy).group(1).split()
+    nonce = next(s for s in script_src if s.startswith("'nonce-"))[len("'nonce-"):-1]
+    assert "'unsafe-inline'" not in script_src and len(nonce) >= 22
+    tags = re.findall(r"<script[^>]*>", pages[0].text)
+    assert len(tags) == 2 and all(f'nonce="{nonce}"' in tag for tag in tags)
+    assert web.get("/").headers["content-security-policy"] == policy         # one nonce for each start of the app
+    for r in pages[1:]:
+        assert re.findall(r"<script[^>]*>", r.text) and all("nonce=" in tag for tag in re.findall(r"<script[^>]*>", r.text))
+    assert "'nonce-" + nonce not in pages[2].headers["content-security-policy"]   # another start, another nonce
+    handlers = [f.name for f in TEMPLATES.glob("*.html") if re.search(r"\son[a-z]+\s*=", f.read_text())]
+    assert handlers == []                                                    # no inline event handler attribute
+
+
+def test_every_client_the_screens_use_is_made_before_the_first_request():
+    from platform_team.shared_code.aws_helpers import _SERVICES
+    app = create_app(S)                                                      # makes the clients; calls nothing
+    assert sorted(app.state.hub.c._clients) == sorted(_SERVICES)
 
 
 def test_the_app_is_made_and_read_without_boto3_when_clients_and_platform_are_given(monkeypatch):

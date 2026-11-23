@@ -62,6 +62,18 @@ def test_a_job_that_raises_is_shown_failed_and_frees_the_slot():
     assert after.wait(5) and after.state == "done" and jobs.current() is after
 
 
+def test_a_job_whose_function_raises_anything_ends_and_frees_the_slot():
+    jobs = Jobs()
+
+    def exits(say):
+        say("about to exit")
+        raise SystemExit(3)
+    job = jobs.start("stop", "quality_agent", exits)
+    assert job.wait(5)
+    assert job.state == "failed" and job.error == "SystemExit: 3" and job.ended is not None
+    assert jobs.start("resume", "quality_agent", lambda say: {}).wait(5)
+
+
 def test_a_finished_job_clears_the_cache():
     hub = create_app(Settings(), FakeClients(record_status=None), PLATFORM).state.hub
     loads = []

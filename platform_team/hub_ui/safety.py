@@ -8,7 +8,8 @@ these rules keep a web page of another site from using it through the presenter'
   start of the app.
 - No page of another site may show this screen inside its own (a frame), where a click on the page would be a
   click on this screen's button: every answer says so (X-Frame-Options, Content-Security-Policy frame-ancestors).
-  The same policy lets a page load scripts, styles and pictures from this app only.
+  The same policy runs only the scripts that carry this start's nonce (the page's own two) and loads styles and
+  pictures from this app only, so markup that slipped into a page could not run a script.
 - Every HTML and JSON body leaves the app with the account ID masked (aws_helpers.mask).
 
 A refused request never reaches a route: no AWS call is made and no job starts.
@@ -27,11 +28,6 @@ from platform_team.hub_ui.texts import lang_of, translator
 
 SAFE_METHODS = ("GET", "HEAD")
 FORM = "application/x-www-form-urlencoded"
-HEADERS = [(b"x-frame-options", b"DENY"),
-           (b"content-security-policy", b"default-src 'self'; script-src 'self' 'unsafe-inline'; "
-                                        b"style-src 'self' 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'; "
-                                        b"base-uri 'none'; object-src 'none'"),
-           (b"x-content-type-options", b"nosniff")]
 ACCOUNT_ID = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")       # any 12-digit number, when the account is not known yet
 MASKED = "<ACCOUNT>"                                             # what aws_helpers.mask writes for the account ID
 
@@ -52,6 +48,19 @@ def same_origin(origin: str | None, port: int) -> bool:
 
 def new_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def new_nonce() -> str:
+    """The nonce of the page scripts for one start of the app (base64url, as a CSP nonce may be)."""
+    return secrets.token_urlsafe(18)
+
+
+def headers(nonce: str) -> list[tuple[bytes, bytes]]:
+    """What every answer carries: no frame on another site, scripts with this nonce only, nothing from elsewhere."""
+    policy = (f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; "
+              "img-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'")
+    return [(b"x-frame-options", b"DENY"), (b"content-security-policy", policy.encode()),
+            (b"x-content-type-options", b"nosniff")]
 
 
 def token_ok(sent: str | None, token: str) -> bool:
@@ -96,10 +105,10 @@ def _replay(body: bytes, receive):
     return replay
 
 
-def _with_headers(send):
+def _with_headers(send, extra: list[tuple[bytes, bytes]]):
     async def send_with_headers(message):
         if message["type"] == "http.response.start":
-            message = {**message, "headers": [*message.get("headers", []), *HEADERS]}
+            message = {**message, "headers": [*message.get("headers", []), *extra]}
         await send(message)
     return send_with_headers
 
@@ -107,17 +116,18 @@ def _with_headers(send):
 class Guard:
     """ASGI middleware: the host check for every request, then the origin and token checks for a request that can
     change something. A refused request gets 403 and one sentence in the language of the page. Every answer gets
-    HEADERS."""
+    headers(nonce)."""
 
-    def __init__(self, app, port: int, token: str, lang: str):
+    def __init__(self, app, port: int, token: str, lang: str, nonce: str):
         self.app, self.port, self.token, self.lang = app, port, token, lang
+        self.headers = headers(nonce)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "websocket":            # the screen has none: the handshake is refused
             return await send({"type": "websocket.close", "code": 1008})
         if scope["type"] != "http":                 # lifespan
             return await self.app(scope, receive, send)
-        send = _with_headers(send)
+        send = _with_headers(send, self.headers)
         request = Request(scope)
         refused = None
         if not allowed_host(request.headers.get("host"), self.port):
