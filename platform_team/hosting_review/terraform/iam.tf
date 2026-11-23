@@ -14,9 +14,11 @@
 # bounded, and making one takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves
 # every review, so code that runs in the deploy build could change another agent's Runtime, pass it another agent's
 # role, overwrite another agent's package under packages/ (a Runtime version names its package's object version, so
-# the versions already made keep the package they name; not run on AWS yet), or write another agent's runtime_arn
-# (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
-# cleanup would not find (hosting_review/README.md, the known limit).
+# the versions already made keep the package they name: GetAgentRuntime showed the versionId in the code location of
+# two Runtimes on 2026-11-23, read by hand with the AWS CLI, its output not kept; overwriting another agent's key was
+# not tried), or write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the
+# policy leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the
+# hub's cleanup would not find (hosting_review/README.md, the known limit).
 # The steps that grant (Lambda) never open the submitted code. Read reads the catalog record (GetRegistryRecord)
 # and, to find an earlier review of the same record, lists this state machine's executions and reads their input
 # (states:ListExecutions, states:DescribeExecution); it changes nothing. Approve reads one SSM path,
@@ -180,7 +182,7 @@ data "aws_iam_policy_document" "grant" {
 # and cannot change or remove a boundary, so an agent role never holds more than this, whatever its inline policy says.
 data "aws_iam_policy_document" "agent_boundary" {
   statement {
-    sid     = "RuntimeLogGroups" # the log groups of this hub's Runtimes: <prefix>_<agent>, and harness_<prefix>_<agent> that a harness runs on. Not run on AWS yet
+    sid     = "RuntimeLogGroups" # the log groups of this hub's Runtimes: <prefix>_<agent>, and harness_<prefix>_<agent> that a harness runs on. On 2026-11-23 the four agents' log groups were there and held no denial line (make e2e-ops); that each had session streams was read by hand with the AWS CLI, its output not kept
     actions = ["logs:DescribeLogStreams", "logs:CreateLogGroup"]
     resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/${var.prefix}_*",
     "arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/harness_${var.prefix}_*"]
@@ -191,7 +193,7 @@ data "aws_iam_policy_document" "agent_boundary" {
     resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:*"]
   }
   statement {
-    sid     = "RuntimeLogs" # the streams of those log groups. Not run on AWS yet
+    sid     = "RuntimeLogs" # the streams of those log groups. On 2026-11-23 stop.sh found quality_agent's sessions by the stream names of its log group; the runtime-logs-<session> and otel-rt-logs streams of all four agents were read by hand with the AWS CLI, its output not kept
     actions = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/${var.prefix}_*:log-stream:*",
     "arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/harness_${var.prefix}_*:log-stream:*"]
@@ -260,7 +262,7 @@ data "aws_iam_policy_document" "deploy" {
     resources = [local.hub_code]
   }
   statement {
-    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). The deploy worked with it; whether the service needs GetObject was not tried. The Runtime names the package by object version (versionId), and a read of an object at a version is GetObjectVersion; that read has not run on AWS yet
+    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). The deploy worked with it; whether the service needs GetObject was not tried. The Runtime names the package by object version (versionId), and a read of an object at a version is GetObjectVersion: on 2026-11-23 the reviews created three Runtimes and updated one four times with it in place and AWS denied nothing; whether it is needed was not tried (no run went without it)
     actions   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"]
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
