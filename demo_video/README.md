@@ -33,7 +33,7 @@
 
 ### 이 PC와 컨테이너의 경계
 
-컨테이너가 이 PC에 쓸 수 있는 곳은 자기 홈 하나, `demo_video/out/dev-pc/home`(컨테이너의 `/home/dev`)이다. 자격 증명 폴더는 읽기 전용으로 들어간다. 홈 안에는 컨테이너 안의 어느 프로세스든 무엇이든 만들 수 있으므로(이 PC의 다른 폴더를 가리키는 심볼릭 링크도), `run.sh`는 홈 폴더를 만든 뒤로는 그 안의 것을 이 PC의 명령으로 만들거나 고치거나 지우지 않는다. 작업 폴더를 비우는 일, checkout을 넣는 일(이 PC가 표준 입력으로 보내는 tar), 설정 파일을 쓰는 일, `agent`가 에이전트를 바꿔 넣는 일은 모두 컨테이너 안에서 사용자 `dev`로(`docker exec`) 한다. 그곳에서는 링크가 컨테이너 안에서 풀리므로 이 PC의 다른 폴더에 닿지 않는다. `demo_video/out/dev-pc`, 홈, 자격 증명 폴더 자체가 심볼릭 링크면 `run.sh`는 한 줄로 거부한다.
+컨테이너가 이 PC에 쓸 수 있는 곳은 자기 홈 하나, `demo_video/out/dev-pc/home`(컨테이너의 `/home/dev`)이다. 자격 증명 폴더는 읽기 전용으로 들어간다. 홈 안에는 컨테이너 안의 어느 프로세스든 무엇이든 만들 수 있으므로(이 PC의 다른 폴더를 가리키는 심볼릭 링크도), `run.sh`는 홈 폴더를 만든 뒤로는 그 안의 것을 이 PC의 명령으로 만들거나 고치거나 지우지 않는다. 작업 폴더를 비우는 일, checkout을 넣는 일(이 PC가 표준 입력으로 보내는 tar), 설정 파일을 쓰는 일, `agent`가 에이전트를 바꿔 넣는 일은 모두 컨테이너 안에서 사용자 `dev`로(`docker exec`) 한다. 그곳에서는 링크가 컨테이너 안에서 풀리므로 이 PC의 다른 폴더에 닿지 않는다. `demo_video/out/dev-pc`, 홈, 자격 증명 폴더 자체가 심볼릭 링크면 `run.sh`는 한 줄로 거부한다. 홈(`demo_video/out/dev-pc/home/`)에는 컨테이너 안에서 쓴 파일(Claude Code의 메모와 대화 기록, 작업 폴더의 `CLAUDE.md`)이 있다. 이 저장소를 이 PC에서 코딩 도우미로 열 때는 도우미가 그 폴더를 읽지 않게 한다. 그런 도구는 그곳에서 찾은 `CLAUDE.md`를 지시로 받아들일 수 있다. 그 폴더에서 볼 것은 `docker exec`로 읽는다.
 
 ### `run.sh`
 
@@ -76,9 +76,9 @@
 | `Edit(./pyproject.toml)`, `Edit(./uv.lock)` | 그 명령이 쓰는 Python 환경 |
 | `Edit(./.claude/**)`, `Edit(./.mcp.json)` | Claude Code 자신의 설정과, 묻지 않고 뜨는 MCP 서버 |
 
-그 밖의 도구는 Claude Code가 화면에서 묻는다. `publish`도 묻는다(이야기에서 올리는 것은 개발자가 직접 친다). 시험(`uv run pytest`)도 묻는다. 권한을 건너뛰는 모드나 플래그는 쓰지 않는다(`run.sh check`만 `claude -p`에 `--allowedTools "Bash(aws sts get-caller-identity --query Arn --output text)"`를 준다. 그 한 명령이 개발팀 역할로 도는지 보는 것이다). Claude Code 2.1.330은 따로 정하지 않으면 auto mode(Claude가 도구 호출의 위험을 스스로 판단해 낮다고 본 것은 묻지 않고 실행한다)로 시작하므로(2026-11-23에 컨테이너에서 처음 띄웠을 때 그렇게 알렸다), 설정이 묻는 모드를 정하고(`"defaultMode": "default"`) auto mode를 끈다(`"disableAutoMode": "disable"`. Claude Code의 settings reference는 이 키가 auto mode를 `Shift+Tab`의 순환에서 빼고, auto mode로 시작했을 세션을 `default`로 시작하게 한다고 적는다. 2026-11-23에 읽었다). `.mcp.json`의 서버는 `enabledMcpjsonServers`로 승인해 둔다.
+장면 명령(`search`, `logs`, `ask`, `publish`)은 Python을 `-P`로 띄우므로, 명령을 부른 폴더(예: Claude Code가 묻지 않고 쓸 수 있는 `dev_team/` 아래)의 파일을 모듈로 불러오지 않는다. 그 밖의 도구는 Claude Code가 화면에서 묻는다. `publish`도 묻는다(이야기에서 올리는 것은 개발자가 직접 친다). 시험(`uv run pytest`)도 묻는다. 권한을 건너뛰는 모드나 플래그는 쓰지 않는다(`run.sh check`만 `claude -p`에 `--allowedTools "Bash(aws sts get-caller-identity --query Arn --output text)"`를 준다. 그 한 명령이 개발팀 역할로 도는지 보는 것이다). Claude Code 2.1.330은 따로 정하지 않으면 auto mode(Claude가 도구 호출의 위험을 스스로 판단해 낮다고 본 것은 묻지 않고 실행한다)로 시작하므로(2026-11-23에 컨테이너에서 처음 띄웠을 때 그렇게 알렸다), 설정이 묻는 모드를 정하고(`"defaultMode": "default"`) auto mode를 끈다(`"disableAutoMode": "disable"`. Claude Code의 settings reference는 이 키가 auto mode를 `Shift+Tab`의 순환에서 빼고, auto mode로 시작했을 세션을 `default`로 시작하게 한다고 적는다. 2026-11-23에 읽었다). `.mcp.json`의 서버는 `enabledMcpjsonServers`로 승인해 둔다.
 
-2026-11-23에 이 설정으로 컨테이너에서 본 것이다(`claude -p`로). MCP 검색 도구는 묻지 않고 돌았다. `demo_scenes/search`를 고쳐 달라는 요청은 Claude Code가 스스로 거절했고, 편집 도구로 한 번 시도해 보라고 하자 그 도구가 `File is in a directory that is denied by your permission settings.`로 거부했다(파일은 바뀌지 않았다). `logs docs_adk 60`은 묻지 않고 돌았다. ttyd의 대화형 세션에서 Claude Code가 물을 때 고를 수 있는 것은 `Yes`, `Yes, and don't ask again for: …`, `No`였고, auto mode로 바꾸는 선택지는 없었다. `Shift+Tab`은 manual, accept edits, plan 사이만 돌았다.
+2026-11-23에 이 설정으로 컨테이너에서 본 것이다(`claude -p`로). MCP 검색 도구는 묻지 않고 돌았다. `demo_scenes/search`를 고쳐 달라는 요청은 Claude Code가 스스로 거절했고, 편집 도구로 한 번 시도해 보라고 하자 그 도구가 `File is in a directory that is denied by your permission settings.`로 거부했다(파일은 바뀌지 않았다). `logs docs_adk 60`은 묻지 않고 돌았다. Claude Code가 `dev_team/x/json.py`(불러오면 표시 파일을 쓰는 두 줄)를 묻지 않고 쓰고 그 폴더에서 `search`를 묻지 않고 돌렸을 때, `search`는 여느 때의 줄을 찍었고 그 파일은 실행되지 않았다. `PYTHONPATH=dev_team/x search …`와 작업 폴더 맨 위에 파일을 쓰는 것(`sitecustomize.py`)은 묻는 일이어서 `claude -p`에서 거절되었다. ttyd의 대화형 세션에서 Claude Code가 물을 때 고를 수 있는 것은 `Yes`, `Yes, and don't ask again for: …`, `No`였고, auto mode로 바꾸는 선택지는 없었다. `Shift+Tab`은 manual, accept edits, plan 사이만 돌았다.
 
 ### 2026-11-23에 확인한 것
 
