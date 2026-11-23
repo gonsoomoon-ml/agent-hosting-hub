@@ -11,5 +11,6 @@ line="+ python -m $module"
 for a in "$@"; do case "$a" in *[[:space:]]*) line+=" \"$a\"" ;; *) line+=" $a" ;; esac; done
 [ ${#line} -le 100 ] || line="${line:0:97}..."
 echo "$line"
-# python -P: the folder the command is called in never goes on the module search path, so no file there is imported.
-PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -P -m "$module" "$@"
+# python -I (isolated): the folder the command is called in never goes on the module search path, and no PYTHON*
+# variable of the caller and no user site is read; the hub's modules come from the project's editable install.
+exec uv run --quiet --project "$repo" python -I -m "$module" "$@"

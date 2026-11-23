@@ -96,16 +96,42 @@ def test_no_wrapper_loads_a_module_from_the_folder_it_is_called_in(tmp_path):
         assert seen["planted"] == seen["clean"] and seen["clean"][0] == 2 and "usage" in seen["clean"][1], (name, seen)
 
 
-def test_each_wrapper_runs_python_with_the_safe_path_switch():
-    # python -P: neither the caller's folder nor the script's folder goes on the module search path
+def test_each_wrapper_runs_python_isolated():
+    # python -I: neither the caller's folder nor the script's folder goes on the module search path, and no PYTHON*
+    # variable of the caller and no user site is read; the modules are found through the project's editable install
     for name in MODULES:
         [call] = [line for line in (SCENES / name).read_text(encoding="utf-8").splitlines() if "uv run" in line]
-        assert re.search(r'uv run --quiet --project "\$repo" python -P -m "\$module" ', call), name
+        assert re.search(r'exec uv run --quiet --project "\$repo" python -I -m "\$module" ', call), name
+        assert "PYTHONPATH" not in call, name                 # -I would ignore it: the wrapper does not pretend
+
+
+PLANTED_WARNING = """import os, pathlib
+pathlib.Path(os.environ["PLANTED_MARKER"]).write_text("loaded through the caller's PYTHONWARNINGS")
+class Planted(Warning):
+    pass
+"""
+
+
+def test_a_callers_python_variables_never_load_a_module(tmp_path):
+    # A warning filter names its category by module: Python imports that module at start. A caller's PYTHONWARNINGS
+    # that names a module under dev_team/ (found through the caller's PYTHONPATH) must not run it, nor may a
+    # sitecustomize.py on the caller's PYTHONPATH; each call stops at bad usage (exit 2, no AWS call).
+    (tmp_path / "dev_team" / "x").mkdir(parents=True)
+    (tmp_path / "dev_team" / "x" / "planted.py").write_text(PLANTED_WARNING)
+    (tmp_path / "sitecustomize.py").write_text(PLANTED_WARNING)
+    marker = tmp_path / "marker"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWS_", "PYTHON"))} | {
+        "AWS_EC2_METADATA_DISABLED": "true", "PLANTED_MARKER": str(marker), "PYTHONPATH": str(tmp_path),
+        "PYTHONWARNINGS": "ignore::dev_team.x.planted.Planted"}
+    for name in MODULES:
+        r = subprocess.run([str(SCENES / name)], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=120)
+        assert r.returncode == 2 and "usage" in r.stdout + r.stderr, (name, r.stdout, r.stderr)
+        assert not marker.exists(), name
 
 
 def test_ask_still_reads_a_file_given_relative_to_the_callers_folder(tmp_path):
-    # -P changes only the module search path: --file is read from where the person stands. A blank file is read and
-    # gives the usage (no AWS call); a missing one says it cannot be read.
+    # -I changes only where Python finds modules and which variables it reads: --file is read from where the person
+    # stands. A blank file is read and gives the usage (no AWS call); a missing one says it cannot be read.
     (tmp_path / "blank.txt").write_text("  \n")
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")} | {"AWS_EC2_METADATA_DISABLED": "true"}
     run = lambda f: subprocess.run([str(SCENES / "ask"), "quality_agent", "--file", f], capture_output=True, text=True,

@@ -27,4 +27,4 @@ AI 에이전트 호스팅 허브에 에이전트를 올리는 개발팀의 작�
 
 ## 고치는 곳
 
-파일은 `dev_team/` 아래에만 쓴다. `demo_scenes/`, `platform_team/`, `pyproject.toml`, `uv.lock`, `.claude/`, `.mcp.json`은 고치지 않는다(설정이 막는다).
+파일은 `dev_team/` 아래에만 쓴다. `demo_scenes/`, `platform_team/`, `pyproject.toml`, `uv.lock`, `.claude/`, `.mcp.json`은 고치지 않는다(설정이 막는다). `dev_team/` 아래에도 `.claude/` 폴더, `.mcp.json`, `CLAUDE.md`는 만들지 않는다(설정이 막는다).

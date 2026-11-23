@@ -25,7 +25,10 @@ ALLOWED = [f"mcp__{SERVER}__*", "Edit(./dev_team/**)", "Bash(search:*)", "Bash(l
 # the credential files; and every file a pre-allowed command runs or reads (the scene commands, the hub's code, the
 # project's Python), and Claude Code's own settings and MCP servers
 DENIED = ["Read(//run/dev-pc/**)", "Edit(./demo_scenes/**)", "Edit(./platform_team/**)", "Edit(./.claude/**)",
-          "Edit(./.mcp.json)", "Edit(./pyproject.toml)", "Edit(./uv.lock)"]
+          "Edit(./.mcp.json)", "Edit(./pyproject.toml)", "Edit(./uv.lock)",
+          # under dev_team/, where edits need no question: no Claude Code folder (skills, hooks, settings), MCP server
+          # list or instructions file that a later session would load
+          "Edit(./dev_team/**/.claude/**)", "Edit(./dev_team/**/.mcp.json)", "Edit(./dev_team/**/CLAUDE.md)"]
 SKIP_WORDS = ("--dangerously-skip-permissions", "dangerously", "--permission-mode", "bypassPermissions", "acceptEdits")
 
 
@@ -77,6 +80,18 @@ def test_no_pre_allowed_rule_is_broader_than_the_list_or_reaches_a_denied_file()
                  "./.claude/settings.json", "./.mcp.json", "./pyproject.toml", "./uv.lock", "./CLAUDE.md"):
         assert not [e for e in edits if fnmatchcase(path, e)], path
     assert fnmatchcase("./dev_team/quality_agent/agent.py", edits[0])
+
+
+def test_no_claude_code_folder_mcp_list_or_instructions_may_be_written_under_dev_team():
+    # Edit(./dev_team/**) lets Claude Code write there without a question; a nested .claude/ (a skill, a hook), a
+    # .mcp.json or a CLAUDE.md there would be read by a later session, so each is denied
+    deny = [d[len("Edit("):-1] for d in _settings()["permissions"]["deny"] if d.startswith("Edit(./dev_team/")]
+    assert deny == ["./dev_team/**/.claude/**", "./dev_team/**/.mcp.json", "./dev_team/**/CLAUDE.md"]
+    for path in ("./dev_team/x/.claude/skills/y/SKILL.md", "./dev_team/quality_agent/.claude/settings.json",
+                 "./dev_team/x/.mcp.json", "./dev_team/quality_agent/CLAUDE.md"):
+        assert [d for d in deny if fnmatchcase(path, d)], path
+    for path in ("./dev_team/quality_agent/agent.py", "./dev_team/quality_agent/requirements.txt"):
+        assert not [d for d in deny if fnmatchcase(path, d)], path
 
 
 def test_the_readme_and_the_projects_claude_md_say_what_the_settings_say():
