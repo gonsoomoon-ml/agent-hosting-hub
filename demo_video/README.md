@@ -29,7 +29,7 @@
 - 두 파일은 `demo_video/out/dev-pc/creds/`(폴더 700, 파일 600)에만 있고, 컨테이너에는 읽기 전용(`/run/dev-pc`)으로 들어간다. `run.sh creds`는 두 주체(계정은 `<ACCOUNT>`로 가린다)와 끝나는 시각만 찍고 키, 비밀 값, 토큰은 찍지 않는다. `run.sh forget`과 `run.sh down`이 두 파일을 지운다.
 - 개발팀 역할에는 Bedrock 권한이 없고, Bedrock 토큰에는 모델 호출 말고는 권한이 없다.
 - 한계: Bedrock 토큰 파일은 컨테이너의 사용자(Claude Code의 도구와 같은 사용자)가 읽을 수 있는 파일이다. `settings.json`의 `deny`(`Read(//run/dev-pc/**)`)가 Claude Code의 파일 읽기 도구를 막는다. 같은 모양의 `deny`는 묻지 않고 허락한 `cat`으로 그 파일을 읽는 셸 명령도 거부했다(2026-11-23, `/etc/hostname`을 막고 시험했다. 자격 증명 폴더로는 시험하지 않았다). 그래도 셸의 다른 길로 읽는 것까지 막는다고 보장하지는 못한다. 그 토큰으로 할 수 있는 것은 두 모델의 호출뿐이다.
-- 이 PC가 EC2 인스턴스라면 컨테이너에서 인스턴스 메타데이터 서비스에 닿을 수 있다. `run.sh up`은 SDK가 그곳을 묻지 않게 하고(`AWS_EC2_METADATA_DISABLED=true`), 그 주소를 컨테이너의 네트워크에서 막는다(root가 한 번 넣는 blackhole 경로. 사용자 `dev`에게는 지울 권한이 없다).
+- EC2 인스턴스에서는 컨테이너가 인스턴스 메타데이터 서비스에 닿을 수 있다(2026-11-23에 이 컨테이너를 돌린 EC2 인스턴스에서 닿았고, 그 인스턴스에는 역할이 있었다). `run.sh up`은 SDK가 그곳을 묻지 않게 하고(`AWS_EC2_METADATA_DISABLED=true`), 그 주소를 컨테이너의 네트워크에서 막는다(root가 한 번 넣는 blackhole 경로. 사용자 `dev`에게는 지울 권한이 없다).
 
 ### `run.sh`
 
