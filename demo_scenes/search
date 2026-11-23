@@ -11,4 +11,5 @@ line="+ python -m $module"
 for a in "$@"; do case "$a" in *[[:space:]]*) line+=" \"$a\"" ;; *) line+=" $a" ;; esac; done
 [ ${#line} -le 100 ] || line="${line:0:97}..."
 echo "$line"
-PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -m "$module" "$@"
+# python -P: the folder the command is called in never goes on the module search path, so no file there is imported.
+PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -P -m "$module" "$@"

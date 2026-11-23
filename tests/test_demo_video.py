@@ -258,6 +258,7 @@ def fake_pc(tmp_path):
     home.mkdir()
     victim = tmp_path / "victim"                                  # a folder of this PC outside the home
     victim.mkdir()
+    (victim / "keep.txt").write_text("a file of this PC\n")       # a delete through a link would take it
     for planted in ("work", "prepared", "made-by-claude"):
         (home / planted).symlink_to(victim)
     bin_ = tmp_path / "bin"
@@ -304,7 +305,8 @@ def test_up_and_agent_write_inside_the_home_only_through_docker_exec_and_never_f
     r = fake_pc["run"]("agent", "quality_agent")
     assert r.returncode == 0, r.stdout + r.stderr
     # nothing reached the folder the links point to, and the home is as it was: every write went through docker exec
-    assert list(fake_pc["victim"].iterdir()) == [] and fake_pc["snapshot"]() == before
+    assert [f.name for f in fake_pc["victim"].iterdir()] == ["keep.txt"] and fake_pc["snapshot"]() == before
+    assert (fake_pc["victim"] / "keep.txt").read_text() == "a file of this PC\n"
     calls = fake_pc["calls"]()
     run_call = next(c for c in calls if c.startswith("run "))
     assert "--security-opt no-new-privileges" in run_call and "--workdir /home/dev " in run_call

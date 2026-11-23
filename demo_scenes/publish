@@ -22,4 +22,5 @@ fi
 line="+ python -m $module dev_team/$agent${2:+ $2}"
 [ ${#line} -le 100 ] || line="${line:0:97}..."
 echo "$line"
-PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -m "$module" "$repo/dev_team/$agent" ${2:+"$2"}
+# python -P: the folder the command is called in never goes on the module search path, so no file there is imported.
+PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -P -m "$module" "$repo/dev_team/$agent" ${2:+"$2"}
