@@ -38,13 +38,14 @@ PASS = lambda text, source: (False, text)
 
 
 class Seen:
-    """A guard that blocks nothing, masks nothing and records (text, source) of each check."""
-    def __init__(self):
-        self.checked = []
+    """A guard that records (text, source) of each check and answers as `guard` does (by default: blocks nothing,
+    masks nothing)."""
+    def __init__(self, guard=PASS):
+        self.checked, self.guard = [], guard
 
     def __call__(self, text, source):
         self.checked.append((text, source))
-        return False, text
+        return self.guard(text, source)
 
 
 def test_a_blocked_prompt_is_refused_with_403():
@@ -80,11 +81,51 @@ def test_a_call_with_nothing_to_hide_passes_unchanged():
                    guard=PASS) == {"interceptorOutputVersion": "1.0", "http": {}}
 
 
-def test_the_prompt_is_checked_on_the_way_in_and_the_whole_answer_on_the_way_out():
+def test_the_whole_request_is_checked_on_the_way_in_and_the_whole_answer_on_the_way_out():
     seen = Seen()
     handler(event(prompt="What is the spec of part P-100?"), None, guard=seen)
     handler(event(prompt="What is the spec of part P-100?", answer='{"answer": "M4 x 12 mm"}'), None, guard=seen)
-    assert seen.checked == [("What is the spec of part P-100?", "INPUT"), ('{"answer": "M4 x 12 mm"}', "OUTPUT")]
+    assert seen.checked == [('{"prompt": "What is the spec of part P-100?"}', "INPUT"), ('{"answer": "M4 x 12 mm"}', "OUTPUT")]
+
+
+FALCON = lambda text, source: ("Project Falcon" in text, text)                           # blocks the code name only
+
+
+@pytest.mark.parametrize("body", [
+    '{"prompt": "hello", "context": "Project Falcon schedule"}',                    # another field of the request
+    '{"prompt": "hello", "history": [{"text": "Project Falcon"}]}',                  # deeper in the document
+    '{"prompt": "hello", "Project Falcon": 1}',                                     # a field name
+    '{"prompt": "hello", "context": "\\u0050roject Falcon"}',                        # a JSON escape: read as its text
+    '{"note": "\\u0050roject Falcon"}',                                              # no prompt, an escape
+])
+def test_a_blocked_word_outside_the_prompt_is_blocked(body):
+    assert out_is_refused(handler(event(raw=b64(body)), None, guard=FALCON)), body
+
+
+def test_masking_still_reads_the_prompt_path():
+    # As before the block decision read the whole body: only the prompt goes on masked, the rest of the request as it
+    # came; a body without a prompt goes on masked as a whole.
+    body = {"prompt": "I am EMP-204817", "note": "by EMP-204817"}
+    out = handler(event(raw=b64(json.dumps(body))), None, guard=MASK)
+    assert body_of(out["http"]["transformedGatewayRequest"]) == {"prompt": "I am {employee_id}", "note": "by EMP-204817"}
+    out = handler(event(raw=b64('{"note": "by EMP-204817"}')), None, guard=MASK)
+    assert text_of(out["http"]["transformedGatewayRequest"]) == '{"note": "by {employee_id}"}'
+    assert handler(event(raw=b64('{"prompt": "hello", "note": "part P-100"}')), None, guard=MASK) == {
+        "interceptorOutputVersion": "1.0", "http": {}}
+
+
+def test_the_block_decision_reads_the_whole_body_and_masking_the_prompt():
+    # Nothing to mask: one check, of the whole body. Something masked in it: then one check of the prompt.
+    seen = Seen()
+    handler(event(raw=b64('{"prompt": "hello", "note": "part P-100"}')), None, guard=seen)
+    assert seen.checked == [('{"prompt": "hello", "note": "part P-100"}', "INPUT")]
+    seen = Seen(MASK)
+    body = {"prompt": "I am EMP-204817", "note": "by EMP-204817"}
+    handler(event(raw=b64(json.dumps(body))), None, guard=seen)
+    assert seen.checked == [(json.dumps(body), "INPUT"), ("I am EMP-204817", "INPUT")]
+    seen = Seen()                                  # a JSON body is read without its escapes, non-ASCII text as it is
+    handler(event(raw=b64('{"prompt": "\\ud55c\\uae00", "note": "\\u0050art"}')), None, guard=seen)
+    assert seen.checked == [('{"prompt": "한글", "note": "Part"}', "INPUT")]
 
 
 @pytest.mark.parametrize("raw", [None, "", "not base64!", b64("not json"), b64("[1, 2]"), b64('{"no_prompt": 1}')])
@@ -132,7 +173,7 @@ def test_a_request_body_that_is_not_a_string_is_still_checked():
         assert out_is_refused(handler(event(raw=raw), None, guard=falcon)), raw
     seen = Seen()
     handler(event(raw=b'{"prompt": "hello"}'), None, guard=seen)
-    assert seen.checked == [("hello", "INPUT")]
+    assert seen.checked == [('{"prompt": "hello"}', "INPUT")]
 
 
 def out_is_refused(out):

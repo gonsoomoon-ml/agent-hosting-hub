@@ -2,11 +2,14 @@
 on every request and every answer. A blocked text ends the call with the interceptor's own response.
 A masked text goes on in its masked form. To use the company's own guardrail, change guard().
 
-A request is checked by its prompt when its body is a JSON object with a text "prompt". Any other body (not base64,
-not JSON, not an object, no prompt) is checked whole, as text, and goes on whole in its masked form. An answer is
-always checked whole. A body that is not a string is read as text first (unb64), a part of the event that is not
-an object is taken as one with no body, and a JSON body nested deeper than the parser goes is read as text, so none
-of these makes the handler raise. The log line says only where, whether blocked and whether masked: never the text.
+Whether a request is blocked is decided on its whole body: a JSON body as its document written again without
+escapes, so every string in it counts (field names too); any other body as it came. What is masked is the prompt
+when the body is a JSON object with a text "prompt", and only the prompt goes on masked; any other body (not base64,
+not JSON, not an object, no prompt) goes on whole in its masked form. An answer is always checked whole, as the text
+the agent sent (a JSON answer with its escapes as they are). A body that is not a string is read as text first
+(unb64), a part of the event that is not an object is taken as one with no body, and a JSON body nested deeper than
+the parser goes is read as text, so none of these makes the handler raise. The log line says only where, whether
+blocked and whether masked: never the text.
 """
 import base64
 import json
@@ -63,15 +66,19 @@ def _object(part):
     return part if isinstance(part, dict) else {}
 
 
-def _prompt(raw):
-    """(the request's JSON document, its prompt), or (None, the whole body) when the body has no text prompt."""
+def _read(raw):
+    """(the request's JSON document, its prompt, the whole body), or (None, the body as it came, the whole body) when
+    the body has no text prompt. The block decision reads the whole body: a JSON body as its document written again
+    without escapes (every string in it, field names too, as the text it holds); any other body as it came. Masking
+    reads the prompt, or the body as it came."""
     try:
         doc = json.loads(raw)
+        whole = json.dumps(doc, ensure_ascii=False)
     except (ValueError, RecursionError):     # not JSON, or nested deeper than the parser goes: text as it came
-        return None, raw
+        return None, raw, raw
     if isinstance(doc, dict) and isinstance(doc.get("prompt"), str):
-        return doc, doc["prompt"]
-    return None, raw
+        return doc, doc["prompt"], whole
+    return None, raw, whole
 
 
 def refuse():
@@ -86,8 +93,10 @@ def handler(event, context, guard=guard):
     h = _object(h)
     req, resp = _object(h.get("gatewayRequest")), h.get("gatewayResponse")
     if resp is None:                                                    # REQUEST: the user's prompt
-        doc, prompt = _prompt(unb64(req.get("body")))
-        blocked, masked = guard(prompt, "INPUT")
+        doc, prompt, whole = _read(unb64(req.get("body")))
+        blocked, masked = guard(whole, "INPUT")                        # blocked by any text of the request
+        if not blocked and whole != prompt:     # masked: the prompt, checked again when the whole body had a mask
+            blocked, masked = guard(prompt, "INPUT") if masked != whole else (False, prompt)
         print(json.dumps({"point": "REQUEST", "blocked": blocked, "masked": masked != prompt}))
         if blocked:
             return refuse()
