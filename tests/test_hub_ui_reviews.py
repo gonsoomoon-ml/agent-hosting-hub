@@ -328,14 +328,18 @@ def test_the_page_lists_agent_records_with_their_latest_review():
     page = web.get("/reviews").text
     listing = panel(page, "panel-applications")
     assert "quality_agent" in listing and "release_review" in listing and "parts-tools" not in listing
-    assert "PENDING_APPROVAL 심사 중" in listing and "APPROVED 승인" in listing and "DRAFT 작성 중" in listing
+    # a record waiting for a decision, also beside a review that ended: 승인 대기, not a word of a running review
+    assert "PENDING_APPROVAL 승인 대기" in listing and "APPROVED 승인" in listing and "DRAFT 작성 중" in listing
     for word in ("통과", "진행 중", "대기", "AWS Lambda", "AWS CodeBuild", "AWS Step Functions", "appliance", "strands",
                  "Parts___get_part_spec"):
         assert word in listing, word
     links = [a["href"] for tag, a in panel_elements(page, "panel-applications") if tag == "a"]
     assert {"/reviews/quality_agent", "/reviews/release_review", "/reviews/docs_adk"} <= set(links)
     assert panel(page, "badge-reviews") == "1"              # the menu agrees: AGENT records in PENDING_APPROVAL
-    assert "Running" in panel(web.get("/reviews?lang=en").text, "panel-applications")
+    english = panel(web.get("/reviews?lang=en").text, "panel-applications")
+    assert "Running" in english and "PENDING_APPROVAL Awaiting approval" in english
+    detail = panel(screen(failed_at_scan()).get("/reviews/quality_agent?lang=ko").text, "panel-application")
+    assert "PENDING_APPROVAL 승인 대기" in detail                     # the record of a review that failed at Scan
 
 
 def test_the_detail_page_shows_each_step_with_its_service_time_and_error_and_the_scans_findings():
@@ -600,6 +604,35 @@ def test_reject_refuses_an_empty_or_too_long_reason():
     assert r.status_code == 303 and r.headers["location"] == "/reviews?err=agent" and hub.jobs.current() is None
     assert panel(web.get(r.headers["location"] + "&lang=ko").text, "page-err") == STRINGS["ko"]["err.agent"]
     r = web.post("/reviews/quality_agent/reject", headers=ORIGIN, data={"token": right, "reason": "x" * MAX_REASON},
+                 follow_redirects=False)
+    assert r.headers["location"] == "/reviews/quality_agent?msg=started" and hub.jobs.current().wait(5)
+
+
+def test_reject_for_a_name_with_no_agent_record_is_refused_before_any_job(monkeypatch):
+    """As the agents page does for an unhosted name: no AGENT record of that name, no job (303 to /reviews, err)."""
+    calls = []
+    monkeypatch.setattr(reject_agent, "reject", lambda *a, **kw: calls.append(a))
+    c = failed_at_scan()
+    c.other_records = [{"name": "parts_tools", "recordId": "rec-parts", "recordType": "MCP", "status": "APPROVED"}]
+    web = screen(c)
+    hub = web.app.state.hub
+    right = token(web.get("/reviews").text)
+    for name in ("ghost_agent", "parts_tools"):                     # no record; a record that is not an AGENT
+        r = web.post(f"/reviews/{name}/reject", headers=ORIGIN, data={"token": right, "reason": "why"},
+                     follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/reviews?err=agent", name
+    assert hub.jobs.current() is None and calls == []
+    for lang in ("ko", "en"):
+        assert panel(web.get(f"/reviews?err=agent&lang={lang}").text, "page-err") == STRINGS[lang]["err.agent"]
+    hub.cache.clear()
+    c.errors[("reg", "list_registry_records")] = ClientError(
+        {"Error": {"Code": "AccessDeniedException", "Message": f"not allowed for {ACCOUNT}"}}, "ListRegistryRecords")
+    r = web.post("/reviews/quality_agent/reject", headers=ORIGIN, data={"token": right, "reason": "why"},
+                 follow_redirects=False)                            # the catalog cannot be read: a sentence, no page
+    assert r.status_code == 303 and r.headers["location"] == "/reviews/quality_agent?err=unread"
+    assert hub.jobs.current() is None and calls == []
+    del c.errors[("reg", "list_registry_records")]
+    r = web.post("/reviews/quality_agent/reject", headers=ORIGIN, data={"token": right, "reason": "why"},
                  follow_redirects=False)
     assert r.headers["location"] == "/reviews/quality_agent?msg=started" and hub.jobs.current().wait(5)
 

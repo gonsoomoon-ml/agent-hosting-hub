@@ -100,7 +100,7 @@ def test_the_page_lists_hosted_agents_with_usage_and_stop_state():
                                 "memory_gb_hours": 0.0}
     assert row(web, "release_review")["stopped"] is True
     harness = row(web, "parts_harness")
-    assert (harness["hosted_as"], harness["stopped"], harness["can_stop"]) == ("harness", False, False)
+    assert (harness["hosted_as"], harness["stopped"], harness["can_stop"]) == ("harness", None, False)    # not read
     page = web.get("/agents?lang=ko").text
     text = panel(page, "panel-agents")
     assert "quality_agent appliance strands Runtime" in text and "parts_harness parts harness harness" in text
@@ -108,6 +108,11 @@ def test_the_page_lists_hosted_agents_with_usage_and_stop_state():
     assert STRINGS["ko"]["agent.state.stopped"] in text and STRINGS["ko"]["agent.state.running"] in text
     assert STRINGS["ko"]["agent.no_entry"] in text and text.count(STRINGS["ko"]["agent.no_entry"]) == 1
     assert "최근 60분" in text
+    # the harness agent cannot be stopped here and its stop state is not read: — in its cell, and the sentence why
+    shown = panel(page, "agent-parts_harness")
+    assert STRINGS["ko"]["agent.state.running"] not in shown and STRINGS["ko"]["agent.state.stopped"] not in shown
+    assert "APPROVED — " in shown and STRINGS["ko"]["agent.no_entry"] in shown
+    assert STRINGS["ko"]["agent.state.running"] in panel(page, "agent-quality_agent")
     actions = {a["action"] for tag, a in panel_elements(page, "panel-agents") if tag == "form"}
     assert actions == {"/agents/docs_adk/stop", "/agents/quality_agent/stop", "/agents/release_review/resume"}
     assert "/agents/parts_harness/stop" not in actions
@@ -318,6 +323,23 @@ def test_a_well_formed_name_that_is_not_hosted_is_refused_before_any_job(monkeyp
     assert panel(web.get("/agents?err=agent&lang=ko").text, "page-err") == STRINGS["ko"]["err.agent"]
     r = web.post("/agents/docs_adk/resume", headers=ORIGIN, data={"token": right}, follow_redirects=False)
     assert r.headers["location"] == "/agents?msg=started" and hub.jobs.current().wait(5)     # a hosted one goes on
+
+
+def test_a_press_whose_read_of_the_hosted_agents_fails_goes_back_with_a_sentence(monkeypatch):
+    """A POST never renders a page: when the hosted agents cannot be read, Stop and Resume answer 303 with err."""
+    calls = []
+    monkeypatch.setattr(stop_agent, "stop", lambda *a, **kw: calls.append("stop"))
+    monkeypatch.setattr(stop_agent, "resume", lambda *a, **kw: calls.append("resume"))
+    c = fleet()
+    web = screen(c)
+    right = token(web.get("/agents").text)
+    c.errors[("ctl", "list_agent_runtimes")] = denied("ListAgentRuntimes")
+    for action in ("stop", "resume"):
+        r = web.post(f"/agents/quality_agent/{action}", headers=ORIGIN, data={"token": right}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"] == "/agents?err=unread", action
+    assert web.app.state.hub.jobs.current() is None and calls == []
+    for lang in ("ko", "en"):
+        assert panel(web.get(f"/agents?err=unread&lang={lang}").text, "page-err") == STRINGS[lang]["err.unread"]
 
 
 def test_a_stop_that_leaves_sessions_running_ends_the_job_failed(monkeypatch):

@@ -10,7 +10,6 @@ from platform_team.company_policy.policy_engine import list_policies
 from platform_team.custom_guardrail import guardrail_attach
 from platform_team.hub_ui import jobs
 from platform_team.hub_ui.app import Hub, back, page, panel
-from platform_team.hub_ui.texts import lang_of, translator
 
 router = APIRouter()
 
@@ -102,16 +101,15 @@ def policies_page(request: Request):
                 parameters_path=request.app.state.hub.s.ssm("policies", COMPANY_POLICY))
 
 
-def _mode_job(hub: Hub, key: str, mode: str, t, say) -> dict:
+def _mode_job(hub: Hub, key: str, mode: str, say) -> dict:
     """What rollout.sh does for the mode: policy_rollout.rollout (log-only, active) or remove (off), its lines said to
-    the job, then one line per agent: the mode its policy shows after the call, in the words of the page."""
+    the job, then the command's line per agent with the mode its policy reads after the call (policy_rollout.say_read:
+    `<agent>: reads LOG_ONLY`, `<agent>: reads no policy`, or the line of a mode other than the one asked for)."""
     if mode == "off":
         out = policy_rollout.remove(hub.c, hub.s, hub.platform(), key, say=say)
     else:
         out = policy_rollout.rollout(hub.c, hub.s, hub.platform(), key, mode, say=say)
-    for agent, read in out["read"].items():
-        word = t(f"mode.{read}") + f" ({read})" if read else t("mode.off")
-        say(t("job.read_back", agent=agent, mode=word))
+    policy_rollout.say_read(out["read"], out.get("mode"), say=say)
     problem = _command_problem(key, mode, out)
     if problem:                         # the command exits 1 here, with this line
         raise RuntimeError(problem)
@@ -147,8 +145,7 @@ async def set_mode(request: Request, key: str):
     mode = (await request.form()).get("mode")
     if mode not in MODES:
         return back(request, "/policies", err="mode")
-    t = translator(lang_of(request, hub.lang))
-    hub.jobs.start("rollout", key, lambda say: _mode_job(hub, key, mode, t, say))       # jobs.Busy: the app answers
+    hub.jobs.start("rollout", key, lambda say: _mode_job(hub, key, mode, say))          # jobs.Busy: the app answers
     return back(request, "/policies", msg="started")
 
 

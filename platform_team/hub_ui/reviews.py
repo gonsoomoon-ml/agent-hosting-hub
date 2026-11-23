@@ -12,6 +12,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
@@ -22,6 +23,7 @@ from platform_team.hosting_review.reject_agent import MAX_REASON, REJECTABLE
 from platform_team.hosting_review.review_steps import application_of
 from platform_team.hub_ui import jobs
 from platform_team.hub_ui.app import Hub, back, catalog, page, panel
+from platform_team.shared_code.hub_state import NotDeployed
 
 router = APIRouter()
 
@@ -382,10 +384,17 @@ def _reject(hub: Hub, agent: str, reason: str, say) -> dict:
 
 @router.post("/reviews/{agent}/reject")
 async def reject(request: Request, agent: str):
-    """Start the job that rejects the agent's submission with the form's reason (1 to MAX_REASON characters). The
-    function decides the rest (the record's status, a review still running) as it does for reject.sh."""
+    """Start the job that rejects the agent's submission with the form's reason (1 to MAX_REASON characters). A name
+    with no AGENT record in the catalog starts nothing, as on the agents page. The function decides the rest (the
+    record's status, a review still running) as it does for reject.sh."""
     hub: Hub = request.app.state.hub
     if name_problems(agent):
+        return back(request, "/reviews", err="agent")
+    try:
+        record = catalog(hub).get(agent)
+    except (ClientError, BotoCoreError, NotDeployed):        # a POST never renders a page: back, with the sentence
+        return back(request, f"/reviews/{agent}", err="unread")
+    if not record or record.get("recordType") != "AGENT":
         return back(request, "/reviews", err="agent")
     reason = _text((await request.form()).get("reason")).strip()
     if not 1 <= len(reason) <= MAX_REASON:

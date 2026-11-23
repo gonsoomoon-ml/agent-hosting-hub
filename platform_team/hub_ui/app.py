@@ -8,9 +8,10 @@ create_app includes the routers of SCREENS. A POST route never checks the host, 
 Guard middleware (safety.py) has done it before the route runs, and a refused request never reaches it.
 
 A POST route never renders a page: it answers `back(request, "/<its GET page>", msg=<key>)` for a success or
-`back(..., err=<key>)` for a refusal (a bad or missing form value, an unknown name), a 303 to a GET page that shows
-the sentence texts.py has for msg.<key> (class msg) or err.<key> (class err). A second press while a job runs raises
-jobs.Busy in hub.jobs.start; the app answers it the same way (err=busy) on the page the button was pressed on.
+`back(..., err=<key>)` for a refusal (a bad or missing form value, an unknown name, a read the press needs that
+failed: err=unread), a 303 to a GET page that shows the sentence texts.py has for msg.<key> (class msg) or err.<key>
+(class err). A second press while a job runs raises jobs.Busy in hub.jobs.start; the app answers it the same way
+(err=busy) on the page the button was pressed on.
 """
 import importlib
 import threading

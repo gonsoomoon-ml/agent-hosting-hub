@@ -94,11 +94,11 @@
         <td class="act">
           {% if a.stopped %}
           <form method="post" action="/agents/{{ a.agent }}/resume"><input type="hidden" name="token" value="{{ token }}"><button class="primary" type="submit"{% if view.busy %} disabled{% endif %} data-busy="{{ t('agent.resuming') }}">{{ t("agent.resume") }}</button></form>
-          {% elif a.stopped is none %}
-          {% elif a.can_stop is none %}
-          {% elif a.can_stop %}
+          {% elif a.can_stop is false %}<span class="muted why">{{ t("agent.no_entry") }}</span>
+          {% elif a.stopped is none or a.can_stop is none %}
+          {% else %}
           <form method="post" action="/agents/{{ a.agent }}/stop"><input type="hidden" name="token" value="{{ token }}"><button class="danger" type="submit"{% if view.busy %} disabled{% endif %} data-busy="{{ t('agent.stopping') }}">{{ t("agent.stop") }}</button></form>
-          {% else %}<span class="muted why">{{ t("agent.no_entry") }}</span>{% endif %}
+          {% endif %}
         </td>
       </tr>
     {% endfor %}

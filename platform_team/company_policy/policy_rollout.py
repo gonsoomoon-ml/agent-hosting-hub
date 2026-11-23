@@ -266,7 +266,7 @@ def main(argv: list[str]) -> int:
     except Exception as e:          # say what failed in one line, no traceback
         print(f"{action} of {key} stopped ({hub}): {e if isinstance(e, ValueError) else cause(e)}")
         return 1
-    differ = _say_read(out["read"], out.get("mode"))
+    differ = say_read(out["read"], out.get("mode"))
     if action == "off":
         if differ:
             print(f"{key} is off in SSM; {', '.join(differ)} still {'has' if len(differ) == 1 else 'have'} the "
@@ -288,15 +288,15 @@ def main(argv: list[str]) -> int:
     return 0
 
 
-def _say_read(read: dict, mode: str | None) -> list[str]:
-    """Print one line per agent with the mode its policy reads after the command (mode None: off, no policy asked
-    for). Returns the agents whose policy reads otherwise."""
+def say_read(read: dict, mode: str | None, say=print) -> list[str]:
+    """Say one line per agent with the mode its policy reads after the command (mode None: off, no policy asked
+    for). Returns the agents whose policy reads otherwise. The hub screen's mode job says the same lines."""
     differ = []
     for agent, got in read.items():
         if got == mode:
-            print(f"{agent}: reads {got or 'no policy'}")
+            say(f"{agent}: reads {got or 'no policy'}")
         else:
-            print(f"{agent}: reads {got or 'no policy'}, asked for {mode or 'no policy'}")
+            say(f"{agent}: reads {got or 'no policy'}, asked for {mode or 'no policy'}")
             differ.append(agent)
     return differ
 

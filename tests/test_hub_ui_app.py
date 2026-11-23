@@ -98,6 +98,7 @@ def test_no_other_site_can_show_the_screen_in_a_frame_and_the_page_loads_nothing
         assert r.headers["x-frame-options"] == "DENY"
         assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
         assert "default-src 'self'" in r.headers["content-security-policy"]
+        assert "form-action 'self'" in r.headers["content-security-policy"]     # default-src does not cover forms
     assert not re.search(r"""(src|href)=["'](https?:)?//""", web.get("/").text)
     assert not re.search(r"@import|url\(", web.get("/").text)
 

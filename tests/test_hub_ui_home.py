@@ -36,7 +36,12 @@ def test_home_counts_hosted_agents_reviews_and_tools():
     page = web.get("/").text
     counts = panel(page, "panel-counts")
     assert re.findall(r"\d+", counts)[:3] == ["2", "1", "1"] and "AWS Agent Registry" in counts
-    assert panel(page, "badge-reviews") == "1"                          # the menu's badge: agents in review
+    assert panel(page, "badge-reviews") == "1"                          # the menu's badge: agents awaiting approval
+    for lang, label in (("ko", "승인 대기 중인 에이전트"), ("en", "Agents awaiting approval")):
+        shown = web.get(f"/?lang={lang}").text
+        assert label in panel(shown, "panel-counts") and "PENDING_APPROVAL" in panel(shown, "panel-counts")
+        badge = next(a for tag, a in panel_elements(shown, "badge-reviews") if tag == "span")
+        assert badge["title"] == label
 
 
 def test_home_names_the_aws_service_of_each_platform_part():

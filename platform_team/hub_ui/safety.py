@@ -56,9 +56,10 @@ def new_nonce() -> str:
 
 
 def headers(nonce: str) -> list[tuple[bytes, bytes]]:
-    """What every answer carries: no frame on another site, scripts with this nonce only, nothing from elsewhere."""
+    """What every answer carries: no frame on another site, scripts with this nonce only, nothing from elsewhere, and
+    forms sent to this app only (default-src does not cover form-action)."""
     policy = (f"default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; "
-              "img-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'")
+              "img-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'")
     return [(b"x-frame-options", b"DENY"), (b"content-security-policy", policy.encode()),
             (b"x-content-type-options", b"nosniff")]
 

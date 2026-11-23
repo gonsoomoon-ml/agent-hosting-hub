@@ -1,5 +1,5 @@
 """The home page: what the hub has in AWS now. The platform's parts with the AWS service that runs each, the counts
-of hosted agents, agents in review and approved tools (the catalog), the company policy's mode and the custom
+of hosted agents, agents awaiting approval and approved tools (the catalog), the company policy's mode and the custom
 guardrail, the hub's alarms and the catalog's records. Each is one panel: a read that fails is one line in its panel."""
 from fastapi import APIRouter, Request
 

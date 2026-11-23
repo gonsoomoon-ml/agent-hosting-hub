@@ -4,6 +4,7 @@ the Stop and Resume buttons. A button starts one job that calls the function its
 stop_agent.stop or resume."""
 from datetime import UTC, datetime, timedelta
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Request
 
 from platform_team.agent_catalog.application_form import name_problems
@@ -79,12 +80,14 @@ def _alarm(hub: Hub) -> dict | None:
 
 
 def _row(hub: Hub, agent: str, arn: str, records: dict, entries: dict | None, entries_error: str) -> dict:
-    """One agent: its catalog record's status, team and framework, how it is hosted, whether it is stopped and whether
-    it can be stopped here. What one read cannot give stays on this row (app_error, stop_error)."""
+    """One agent: its catalog record's status, team and framework, how it is hosted, whether it is stopped (True or
+    False as stop_agent.stopped reads it; None when it is not read: a harness agent, which has no entry to block, or
+    a read that failed) and whether it can be stopped here. What one read cannot give stays on this row (app_error,
+    stop_error)."""
     hosted_as = HARNESS if arn.rsplit("/", 1)[-1].startswith(hub.s.harness_runtime_name("")) else RUNTIME
     record = records.get(agent)
     row = {"agent": agent, "team": "", "framework": "", "status": (record or {}).get("status", ""),
-           "hosted_as": hosted_as, "stopped": False, "stop_error": entries_error, "app_error": "",
+           "hosted_as": hosted_as, "stopped": None, "stop_error": entries_error, "app_error": "",
            "can_stop": None if entries is None else hub.s.target_name(agent) in entries, "usage": None}
     if record is not None:
         try:
@@ -156,8 +159,14 @@ def _resume_job(hub: Hub, agent: str, say) -> dict:
 
 def _press(request: Request, agent: str, kind: str, run):
     hub: Hub = request.app.state.hub
-    if name_problems(agent) or agent not in usage_report.hosted_agents(hub.c, hub.s):
-        return back(request, "/agents", err="agent")        # a name the form refuses, or no hosted agent of that name
+    if name_problems(agent):
+        return back(request, "/agents", err="agent")        # a name the form refuses
+    try:
+        hosted = usage_report.hosted_agents(hub.c, hub.s)
+    except (ClientError, BotoCoreError):                     # a POST never renders a page: back, with the sentence
+        return back(request, "/agents", err="unread")
+    if agent not in hosted:
+        return back(request, "/agents", err="agent")        # no hosted agent of that name
     hub.jobs.start(kind, agent, lambda say: run(hub, agent, say))       # jobs.Busy: the app answers
     return back(request, "/agents", msg="started")
 

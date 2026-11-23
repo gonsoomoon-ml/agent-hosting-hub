@@ -2,6 +2,7 @@
 apart, the company policy guard_prompt with its mode and its log-only counts per agent, the custom guardrail, and the
 buttons that turn the policy on, enforce it, turn it off, and attach or detach the guardrail. The AWS clients are the
 fakes of tests/fakes.py; the functions the buttons call are the ones the commands call."""
+import re
 import threading
 
 from botocore.exceptions import ClientError
@@ -68,7 +69,7 @@ def test_the_page_shows_status_and_enforcement_mode_apart():
     assert row == {"name": "guard_prompt_quality_agent", "kind": "guard_prompt", "status": "ACTIVE", "mode": "LOG_ONLY"}
     page = web.get("/policies?lang=ko").text
     agents = panel(page, "panel-gateway-agent_gw")
-    assert "이름 종류 상태 적용 모드" in agents
+    assert "이름 종류 상태 모드 " in agents                     # the column 모드 holds 기록 모드 or 적용 모드
     assert "guard_prompt_quality_agent 프롬프트 공격 차단 ACTIVE 기록 모드 LOG_ONLY" in agents       # status, then mode
     assert "stop_agent_quality_agent 에이전트 멈춤 CREATING 적용 모드 ACTIVE" in agents
     assert "tool_quality_agent_Parts_get_part_spec" in panel(page, "panel-gateway-tool_gw")
@@ -102,14 +103,12 @@ def test_the_report_shows_matches_and_flips_per_agent():
         "quality_agent": {"mode": "LOG_ONLY", "matches": 1, "flips": 0}}
     text = panel(web.get("/policies?lang=ko").text, "panel-report")
     assert "걸린 요청 LogOnlyMatches" in text and "막았을 요청 LogOnlyDecisionFlips" in text
+    assert "에이전트 모드 걸린 요청" in text                    # the column 모드 over 기록 모드
+    assert "Agent Enforcement mode Requests matched" in panel(web.get("/policies?lang=en").text, "panel-report")
     assert "quality_agent 기록 모드 1 0" in text and "최근 60분" in text
     off = panel(screen(fleet(None)).get("/policies?lang=ko").text, "panel-report")
     assert STRINGS["ko"]["report.none"] in off
     assert "quality_agent 기록 모드 1 0" in panel(screen(c).get("/policies?lang=ko").text, "panel-report")
-
-
-def read_back(agent: str, mode: str) -> str:
-    return STRINGS["ko"]["job.read_back"].format(agent=agent, mode=mode)
 
 
 def forms(page: str, element_id: str) -> list[tuple[dict, list[dict]]]:
@@ -158,25 +157,37 @@ def test_mode_buttons_call_rollout_and_remove(monkeypatch):
         if kind == "rollout":
             assert calls[-1][5] == word
     assert [x[0] for x in calls] == ["rollout", "rollout", "remove"]
-    assert job.lines == ["quality_agent: removed", read_back("quality_agent", "꺼짐")]
+    assert job.lines == ["quality_agent: removed", "quality_agent: reads no policy"]
     shown = panel(web.get("/policies?lang=ko").text, "panel-job")
-    assert "quality_agent: removed" in shown and read_back("quality_agent", "꺼짐") in shown
+    assert "quality_agent: removed" in shown and "quality_agent: reads no policy" in shown
     assert hub.jobs.get(hub.jobs.current().id).lines == job.lines
 
 
-def test_the_job_says_the_mode_each_agent_reads_back(monkeypatch):
+def test_the_job_says_the_mode_each_agent_reads_back_in_the_commands_own_lines(monkeypatch, capsys):
+    """The read-back lines are the ones rollout.sh prints for the same result, in English on a page of either
+    language, as every other job's lines are."""
+    out = {"policy": "guard_prompt", "mode": "ACTIVE", "agents": {"quality_agent": "switched", "docs_adk": "failed"},
+           "read": {"quality_agent": "ACTIVE", "docs_adk": None}}
+
     def rollout(c, s, p, key, word, say=print):
         say("quality_agent: switched")
-        return {"policy": key, "mode": "ACTIVE", "agents": {"quality_agent": "switched", "docs_adk": "failed"},
-                "read": {"quality_agent": "ACTIVE", "docs_adk": None}}
+        return out
     monkeypatch.setattr(policy_rollout, "rollout", rollout)
-    web = screen(fleet("LOG_ONLY"))
-    web.post("/policies/guard_prompt/mode", headers=ORIGIN, data={"token": token(web.get("/policies").text),
-                                                                 "mode": "active"})
-    job = web.app.state.hub.jobs.current()
-    assert job.wait(5)
-    assert job.lines == ["quality_agent: switched", read_back("quality_agent", "적용 모드 (ACTIVE)"),
-                         read_back("docs_adk", "꺼짐")]
+    for lang in ("ko", "en"):
+        web = screen(fleet("LOG_ONLY"), lang=lang)                 # the page's language when none is chosen
+        web.post("/policies/guard_prompt/mode", headers=ORIGIN, data={"token": token(web.get("/policies").text),
+                                                                     "mode": "active"})
+        job = web.app.state.hub.jobs.current()
+        assert job.wait(5)
+        assert job.lines == ["quality_agent: switched", "quality_agent: reads ACTIVE",
+                             "docs_adk: reads no policy, asked for ACTIVE"], lang
+    # rollout.sh: policy_rollout.main prints the same read-back lines for the same result
+    monkeypatch.setattr(policy_rollout.Clients, "for_settings", classmethod(lambda cls, s: fleet("LOG_ONLY")))
+    monkeypatch.setattr(policy_rollout, "load", lambda s, clients: PLATFORM)
+    capsys.readouterr()
+    assert policy_rollout.main(["guard_prompt", "active"]) == 1
+    printed = capsys.readouterr().out.splitlines()
+    assert printed[2:4] == ["quality_agent: reads ACTIVE", "docs_adk: reads no policy, asked for ACTIVE"], printed
 
 
 def test_the_buttons_do_what_the_command_does():
@@ -293,6 +304,16 @@ def test_one_failing_read_is_one_line_and_the_other_panels_show():
     page = screen(c).get("/policies?lang=ko").text
     assert STRINGS["ko"]["panel.error"] in panel(page, "panel-company")
     assert "guard_prompt_quality_agent" in panel(page, "panel-gateway-agent_gw")
+
+
+def test_a_service_name_in_a_hint_stays_on_one_line():
+    """The report's hint ends with its service (Amazon CloudWatch): the name is not cut between two lines, as the
+    intro's is not."""
+    page = screen(fleet("LOG_ONLY")).get("/policies").text
+    assert any(tag == "span" and a.get("class") == "tech" for tag, a in panel_elements(page, "panel-report"))
+    nowrap = {selector.strip() for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", page)
+              if "white-space: nowrap" in body for selector in selectors.split(",")}
+    assert {".intro .tech", ".hint .tech"} <= nowrap, nowrap
 
 
 def test_the_menu_marks_the_page():
