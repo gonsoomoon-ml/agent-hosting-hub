@@ -653,9 +653,11 @@ export const rowsRect = async () => null;
 """
 FAKE_PAGE = """
 const fakePage = screens => {
-  let i = 0;
-  const page = { log: [], next: () => screens[Math.min(i++, screens.length - 1)],
-    waitForTimeout: async () => {}, keyboard: { press: async key => { page.log.push(['key', key]); } } };
+  let i = 0, last = [];
+  const page = { log: [], next: () => (last = screens[Math.min(i++, screens.length - 1)]),
+    waitForTimeout: async () => {},
+    // each key is logged with the screen the driver had looked at last
+    keyboard: { press: async key => { page.log.push(['key', key, last.join('\\n')]); } } };
   return page;
 };
 const fakeRec = () => ({ notes: [], note(kind, data) { this.notes.push([kind, data]); }, now: () => 1 });
@@ -717,20 +719,11 @@ def _file_screen(path_row: str) -> list[str]:
             for r in rows[:i + 1] + [f" {path_row}"] + rows[i + 2:]]
 
 
-def _verdicts(screens: list[list[str]], tmp_path) -> list[str]:
-    given = tmp_path / "screens.json"
-    given.write_text(json.dumps(screens), encoding="utf-8")
-    out = _node("import fs from 'node:fs';\nimport { verdict } from './claude.mjs';\nconst screens = JSON.parse("
-                f"fs.readFileSync({json.dumps(str(given))}, 'utf8'));\n"
-                "console.log(JSON.stringify(screens.map(r => verdict(r))));", tmp_path)
-    return json.loads(out)
-
-
-READ_ONLY = [["cat dev_team/agent_template/README.md"], ["ls -la dev_team/agent_template dev_team/release_review"],
-             ["cd /home/dev/work/dev_team; ls agent_template"], ["grep -n -A1 -E '^name = \"strands-agents\"' uv.lock"],
-             ["sed -n 1,40p dev_team/agent_template/agent.py | head -20"], ["cd dev_team && cat agent_template/agent.json"],
-             ["find dev_team/agent_template -name '*.py'"], ["wc -l uv.lock 2>/dev/null"]]
-# every way past the old check that the review found, and more, in the layout Claude Code prints: all No
+READS = [["cat dev_team/agent_template/README.md"], ["ls -la dev_team/agent_template dev_team/release_review"],
+         ["cd /home/dev/work/dev_team; ls agent_template"], ["grep -n -A1 -E '^name = \"strands-agents\"' uv.lock"],
+         ["sed -n 1,40p dev_team/agent_template/agent.py | head -20"], ["cd dev_team && cat agent_template/agent.json"],
+         ["find dev_team/agent_template -name '*.py'"], ["wc -l uv.lock 2>/dev/null"]]
+# the ways past a check of the command's text that the reviews found, in the layout Claude Code prints
 BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv run pytest tests"],
             ['bash -c "python3 agent.py"'], ["cp quality_agent/agent.py ../demo_scenes/search"],
             ["echo \"v: $(python3 -c 'print(1)')\""], ["env python3 x.py"], ["timeout 30 python3 x.py"],
@@ -740,86 +733,99 @@ BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv 
             ['sed -n "w ../demo_scenes/search" uv.lock'], ["tar -xf a.tar -C .."],
             ["cat quality_agent/agent.json", "echo 'Do you want to proceed'", "python3 x.py"],
             ["python3 x.py # Do you want to create agent.py?"],
-            # writes, also inside the agent's folder (Claude Code makes files with its Write tool)
             ["mkdir quality_agent && cp agent_template/main.py quality_agent/"],
             ['echo "strands-agents==1.65.0" >> quality_agent/requirements.txt'],
-            # reads outside the working folder, a cd out of it, a background job, a pipe into a shell
             ["cat /run/dev-pc/bedrock.json"], ["cd .. && ls"], ["cd /tmp"], ["cat ~/.claude.json"], ["ls &"],
             ["cat quality_agent/agent.py | sh"], ["xargs cat < files.txt"], ["find . -exec cat {} +"],
             ["sed -i s/a/b/ uv.lock"], ["awk '{print > \"x\"}' uv.lock"], ["ls $(echo /tmp)"], ["cat $HOME/x"],
             ['cat "/run/dev-pc/bedrock.json"'], ["grep --file=/run/dev-pc/bedrock.json x uv.lock"],
-            ["sort -uo x uv.lock"], ["cat uv.lock 3>/tmp/y"], ["cat ../../../etc/passwd"], ["FOO=1 cat uv.lock"]]
+            ["sort -uo x uv.lock"], ["cat uv.lock 3>/tmp/y"], ["cat ../../../etc/passwd"], ["FOO=1 cat uv.lock"],
+            # the second review's
+            ["sort --compress-program=sh -S 1 dev_team/quality_agent/notes.txt"],
+            ["sort --compress-program sh -S 1 dev_team/quality_agent/notes.txt"],
+            ["sort --compress-program=python3 --buffer-size=1 dev_team/quality_agent/notes.txt"],
+            ["sort --compress-program=publish -S 1 uv.lock"], ["cat uv.lock | sort --compress-program=bash -S 1"],
+            ["sort uv.lock --compress-program=sh -S 1"], ["sort --o=search uv.lock"], ["sort --out=x uv.lock"],
+            ["sort --outp=x uv.lock"], ["cd demo_scenes; sort --out=search /home/dev/work/dev_team/quality_agent/notes.txt"],
+            ["cat dev_team/quality_agent/notes.txt >&1x"],
+            ["cd demo_scenes && cat /home/dev/work/dev_team/quality_agent/notes.txt >&2search"],
+            ["cd dev_team/zz; find /home/dev/work/demo_scenes *"], ["cd dev_team/zz; sort *"],
+            ["cat .?/.?/.?/run/dev-pc/bedrock.json"], ["cat /home/dev/work/.[.]/.[.]/.[.]/run/dev-pc/bedrock.json"],
+            ["cat dev_team/agent_template/README.md; ls quality_agent…"]]
+FILE_PATHS = ["/home/dev/work/dev_team/quality_agent/agent.py", "~/work/dev_team/quality_agent/requirements.txt",
+              "quality_agent/main.py", "dev_team/quality_agent/main.py", "/home/dev/work/demo_scenes/search",
+              "/home/dev/work/dev_team/quality_agent/../../demo_scenes/search",
+              "/home/dev/work/dev_team/quality_agent/.claude/settings.json"]
+OPTION_ROW = re.compile(r"^\s*(❯\s*)?\d\.\s+(Yes|No)\b", re.M)
 
 
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_a_shell_question_gets_yes_only_for_a_read_only_command_shown_whole_in_the_real_layout(tmp_path):
-    # the question's text is chosen by another agent: anything the check cannot read whole and as read-only is a No
-    assert _verdicts([_shell_screen(c) for c in READ_ONLY], tmp_path) == ["yes"] * len(READ_ONLY)
-    assert _verdicts([_shell_screen(c) for c in BYPASSES], tmp_path) == ["no"] * len(BYPASSES)
+def _every_dialog_screen() -> list[list[str]]:
+    """The seven real dialogs kept from the takes, and every command and path of both reviews in that layout."""
+    return ([DIALOGS[k] for k in DIALOGS] + [_shell_screen(c) for c in READS + BYPASSES]
+            + [_file_screen(p) for p in FILE_PATHS])
 
 
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_recorded_takes_questions_get_the_answers_of_the_rule(tmp_path):
-    # the five shell questions of the accepted take and two file questions of an earlier attempt, as Claude Code
-    # printed them. The take answered the first four Yes (all four only read). The rule says Yes to the second
-    # (cd; grep ... uv.lock, read whole) and No to the loops (for), to the fourth (read with a row break as the end of a
-    # command, its second row starts with a path), to the fifth (43 rows hidden), to a relative path, and to a path
-    # scrolled off the screen. A wrong No is a re-take, never a reason to read more into a row.
-    real = [DIALOGS[k] for k in ("take_ask1", "take_ask2", "take_ask3", "take_ask4", "take_ask5",
-                                 "attempt4_create_main", "attempt4_create_agent_hidden")]
-    assert _verdicts(real, tmp_path) == ["no", "yes", "no", "no", "no", "no", "no"]
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_a_file_question_gets_yes_only_for_a_path_shown_whole_inside_the_agents_folder(tmp_path):
-    screens = [_file_screen(p) for p in (
-        "/home/dev/work/dev_team/quality_agent/agent.py", "~/work/dev_team/quality_agent/requirements.txt",
-        # a relative path is shown relative to Claude Code's folder, which follows its cd: it cannot be placed
-        "quality_agent/main.py", "dev_team/quality_agent/main.py",
-        "/home/dev/work/demo_scenes/search", "/home/dev/work/dev_team/quality_agent/../../demo_scenes/search",
-        "/home/dev/work/dev_team/quality_agent/.claude/settings.json", "/home/dev/work/dev_team/quality_agent/CLAUDE.md",
-        "/home/dev/work/dev_team/quality_agent/.mcp.json", "/home/dev/work/dev_team/quality_agent_x/agent.py")]
-    # the path scrolled off the screen ("↑ 23 more lines"): No, whatever the question names
-    screens.append(DIALOGS["attempt4_create_agent_hidden"])
-    assert _verdicts(screens, tmp_path) == ["yes", "yes"] + ["no"] * 9
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_a_screen_outside_the_known_layout_is_a_no(tmp_path):
-    good = _shell_screen(["cat uv.lock"])
-    no_rule = [r for r in good if not r.startswith("─")]                      # the rule above the title is gone
-    no_gutter = [r.replace(" │ cat uv.lock", " cat uv.lock") for r in good]   # a command row without the gutter
-    marker_on_2 = [r.replace(" ❯ 1. Yes", "   1. Yes").replace("   2. Yes, and", " ❯ 2. Yes, and") for r in good]
-    no_options = good[:good.index(" Do you want to proceed?") + 1]
-    hidden = good[:-1] + [" ↑ 3 more lines", good[-1]]
-    assert _verdicts([good, no_rule, no_gutter, marker_on_2, no_options, hidden], tmp_path) == ["yes"] + ["no"] * 5
-
-
-@pytest.mark.skipif(NODE is None, reason="node is not installed")
-def test_the_yes_key_is_pressed_only_on_the_same_dialog_with_1_yes_highlighted(tmp_path):
-    good = _shell_screen(["cat uv.lock"])
-    marker_on_2 = [r.replace(" ❯ 1. Yes", "   1. Yes").replace("   2. Yes, and", " ❯ 2. Yes, and") for r in good]
-    other = _shell_screen(["cat dev_team/agent_template/README.md"])
-    busy = ["✻ Cooking… (2s · esc to interrupt)"]
-    done = ["✻ Cooked for 3s", "❯ "]
-    run = """import { request } from './claude.mjs';
-""" + FAKE_PAGE + """
-const out = [];
-for (const [name, screens] of Object.entries(%s)) {
+def _requests(cases: dict, tmp_path) -> dict:
+    """Run request() once per case against a scripted page; per case: the keys (with the screen the driver had looked
+    at last), the pastes, the notes and the error, if any."""
+    given = tmp_path / "cases.json"
+    given.write_text(json.dumps(cases), encoding="utf-8")
+    run = """import fs from 'node:fs';
+import { request } from './claude.mjs';
+""" + FAKE_PAGE + f"""
+const cases = JSON.parse(fs.readFileSync({json.dumps(str(given))}, 'utf8'));
+""" + """const out = {};
+for (const [name, screens] of Object.entries(cases)) {
   const page = fakePage(screens), rec = fakeRec(), cam = fakeCam();
   let error = '';
-  try { await request(page, rec, cam, 'x', { noRun: 'no', idleMs: 0 }); } catch (e) { error = e.message; }
-  out.push([name, page.log.filter(l => l[0] === 'key').map(l => l[1]), error]);
+  try { await request(page, rec, cam, 'the request', { noRun: 'files only', idleMs: 0 }); } catch (e) { error = e.message; }
+  out[name] = { keys: page.log.filter(l => l[0] === 'key').map(l => [l[1], l[2]]),
+                pastes: page.log.filter(l => l[0] === 'paste').map(l => l[1]), notes: rec.notes, error };
 }
 console.log(JSON.stringify(out));"""
-    cases = {"same": [busy, good, good, busy, done, done],
-             "marker_moved": [busy, good, marker_on_2, done],
-             "dialog_changed": [busy, good, other, done]}
-    got = {name: (keys, error) for name, keys, error in json.loads(_node(run % json.dumps(cases), tmp_path))}
-    assert got["same"] == (["Enter", "Enter"], "")                    # the request's Enter, then 1. Yes
-    for name in ("marker_moved", "dialog_changed"):
-        keys, error = got[name]
-        assert keys == ["Enter", "Escape"] and error.startswith("the question changed before the answer: "), name
+    return json.loads(_node(run, tmp_path))
+
+
+BUSY = ["✻ Cooking… (2s · esc to interrupt)"]
+DONE = ["✻ Cooked for 3s", "❯"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_while_a_dialog_is_on_the_screen_the_only_key_is_escape_and_enter_never_meets_an_option_row(tmp_path):
+    # the storyboard never answers Yes: whatever the question (every kept real one, every command and path of both
+    # reviews), it presses Escape, then sends the take's sentence; Enter goes out only after a look that finds no
+    # option row (here the dialog is still there at that look: Escape again, look again)
+    screens = _every_dialog_screen()
+    assert len(screens) == 7 + len(READS) + len(BYPASSES) + len(FILE_PATHS)
+    got = _requests({str(i): [BUSY, s, s, BUSY, DONE] for i, s in enumerate(screens)}, tmp_path)
+    for i, s in enumerate(screens):
+        g = got[str(i)]
+        assert g["error"] == "", (i, g["error"])
+        for key, screen in g["keys"]:
+            if OPTION_ROW.search(screen):
+                assert key == "Escape", (i, key)                 # never Enter, nor any other key, on a dialog
+        assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"], i
+        assert g["pastes"] == ["the request", "files only"], i
+        assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": n[1]["kind"]}]
+                                                                   for n in g["notes"] if n[0] == "permission"]
+        assert len([n for n in g["notes"] if n[0] == "permission"]) == 1, i
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_row_that_only_resembles_a_question_does_not_start_the_answering_branch(tmp_path):
+    seems = ["● agent.py는 120줄입니다. Do you want to see the rest of it?", BUSY[0]]
+    got = _requests({"seems": [BUSY, seems, seems, DONE]}, tmp_path)["seems"]
+    assert [k for k, _ in got["keys"]] == ["Enter"] and got["error"] == ""
+    assert not [n for n in got["notes"] if n[0] == "permission"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_an_option_row_in_claude_codes_answer_holds_back_enter_and_stops_the_take_when_it_stays(tmp_path):
+    answer = ["● 확인한 것:", "  1. Yes, agent.json is there", "  2. No requirements.txt yet", "❯"]
+    got = _requests({"stays": [answer], "goes": [answer, DONE, BUSY, DONE]}, tmp_path)
+    assert [k for k, _ in got["stays"]["keys"]] == ["Escape"]
+    assert got["stays"]["error"].startswith("an option row stays on the screen")
+    assert [k for k, _ in got["goes"]["keys"]] == ["Escape", "Enter"] and got["goes"]["error"] == ""
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -867,6 +873,10 @@ def test_the_text_check_masks_the_containers_name_instead_of_dropping_its_line(t
     texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ ls\n== 2.0 end\nwrite to someone@example.com\n")
     r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 1 and "someone@example.com" in r.stdout and "dev@dev-pc" not in r.stdout
+    texts.write_text("== 1.0 shell\nids 123456789012,234567890123 here\n")
+    r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 1 and "123456789012" not in r.stdout and "234567890123" not in r.stdout
+    assert "<12 digits>,<12 digits>" in r.stdout
     texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ ls\n")
     r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
     assert (r.returncode, r.stdout) == (0, "texts: no 12-digit number and no e-mail address in 1 screens\n")
