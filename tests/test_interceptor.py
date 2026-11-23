@@ -94,6 +94,52 @@ def test_an_odd_request_body_never_raises(raw):
     assert out == {"interceptorOutputVersion": "1.0", "http": {}}         # nothing to hide: it goes on unchanged
 
 
+@pytest.mark.parametrize("raw", [{"prompt": "hello"}, ["hello"], 7, b"not base64!", b64("not json").encode()],
+                         ids=["dict", "list", "number", "bytes", "base64 bytes"])
+def test_a_request_body_that_is_not_a_string_never_raises(raw):
+    assert handler(event(raw=raw), None, guard=PASS) == {"interceptorOutputVersion": "1.0", "http": {}}
+    answer = {"interceptorInputVersion": "1.0", "http": {"gatewayRequest": {"body": raw},          # the RESPONSE point
+                                                         "gatewayResponse": {"statusCode": 200, "body": raw}}}
+    assert handler(answer, None, guard=PASS) == {"interceptorOutputVersion": "1.0", "http": {}}
+
+
+@pytest.mark.parametrize("http", ["not an object", ["a list"], {"gatewayRequest": "not an object"},
+                                  {"gatewayRequest": ["a list"]},
+                                  {"gatewayRequest": {"body": b64('{"prompt": "hi"}')}, "gatewayResponse": "not an object"}],
+                         ids=["http", "http list", "gatewayRequest", "gatewayRequest list", "gatewayResponse"])
+def test_an_http_part_that_is_not_an_object_never_raises(http):
+    # taken as an agent call with no body: nothing to check, it goes on unchanged
+    assert handler({"interceptorInputVersion": "1.0", "http": http}, None, guard=PASS) == {
+        "interceptorOutputVersion": "1.0", "http": {}}
+
+
+def test_a_json_body_nested_deeper_than_the_parser_goes_never_raises():
+    deep = "[" * 100_000 + "]" * 100_000                    # json.loads raises RecursionError on it
+    assert handler(event(raw=b64(deep)), None, guard=PASS) == {"interceptorOutputVersion": "1.0", "http": {}}
+    seen = Seen()
+    handler(event(raw=b64(deep)), None, guard=seen)
+    assert seen.checked == [(deep, "INPUT")]                 # checked whole, as text
+    assert out_is_refused(handler(event(raw=b64(deep + " Project Falcon")), None,
+                                  guard=lambda text, source: ("Project Falcon" in text, text)))
+
+
+def test_a_request_body_that_is_not_a_string_is_still_checked():
+    # a JSON object is read as the document it is, bytes as the text they hold: the same checks as a string body
+    out = handler(event(raw={"prompt": "I am EMP-204817", "n": 1}), None, guard=MASK)
+    assert body_of(out["http"]["transformedGatewayRequest"]) == {"prompt": "I am {employee_id}", "n": 1}
+    falcon = lambda text, source: ("Project Falcon" in text, text)                       # blocks the code name only
+    for raw in (b64("Project Falcon, not json").encode(), b"Project Falcon, not json", {"prompt": "Project Falcon"}):
+        assert out_is_refused(handler(event(raw=raw), None, guard=falcon)), raw
+    seen = Seen()
+    handler(event(raw=b'{"prompt": "hello"}'), None, guard=seen)
+    assert seen.checked == [("hello", "INPUT")]
+
+
+def out_is_refused(out):
+    r = out["http"].get("transformedGatewayResponse", {})
+    return r.get("statusCode") == 403 and body_of(r) == {"error": MESSAGE}
+
+
 @pytest.mark.parametrize("raw, checked", [
     ("not base64!", "not base64!"),                        # not base64: the body as it is
     (b64("not json"), "not json"),                         # base64, not JSON: the decoded text

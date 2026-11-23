@@ -4,7 +4,9 @@ A masked text goes on in its masked form. To use the company's own guardrail, ch
 
 A request is checked by its prompt when its body is a JSON object with a text "prompt". Any other body (not base64,
 not JSON, not an object, no prompt) is checked whole, as text, and goes on whole in its masked form. An answer is
-always checked whole. The log line says only where, whether blocked and whether masked: never the text.
+always checked whole. A body that is not a string is read as text first (unb64), a part of the event that is not
+an object is taken as one with no body, and a JSON body nested deeper than the parser goes is read as text, so none
+of these makes the handler raise. The log line says only where, whether blocked and whether masked: never the text.
 """
 import base64
 import json
@@ -41,20 +43,31 @@ def b64(text):
 
 
 def unb64(text):
-    """The body as text. A body that is not base64 of UTF-8 text is taken as it is (line breaks in base64 are fine)."""
+    """The body as text. A body that is not base64 of UTF-8 text is taken as it is (line breaks in base64 are fine).
+    A body that is not a string is text too, so it is checked like one: bytes as the UTF-8 text they hold, any other
+    value (a JSON object, a list, a number) as its JSON text."""
     if not text:
         return ""
+    if isinstance(text, (bytes, bytearray)):
+        text = bytes(text).decode("utf-8", "replace")
+    elif not isinstance(text, str):
+        return json.dumps(text, default=str)
     try:
         return base64.b64decode("".join(text.split()), validate=True).decode("utf-8")
     except ValueError:                  # binascii.Error and UnicodeDecodeError are both ValueErrors
         return text
 
 
+def _object(part):
+    """A part of the event as an object: a part that is not one is taken as an empty object (no body)."""
+    return part if isinstance(part, dict) else {}
+
+
 def _prompt(raw):
     """(the request's JSON document, its prompt), or (None, the whole body) when the body has no text prompt."""
     try:
         doc = json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):     # not JSON, or nested deeper than the parser goes: text as it came
         return None, raw
     if isinstance(doc, dict) and isinstance(doc.get("prompt"), str):
         return doc, doc["prompt"]
@@ -70,7 +83,8 @@ def handler(event, context, guard=guard):
     h = event.get("http")
     if h is None:                                                       # not an agent call: pass it on unchanged
         return {V: "1.0"}
-    req, resp = h.get("gatewayRequest") or {}, h.get("gatewayResponse")
+    h = _object(h)
+    req, resp = _object(h.get("gatewayRequest")), h.get("gatewayResponse")
     if resp is None:                                                    # REQUEST: the user's prompt
         doc, prompt = _prompt(unb64(req.get("body")))
         blocked, masked = guard(prompt, "INPUT")
@@ -83,6 +97,7 @@ def handler(event, context, guard=guard):
                 masked = json.dumps(doc)
             return {V: "1.0", "http": {"transformedGatewayRequest": {"body": b64(masked)}}}
         return {V: "1.0", "http": {}}
+    resp = _object(resp)
     raw = unb64(resp.get("body"))                                       # RESPONSE: the agent's answer
     blocked, masked = guard(raw, "OUTPUT")
     print(json.dumps({"point": "RESPONSE", "status": resp.get("statusCode"), "blocked": blocked, "masked": masked != raw}))
