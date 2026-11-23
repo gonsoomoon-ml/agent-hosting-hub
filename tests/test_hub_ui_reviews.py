@@ -6,6 +6,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from botocore.exceptions import ClientError
 from fastapi.testclient import TestClient
 
@@ -32,13 +33,18 @@ RESOURCES = {"Scan": ("codebuild", "startBuild.sync"), "Deploy": ("codebuild", "
              "Notify": ("sns", "publish")}                                     # the other Task states: lambda invoke
 ENDS = {"ExecutionSucceeded": {"executionSucceededEventDetails": {"output": "{}"}},
         "ExecutionFailed": {"executionFailedEventDetails": {
-            "error": "ReviewFailed", "cause": "A step of the hosting review failed; the notification holds the error"}}}
+            "error": "ReviewFailed", "cause": "A step of the hosting review failed; the notification holds the error"}},
+        "ExecutionAborted": {"executionAbortedEventDetails": {
+            "error": "Stopped", "cause": "stopped by the platform team"}},
+        "ExecutionTimedOut": {"executionTimedOutEventDetails": {
+            "error": "States.Timeout", "cause": "The execution has timed out"}}}
 
 
-def history(states, end=None, start=T0) -> list[dict]:
+def history(states, end=None, start=T0, end_at=None) -> list[dict]:
     """GetExecutionHistory's events (boto3's shape) for states given as (state, entered_at, exited_at | None,
-    failed_cause | None), the times in seconds after `start`. A failed Task state has TaskFailed with that cause and
-    no exit event; `end` adds the execution's last event (ExecutionSucceeded or ExecutionFailed)."""
+    failed | None), the times in seconds after `start`. A failed Task state has TaskFailed with `failed` as its cause
+    (or, for failed = (event type, error, cause), that event) and no exit event; `end` adds the execution's last event
+    (a key of ENDS), at `end_at` seconds or with the last event's time."""
     events: list[dict] = []
 
     def add(kind, at, **details):
@@ -56,14 +62,17 @@ def history(states, end=None, start=T0) -> list[dict]:
             add("TaskScheduled", entered, taskScheduledEventDetails={**task, "region": "us-west-2", "parameters": "{}"})
             add("TaskStarted", entered, taskStartedEventDetails=task)
             if failed is not None:
-                add("TaskFailed", exited, taskFailedEventDetails={**task, "error": "States.TaskFailed", "cause": failed})
+                kind_failed, error, cause = failed if isinstance(failed, tuple) else ("TaskFailed", "States.TaskFailed",
+                                                                                       failed)
+                add(kind_failed, exited, **{f"{kind_failed[0].lower()}{kind_failed[1:]}EventDetails": {
+                    **task, "error": error, "cause": cause}})
                 continue
             if exited is not None:
                 add("TaskSucceeded", exited, taskSucceededEventDetails={**task, "output": "{}"})
         if exited is not None:
             add(f"{kind}StateExited", exited, stateExitedEventDetails={"name": state, "output": "{}"})
     if end:
-        add(end, (events[-1]["timestamp"] - start).total_seconds(), **ENDS[end])
+        add(end, (events[-1]["timestamp"] - start).total_seconds() if end_at is None else end_at, **ENDS[end])
     return events
 
 
@@ -177,6 +186,35 @@ def test_steps_of_a_review_that_failed_at_scan():
 def test_steps_of_a_skipped_review():
     assert [(r["name"], r["state"]) for r in reviews.steps_of(history(SKIPPED, "ExecutionSucceeded"), "SUCCEEDED")] \
         == [("Read", "passed")] + [(name, "skipped") for name in NAMES[1:]]
+
+
+@pytest.mark.parametrize("end, status, error", [
+    ("ExecutionAborted", "ABORTED", "Stopped: stopped by the platform team"),
+    ("ExecutionTimedOut", "TIMED_OUT", "States.Timeout: The execution has timed out")])
+def test_a_step_still_running_when_the_execution_ended_failed(end, status, error):
+    events = history(RUNNING, end, end_at=100)                       # Grant entered at 38 s, the execution ended at 100 s
+    assert [(r["name"], r["state"], r["seconds"], r["error"]) for r in reviews.steps_of(events, status)] == [
+        ("Read", "passed", 2, ""), ("Scan", "passed", 36, ""), ("Grant", "failed", 62, error),
+        ("Deploy", "waiting", None, ""), ("Entry", "waiting", None, ""), ("TestCall", "waiting", None, ""),
+        ("Approve", "waiting", None, "")]
+    del events[-1][next(k for k in events[-1] if k.endswith("EventDetails"))]          # an end event with no details
+    grant = reviews.steps_of(events, status)[2]
+    assert (grant["state"], grant["seconds"], grant["error"]) == ("failed", 62, "")
+    grant = reviews.steps_of(history(RUNNING), status)[2]             # the end event not in the history yet: the status
+    assert (grant["state"], grant["error"]) == ("failed", "")
+
+
+def test_a_task_that_timed_out_into_notify_failed():
+    timed_out = [("Read", 0, 2, None), ("Reviewable", 2, 2, None),
+                 ("Scan", 2, 1202, ("TaskTimedOut", "States.Timeout", "")),      # Scan's TimeoutSeconds is 1200
+                 ("Notify", 1202, 1202, None), ("Failed", 1202, None, None)]
+    events = history(timed_out, "ExecutionFailed")
+    assert any(e["type"] == "TaskTimedOut" and "taskTimedOutEventDetails" in e for e in events)
+    steps = reviews.steps_of(events, "FAILED")
+    assert [(r["name"], r["state"], r["seconds"], r["error"]) for r in steps[:3]] == [
+        ("Read", "passed", 2, ""), ("Scan", "failed", 1200, "States.Timeout"), ("Grant", "waiting", None, "")]
+    assert [r["state"] for r in steps[3:]] == ["waiting"] * 4
+    assert reviews.scan_log(events) is None                          # a timeout's cause names no build log
 
 
 def test_steps_ignore_events_they_do_not_know():
@@ -319,6 +357,110 @@ def test_a_log_that_cannot_be_read_is_one_line_and_the_steps_still_show():
     c = failed_at_scan()
     c.log_events = {}                                                    # the stream named in the cause is gone
     assert "ResourceNotFoundException" in panel(screen(c).get("/reviews/quality_agent").text, "panel-findings")
+
+
+def denied(operation: str) -> ClientError:
+    return ClientError({"Error": {"Code": "AccessDeniedException",
+                                  "Message": f"User: arn:aws:sts::{ACCOUNT}:assumed-role/x is not authorized"}}, operation)
+
+
+def has_strip(html: str, element_id: str) -> bool:
+    return any(tag == "ol" for tag, _ in panel_elements(html, element_id))
+
+
+def test_one_execution_that_cannot_be_read_takes_only_its_own_card():
+    c = FakeClients()
+    c.other_records = [app_record("release_review", "APPROVED"), app_record("docs_adk", "PENDING_APPROVAL", team="docs")]
+    c.executions = [
+        execution("quality", "rec-1", "FAILED", AT_SCAN, "ExecutionFailed", start=T0 - timedelta(hours=1)),
+        execution("release", "rec-release_review", "SUCCEEDED", PASSED, "ExecutionSucceeded", start=T0),
+        execution("docs", "rec-docs_adk", "RUNNING", RUNNING, start=T0 + timedelta(minutes=1))]
+    c.executions[0]["history_error"] = denied("GetExecutionHistory")
+    web = screen(c)
+    page = web.get("/reviews").text
+    quality = panel(page, "app-quality_agent")
+    assert STRINGS["ko"]["reviews.review_error"] in quality and not has_strip(page, "app-quality_agent")
+    assert "AccessDeniedException: User: arn:aws:sts::<ACCOUNT>:assumed-role/x" in quality and ACCOUNT not in page
+    assert "통과" in panel(page, "app-release_review") and "진행 중" in panel(page, "app-docs_adk")   # the others keep theirs
+    detail = web.get("/reviews/quality_agent").text
+    assert STRINGS["ko"]["reviews.review_error"] in panel(detail, "panel-steps")
+    assert "quality_agent/console" in detail                         # the execution is known: the console link stays
+    r = web.get("/reviews/quality_agent/console", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].endswith(arn_of("quality"))
+
+    # An execution whose input cannot be read belongs to no card that can be told. A card whose latest known review is
+    # older than it cannot tell its latest review; a card with a newer one keeps its steps.
+    c = FakeClients()
+    c.other_records = [app_record("release_review", "APPROVED")]
+    c.executions = [
+        execution("quality", "rec-1", "FAILED", AT_SCAN, "ExecutionFailed", start=T0 - timedelta(hours=1)),
+        execution("unread", "rec-1", "RUNNING", RUNNING, start=T0 - timedelta(minutes=30)),
+        execution("release", "rec-release_review", "SUCCEEDED", PASSED, "ExecutionSucceeded", start=T0)]
+    c.executions[1]["input_error"] = denied("DescribeExecution")
+    web = screen(c)
+    page = web.get("/reviews").text
+    assert has_strip(page, "app-release_review") and "통과" in panel(page, "app-release_review")
+    assert STRINGS["ko"]["reviews.review_error"] in panel(page, "app-quality_agent")
+    assert not has_strip(page, "app-quality_agent") and "AccessDeniedException" in panel(page, "app-quality_agent")
+    r = web.get("/reviews/quality_agent/console", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/reviews/quality_agent?err=review_unread"
+    assert panel(web.get(r.headers["location"]).text, "page-err") == STRINGS["ko"]["err.review_unread"]
+    c.executions[1].pop("input_error")                                # read again at the next page: not kept as failed
+    web.app.state.hub.cache.clear()
+    assert "진행 중" in panel(web.get("/reviews").text, "app-quality_agent")
+
+
+def test_one_record_that_cannot_be_read_shows_its_name_and_status_and_the_others_show():
+    c = FakeClients()                                                 # quality_agent, rec-1, PENDING_APPROVAL
+    c.other_records = [app_record("release_review", "APPROVED", tools=["Release___file_review_request"])]
+    c.record_errors["rec-1"] = ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": "no record rec-1"}},
+                                           "GetRegistryRecord")       # deleted between the list and the read
+    c.executions = [execution("quality", "rec-1", "FAILED", AT_SCAN, "ExecutionFailed", start=T0 - timedelta(hours=1)),
+                    execution("release", "rec-release_review", "SUCCEEDED", PASSED, "ExecutionSucceeded", start=T0)]
+    web = screen(c)
+    page = web.get("/reviews").text
+    quality = panel(page, "app-quality_agent")
+    assert "PENDING_APPROVAL" in quality and STRINGS["ko"]["reviews.app_error"] in quality
+    assert "ResourceNotFoundException: no record rec-1" in quality and "appliance" not in quality
+    assert has_strip(page, "app-quality_agent")                       # its review still shows
+    release = panel(page, "app-release_review")
+    assert "device" in release and "Release___file_review_request" in release
+    assert "ResourceNotFoundException" in panel(web.get("/reviews/quality_agent").text, "panel-application")
+
+
+def test_a_finished_reviews_scan_lines_are_read_once():
+    c = failed_at_scan()                                              # it ended on 2026-11-22: its log is all there
+    web = screen(c, cache_seconds=0)
+    for _ in range(3):
+        assert "PYSEC-2021-66" in panel(web.get("/reviews/quality_agent").text, "panel-findings")
+    assert len(c.log_reads) == 1
+
+    c = FakeClients()                                                 # ended a few seconds ago: its log may be arriving
+    c.executions = [execution("just-ended", "rec-1", "FAILED", AT_SCAN, "ExecutionFailed",
+                              start=datetime.now(UTC) - timedelta(seconds=40))]
+    c.log_events[(LOG_GROUP, LOG_STREAM)] = SCAN_LOG
+    web = screen(c, cache_seconds=0)
+    for _ in range(2):
+        web.get("/reviews/quality_agent")
+    assert len(c.log_reads) == 2
+
+    c = failed_at_scan()
+    c.errors[("logs", "get_log_events")] = denied("GetLogEvents")     # a read that failed is not kept
+    web = screen(c, cache_seconds=0)
+    assert "AccessDeniedException" in panel(web.get("/reviews/quality_agent").text, "panel-findings")
+    del c.errors[("logs", "get_log_events")]
+    assert "PYSEC-2021-66" in panel(web.get("/reviews/quality_agent").text, "panel-findings")
+
+
+def test_a_scan_line_with_markup_and_an_account_id_is_shown_as_text():
+    c = failed_at_scan()
+    line = ("submission refused: requirements.txt: not a package name with an optional version: "
+            f"<script>alert(1)</script> {ACCOUNT}")                  # submission_check repeats the team's line
+    c.log_events[(LOG_GROUP, LOG_STREAM)] = SCAN_LOG + [line]
+    html = screen(c).get("/reviews/quality_agent").text
+    assert "<script>alert(1)</script>" not in html and ACCOUNT not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; &lt;ACCOUNT&gt;" in html
+    assert "version: <script>alert(1)</script> <ACCOUNT>" in panel(html, "panel-findings")
 
 
 def test_a_failing_read_of_the_reviews_is_one_line_and_the_applications_still_show():

@@ -60,8 +60,9 @@ def _shown(value) -> str:
     return str(value)[:SHOWN]
 
 
-def _application_of(rec: dict) -> dict | None:
-    """The JSON object a catalog record holds as its application (descriptors.custom.data), or None."""
+def application_of(rec: dict) -> dict | None:
+    """The JSON object a catalog record holds as its application (descriptors.custom.data), or None. The hub screen
+    reads an application with it too, so the page shows what the review reads."""
     data = ((rec.get("descriptors") or {}).get("custom") or {}).get("data")
     try:
         app = json.loads(data) if isinstance(data, str) else None
@@ -76,7 +77,7 @@ def skip_reason(rec: dict) -> str | None:
     before every check of the application: a record the review skips need not be an application it could pass."""
     if rec.get("recordType") != "AGENT":
         return f"record type is {_shown(rec.get('recordType'))}: the hosting review hosts AGENT records only"
-    if (_application_of(rec) or {}).get("framework") == NOT_HOSTED_FRAMEWORK:
+    if (application_of(rec) or {}).get("framework") == NOT_HOSTED_FRAMEWORK:
         return f"the application's framework is {NOT_HOSTED_FRAMEWORK}: it has no code for the review to scan or deploy"
     return None
 
@@ -89,7 +90,7 @@ def application(rec: dict, env: dict) -> tuple[dict, str]:
     The record must be an AGENT record whose name is the application's name: every later step names things after the
     application, while reject and the cleanup find them by the record's name. The code must sit under submissions/.
     Raises ValueError with every problem found."""
-    app = _application_of(rec)
+    app = application_of(rec)
     if app is None:
         raise ValueError("the record holds no application: descriptors.custom.data is not a JSON object")
     problems = []

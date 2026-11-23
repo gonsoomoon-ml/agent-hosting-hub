@@ -14,12 +14,15 @@
   <h2 class="sr">{{ t("reviews.app.title") }}</h2>
   <p class="app-facts">
     <span>{{ t("reviews.app.status") }} <span class="pill {{ pill(a.status) }}">{{ a.status }}</span>{% if t.has("status." ~ a.status) %} <span class="muted">{{ t("status." ~ a.status) }}</span>{% endif %}</span>
+    {% if not a.app_error %}
     <span>{{ t("reviews.app.team") }} <strong>{{ a.team or "—" }}</strong></span>
     <span>{{ t("reviews.app.framework") }} <strong>{{ a.framework or "—" }}</strong></span>
     <span>{{ t("reviews.app.tools") }} {% for tool in a.tools %}<code class="tool">{{ tool }}</code> {% else %}<span class="muted">{{ t("reviews.app.no_tools") }}</span>{% endfor %}</span>
+    {% endif %}
     <span>{{ t("reviews.app.record") }} <code>{{ a.record_id }}</code></span>
     <span class="tech">{{ services.catalog }}</span>
   </p>
+  {% if a.app_error %}<p class="err desc" role="status"><strong>{{ t("reviews.app_error") }}</strong> · <span class="mono">{{ a.app_error }}</span></p>{% endif %}
   {% if a.description %}<p class="muted desc">{{ a.description }}</p>{% endif %}
 </section>
 
@@ -52,6 +55,9 @@
       </tbody>
     </table>
     </div>
+    {% elif a.review_error %}
+    <div class="review-meta"><a class="console" href="/reviews/{{ agent }}/console" target="_blank" rel="noopener">{{ t("reviews.console") }} ↗</a></div>
+    <p class="err" role="status"><strong>{{ t("reviews.review_error") }}</strong> · <span class="mono">{{ a.review_error }}</span></p>
     {% elif view.reviews.ok %}
     <p class="muted">{{ t("reviews.no_review") }}</p>
     {% else %}{% with panel = view.reviews %}{% include "_panel_error.html" %}{% endwith %}{% endif %}

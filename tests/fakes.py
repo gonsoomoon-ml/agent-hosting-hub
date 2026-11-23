@@ -467,7 +467,9 @@ class _Reg(_Client):
 
     def get_registry_record(self, registryId, recordId):
         """A record the code created, as it is; else the record quality_agent: its name is record_name, or else the
-        name its application gives (quality_agent by default)."""
+        name its application gives (quality_agent by default). A record ID in record_errors raises that error."""
+        if recordId in self.o.record_errors:
+            raise self.o.record_errors[recordId]
         if self._other(recordId) and "descriptors" in self._other(recordId):
             return dict(self._other(recordId))
         spec = self.o.record_spec
@@ -491,8 +493,10 @@ class _Sfn(_Client):
     started. list_executions gives them most recent first, as the service documents it, each with its startDate (one
     second after the one before); an execution's input is the Registry's event for its record.
     `executions` holds reviews a test gives in full: {"name", "record" (its record ID), "status", "startDate",
-    "stopDate" (when it ended), "events" (what GetExecutionHistory gives)}. list_executions gives them with the
-    running ones, most recent first, at most maxResults; a running one's history is empty."""
+    "stopDate" (when it ended), "events" (what GetExecutionHistory gives)}, and optionally "input_error" and
+    "history_error" (the exception DescribeExecution or GetExecutionHistory raises for that execution only).
+    list_executions gives them with the running ones, most recent first, at most maxResults; a running one's history
+    is empty."""
     service = "sfn"
 
 
@@ -519,6 +523,8 @@ class _Sfn(_Client):
     def describe_execution(self, executionArn):
         machine, name = executionArn.replace(":execution:", ":stateMachine:", 1).rsplit(":", 1)
         given = next((x for x in self.o.executions if x["name"] == name), None)
+        if given and given.get("input_error"):
+            raise given["input_error"]
         if given:
             return {**self._given(machine, given),
                     "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": given["record"]}})}
@@ -527,8 +533,10 @@ class _Sfn(_Client):
                 "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": self.o.running[i][1]}})}
 
     def get_execution_history(self, executionArn, **kw):
-        name = executionArn.rsplit(":", 1)[-1]
-        return {"events": next((list(x["events"]) for x in self.o.executions if x["name"] == name), [])}
+        given = next((x for x in self.o.executions if x["name"] == executionArn.rsplit(":", 1)[-1]), None)
+        if given and given.get("history_error"):
+            raise given["history_error"]
+        return {"events": list(given["events"]) if given else []}
 
     def describe_state_machine(self, stateMachineArn):
         return {"stateMachineArn": stateMachineArn, "name": stateMachineArn.rsplit(":", 1)[-1], "status": "ACTIVE"}
@@ -565,7 +573,8 @@ class FakeClients:
     (the arguments of each InvokeHarness), log_reads (the arguments of each GetLogEvents). Tests may also fill
     log_groups, log_streams, log_events ((group, stream) -> its lines), parameters, objects,
     other_records, runtime_create_errors, session_errors, running (the reviews still running), executions (reviews
-    given in full, with their history), harnesses,
+    given in full, with their history), record_errors (record ID -> the exception GetRegistryRecord raises for it),
+    harnesses,
     harness_stream (the events InvokeHarness answers), gateways (ID -> name, status, interceptorConfigurations; the
     two gateways of PLATFORM at the start), alarms (MetricAlarms entries) and errors ((service, method) -> the
     exception that call raises, after it is recorded)."""
@@ -601,7 +610,7 @@ class FakeClients:
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
         self.running, self.executions = list(running), []
         self.log_streams, self.stopped_sessions, self.session_errors = {}, [], {}
-        self.log_events, self.log_reads = {}, []
+        self.log_events, self.log_reads, self.record_errors = {}, [], {}
         self.harnesses, self.deleted_harnesses, self.harness_calls, self.harness_stream = {}, [], [], []
         self.gateways = {PLATFORM.agent_gw["id"]: {"name": "hub-agents", "status": "READY", "interceptorConfigurations": []},
                          PLATFORM.tool_gw["id"]: {"name": "hub-tools", "status": "READY"}}

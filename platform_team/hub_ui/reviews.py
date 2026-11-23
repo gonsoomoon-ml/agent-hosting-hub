@@ -17,9 +17,9 @@ from fastapi.responses import RedirectResponse
 
 from platform_team.agent_catalog.application_form import name_problems
 from platform_team.hosting_review import reject_agent
-from platform_team.hosting_review.agent_cleanup import CleanupFailed
+from platform_team.hosting_review.agent_cleanup import CleanupFailed, cause
 from platform_team.hosting_review.reject_agent import MAX_REASON, REJECTABLE
-from platform_team.hosting_review.review_steps import _application_of
+from platform_team.hosting_review.review_steps import application_of
 from platform_team.hub_ui import jobs
 from platform_team.hub_ui.app import Hub, back, catalog, page, panel
 
@@ -38,6 +38,7 @@ SCAN = "Scan"
 MAX_ERROR = 300             # characters of a step's error on the page
 MAX_FINDINGS = 20           # lines of the scan's log on the page
 LOG_LINES = 200             # the last lines of the scan build's log that are read
+LOG_SETTLE = 60             # s after a review ended: until then the build's last log lines may still be arriving
 MAX_EXECUTIONS = 50         # the newest executions of the state machine that are looked at
 SERVICES = {"machine": "AWS Step Functions", "catalog": "AWS Agent Registry", "build": "AWS CodeBuild",
             "logs": "Amazon CloudWatch Logs"}
@@ -171,34 +172,53 @@ def application(hub: Hub, record: dict) -> dict:
     GetRegistryRecord, through the cache."""
     full = hub.cache.get(f"record.{record['recordId']}", lambda: hub.c.reg.get_registry_record(
         registryId=hub.platform().registry_id, recordId=record["recordId"]))
-    return _application_of(full) or {}
+    return application_of(full) or {}
 
 
 def _text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _line(hub: Hub, e: Exception) -> str:
+    """A failed read as the page shows it: one line, the account masked (as app.panel does)."""
+    return hub.mask(cause(e))
+
+
 def _applications(hub: Hub, agent: str | None) -> list[dict]:
-    """The AGENT records (only the one named `agent`, when given) with what their application asks for, by name."""
+    """The AGENT records (only the one named `agent`, when given) with what their application asks for, by name. A
+    record whose application cannot be read (deleted since the list, say) keeps its name and status, with the reason
+    in app_error; the other records are not touched by it."""
     found = []
     for rec in sorted(catalog(hub).values(), key=lambda r: r["name"]):
         if rec.get("recordType") != "AGENT" or agent not in (None, rec["name"]):
             continue
-        app = application(hub, rec)
+        try:
+            app, app_error = application(hub, rec), ""
+        except Exception as e:          # this record's read only
+            app, app_error = {}, _line(hub, e)
         tools = app.get("tools")
         found.append({"agent": rec["name"], "record_id": rec["recordId"], "status": rec.get("status", ""),
                       "team": _text(app.get("team")), "framework": _text(app.get("framework")),
                       "tools": [str(t) for t in tools] if isinstance(tools, list) else [],
-                      "description": _text(rec.get("description"))})
+                      "description": _text(rec.get("description")), "app_error": app_error})
     return found
 
 
 def _kept(hub: Hub, key: str, load):
-    """A value that never changes once AWS has it (an execution's input, a finished execution's history): read once
-    and kept while the app runs, not in the cache that a job clears."""
+    """A value that never changes once AWS has it (an execution's input, a finished execution's history, the scan's
+    lines of a review that ended a while ago): read once and kept while the app runs, not in the cache that a job
+    clears. A read that fails is not kept."""
     if key not in hub.kept:
         hub.kept[key] = load()
     return hub.kept[key]
+
+
+def _kept_panel(hub: Hub, key: str, load) -> dict:
+    """A kept value as a panel: {"ok": True, "value": ...} or {"ok": False, "error": one line}."""
+    try:
+        return {"ok": True, "value": _kept(hub, key, load)}
+    except Exception as e:              # one failing read is its panel's line, not the page's failure
+        return {"ok": False, "error": _line(hub, e)}
 
 
 def _record_of(execution_input: Any) -> str:
@@ -213,25 +233,48 @@ def _history(hub: Hub, arn: str) -> list[dict]:
     return [event for pg in pages for event in pg["events"]]
 
 
-def _latest_reviews(hub: Hub) -> dict[str, dict]:
-    """The latest review of each record among the state machine's MAX_EXECUTIONS newest executions: record ID ->
-    {"execution": its ListExecutions entry, "events": its history}. Which record an execution reviews is in its input
-    (DescribeExecution), as reject_agent.running_reviews reads it."""
+def _latest_reviews(hub: Hub) -> dict:
+    """The latest review of each record among the state machine's MAX_EXECUTIONS newest executions:
+    {"latest": {record ID: entry}, "unread": ""}. Which record an execution reviews is in its input
+    (DescribeExecution), as reject_agent.running_reviews reads it. An entry is {"execution": its ListExecutions entry,
+    "events": its history}, or {"execution", "error"} when its history cannot be read. An execution whose input cannot
+    be read belongs to a record that cannot be told: "unread" says why, and a record whose latest known review is
+    older than it (or that has none) gets {"error": ...}, as its latest review may be that one. One execution's
+    failing read touches no other record's review."""
     machine = hub.platform().machine_arn
     if not machine:
-        return {}
+        return {"latest": {}, "unread": ""}
     listed = hub.c.sfn.list_executions(stateMachineArn=machine, maxResults=MAX_EXECUTIONS)["executions"]
     latest: dict[str, dict] = {}
+    unread = ""
     for e in sorted(listed, key=lambda e: e["startDate"], reverse=True):
         arn = e["executionArn"]
-        record_id = _kept(hub, f"input.{arn}",
-                          lambda: _record_of(hub.c.sfn.describe_execution(executionArn=arn).get("input")))
+        try:
+            record_id = _kept(hub, f"input.{arn}",
+                              lambda: _record_of(hub.c.sfn.describe_execution(executionArn=arn).get("input")))
+        except Exception as error:      # this execution's read only
+            unread = unread or _line(hub, error)
+            continue
         if not record_id or record_id in latest:
             continue
-        events = _history(hub, arn) if e["status"] == "RUNNING" else _kept(hub, f"history.{arn}",
-                                                                            lambda: _history(hub, arn))
+        if unread:                      # a newer execution of a record that cannot be told may be this one's latest
+            latest[record_id] = {"error": unread}
+            continue
+        try:
+            events = _history(hub, arn) if e["status"] == "RUNNING" else _kept(hub, f"history.{arn}",
+                                                                                lambda: _history(hub, arn))
+        except Exception as error:      # this execution's read only
+            latest[record_id] = {"execution": e, "error": _line(hub, error)}
+            continue
         latest[record_id] = {"execution": e, "events": events}
-    return latest
+    return {"latest": latest, "unread": unread}
+
+
+def _review_of(found: dict, record_id: str) -> dict | None:
+    """A record's entry in _latest_reviews' value: its own, or {"error": ...} when an execution whose input cannot be
+    read may be its latest review; None when it has no review."""
+    entry = found["latest"].get(record_id)
+    return entry if entry is not None else ({"error": found["unread"]} if found["unread"] else None)
 
 
 def _findings(hub: Hub, events: list[dict]) -> dict:
@@ -249,7 +292,8 @@ def _findings(hub: Hub, events: list[dict]) -> dict:
 def _review(hub: Hub, found: dict, with_findings: bool) -> dict:
     """A review for the page: the execution's name, status, start and seconds, its steps (a running step's seconds
     count from its start), the failed step and its error, and, with_findings and when it failed at Scan, the scan's
-    findings as a panel."""
+    lines as a panel: read once and kept when the review ended LOG_SETTLE seconds ago or more, else through the
+    cache."""
     e, events, now = found["execution"], found["events"], datetime.now(UTC)
     steps = steps_of(events, e["status"])
     for row in steps:
@@ -258,7 +302,12 @@ def _review(hub: Hub, found: dict, with_findings: bool) -> dict:
     failed = next((row for row in steps if row["state"] == FAILED), None)
     findings = None
     if with_findings and failed is not None and failed["name"] == SCAN:
-        findings = panel(hub, f"reviews.findings.{e['executionArn']}", lambda: _findings(hub, events))
+        arn, stop = e["executionArn"], e.get("stopDate")
+
+        def load():
+            return _findings(hub, events)
+        settled = stop is not None and _seconds(stop, now) >= LOG_SETTLE      # its log is all there: read it once
+        findings = _kept_panel(hub, f"findings.{arn}", load) if settled else panel(hub, f"reviews.findings.{arn}", load)
     return {"name": e["name"], "status": e["status"], "started": e["startDate"],
             "seconds": _seconds(e["startDate"], e.get("stopDate") or now), "steps": steps,
             "failed_step": failed["name"] if failed else "", "error": failed["error"] if failed else "",
@@ -266,20 +315,24 @@ def _review(hub: Hub, found: dict, with_findings: bool) -> dict:
 
 
 def view(hub: Hub, agent: str | None = None) -> dict:
-    """The page's two reads, each a panel. applications: the AGENT records, each with its application, can_reject
-    (its status is one reject takes and no job runs) and its latest review (None when there is none), newest review
-    first; with `agent`, that agent only, and its review's findings when it failed at Scan. reviews: the read of the
-    state machine's executions (a failure is one line on the page; the applications still show)."""
+    """The page's two reads, each a panel. applications: the AGENT records, each with its application (app_error when
+    it cannot be read), can_reject (its status is one reject takes and no job runs) and its latest review (None when
+    there is none or it cannot be read; review_error then says why), newest review first; with `agent`, that agent
+    only, and its review's findings when it failed at Scan. reviews: the list of the state machine's executions (a
+    failure is one line on the page; the applications still show)."""
     hub.platform()                      # NotDeployed: the page that says so, before any panel
     applications = panel(hub, f"reviews.applications.{agent or ''}", lambda: _applications(hub, agent))
     reviews = panel(hub, "reviews.latest", lambda: _latest_reviews(hub))
     if applications["ok"]:
         job = hub.jobs.current()
         busy = job is not None and job.state == jobs.RUNNING
-        latest = reviews["value"] if reviews["ok"] else {}
-        apps = [{**a, "can_reject": a["status"] in REJECTABLE and not busy,
-                 "review": _review(hub, latest[a["record_id"]], agent is not None) if a["record_id"] in latest else None}
-                for a in applications["value"]]
+        found = reviews["value"] if reviews["ok"] else {"latest": {}, "unread": ""}
+        apps = []
+        for a in applications["value"]:
+            entry = _review_of(found, a["record_id"]) or {}
+            review = _review(hub, entry, agent is not None) if "events" in entry else None
+            apps.append({**a, "can_reject": a["status"] in REJECTABLE and not busy, "review": review,
+                         "review_error": entry.get("error", "")})
         apps.sort(key=lambda a: -a["review"]["started"].timestamp() if a["review"] else math.inf)
         applications = {"ok": True, "value": apps}
     return {"applications": applications, "reviews": reviews}
@@ -350,9 +403,11 @@ def console(request: Request, agent: str):
     rec = catalog(hub).get(agent)
     if not rec or rec.get("recordType") != "AGENT":
         raise HTTPException(status_code=404)
-    found = hub.cache.get("reviews.latest", lambda: _latest_reviews(hub)).get(rec["recordId"])
+    found = _review_of(hub.cache.get("reviews.latest", lambda: _latest_reviews(hub)), rec["recordId"])
     if not found:
         return back(request, f"/reviews/{agent}", err="no_review")
+    if "execution" not in found:        # its latest review may be an execution whose input cannot be read
+        return back(request, f"/reviews/{agent}", err="review_unread")
     region, arn = hub.s.region, found["execution"]["executionArn"]
     return RedirectResponse(f"https://{region}.console.aws.amazon.com/states/home?region={region}"
                             f"#/v2/executions/details/{arn}", status_code=303)
