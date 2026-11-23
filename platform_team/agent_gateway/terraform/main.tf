@@ -29,7 +29,7 @@ resource "aws_iam_role_policy" "agents" {
     Version = "2012-10-17"
     Statement = [
       # the hosted agents: the review names their Runtimes <prefix>_<agent>, so this reaches no Runtime of a hub whose
-      # prefix starts with this one (hub2_...); a harness has no target here
+      # prefix starts with this one (hub2_...); a harness has no target here. Not run on AWS yet
       { Effect = "Allow", Action = ["bedrock-agentcore:InvokeAgentRuntime"], Resource = ["${local.agentcore}:runtime/${var.prefix}_*"] },
       # the interceptor Lambda of the custom guardrail, attached after the gateway exists (by API, during operation)
       { Effect = "Allow", Action = ["lambda:InvokeFunction"], Resource = ["${local.lambda}:${var.prefix}-guardrail"] },
