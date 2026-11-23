@@ -1,6 +1,6 @@
 # 모니터링
 
-허브의 알림이 모이고, 올라온 에이전트가 무엇을 했는지 플랫폼팀이 보는 곳이다. SNS 주제 `<prefix>-alerts`를 두고, `alert_email`을 주면 메일이 그 주제를 구독한다. 알림의 내용을 읽는 확인 스크립트(`make e2e`, `make e2e-ops`)는 실행하는 동안만 임시 SQS 큐(`<prefix>-e2e-alerts`)를 만들어 이 주제를 구독하고 끝나면 지운다. 이 모듈은 알림 주제, 도구 호출 경보(`<prefix>-tool-calls`), 그리고 두 게이트웨이의 로그와 trace 전달을 만든다. 이 주제로 알리는 알람은 둘이다. 이 모듈의 도구 호출 알람과, [커스텀 가드레일](../custom_guardrail/README.md)의 Terraform이 만드는 interceptor 오류 알람(`<prefix>-guardrail-errors`)이다. 사용량 보고(`usage.sh`)는 어느 에이전트가 몇 번 불렸고 어느 도구가 몇 번 불렸는지를 메트릭에서 읽어 표로 보여 준다.
+허브의 알림이 모이고, 올라온 에이전트가 무엇을 했는지 플랫폼팀이 보는 곳이다. SNS 주제 `<prefix>-alerts`를 두고, 기본 허브에는 SQS 수신함 `<prefix>-alerts-inbox`가 그 주제를 구독한다. 허브의 알림이 모이는 수신함이고, 이 저장소의 어느 명령도 이 수신함을 읽지 않는다(알림의 내용을 읽는 확인 스크립트는 `<prefix>-e2e-alerts`라는 임시 큐를 따로 만들어 이 주제를 구독하고 끝나면 지운다). 알림을 메일로 받으려면 `alert_email`을 주면 메일도 구독한다. 이 모듈은 알림 주제와 수신함, 도구 호출 경보(`<prefix>-tool-calls`), 그리고 두 게이트웨이의 로그와 trace 전달을 만든다. 이 주제로 알리는 경보은 둘이다. 이 모듈의 도구 호출 경보과, [커스텀 가드레일](../custom_guardrail/README.md)의 Terraform이 만드는 interceptor 오류 경보(`<prefix>-guardrail-errors`)이다. 사용량 보고(`usage.sh`)는 어느 에이전트가 몇 번 불렸고 어느 도구가 몇 번 불렸는지를 메트릭에서 읽어 표로 보여 준다.
 
 ## 개념도에서의 위치
 
@@ -37,7 +37,7 @@
 
 2026-11-22에 에이전트 없이 허브의 틀만 올렸다(`AUTO_APPROVE=1 make deploy`, 227초, `us-west-2`, 접두어 `hub`). 알람 `hub-tool-calls`가 만들어졌고, AWS가 돌려준 설정은 위의 표와 같았다(차원 다섯, `Sum`, 60초, 1번, `GreaterThanThreshold` 19, `notBreaching`, 알림 주제 `hub-alerts`). 상태는 알람이 만들어지고 93초 뒤에 `OK`가 되었고, 그 사유는 `no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]`였다. 그 도구를 부른 호출이 없었으므로 데이터가 없는 분을 정상으로 본 것이다. 곧바로 `make deploy`를 한 번 더 돌리면 바뀐 것이 없었다(`0 added, 0 changed, 0 destroyed`). 그 뒤의 `AUTO_APPROVE=1 make destroy`(148초)는 마지막 줄이 `still present: nothing`이었고(`CloudWatch alarms: none`), 알람 `hub-tool-calls`가 남지 않은 것을 목록으로도 확인했다.
 
-2026-11-22의 운영 확인(`make e2e-ops`, 같은 리전과 접두어)에서 사고 버전의 `quality_agent`에게 사건 질문을 한 번 보냈다(호출자는 20초 뒤에 포기했다). 되풀이는 22:11(UTC)의 1분과, 멈출 때까지의 22:12에 도구를 42번과 38번 불렀고, 이 알람의 메트릭도 그 두 분에 42와 38이었다. 알람은 22:12:17에 `OK`에서 `ALARM`이 되었고(`Threshold Crossed: 1 datapoint [42.0 (22/11/26 22:11:00)] was greater than the threshold (19.0).`), 그 알림이 알림 주제를 지나 호출 86초 뒤에 확인 스크립트의 임시 큐에 왔다. 에이전트를 멈춘 뒤 22:19:17에 다시 `OK`가 되었다.
+2026-11-22의 운영 확인(`make e2e-ops`, 같은 리전과 접두어)에서 사고 버전의 `quality_agent`에게 사건 질문을 한 번 보냈다(호출자는 20초 뒤에 포기했다). 되풀이는 22:11(UTC)의 1분과, 멈출 때까지의 22:12에 도구를 42번과 38번 불렀고, 이 알람의 메트릭도 그 두 분에 42와 38이었다. 알람은 22:12:17에 `OK`에서 `ALARM`이 되었고(`Threshold Crossed: 1 datapoint [42.0 (22/11/26 22:11:00)] was greater than the threshold (19.0).`), 그 알림이 알림 주제를 지나 호출 86초 뒤에 확인용 큐에 왔다. 에이전트를 멈춘 뒤 22:19:17에 다시 `OK`가 되었다.
 
 확인하지 않은 것: 다른 에이전트가 이 도구를 함께 쓸 때의 횟수, 평소의 1분 호출 수.
 
@@ -139,7 +139,7 @@ Python에서 쓰는 함수는 셋이다(`usage_report.py`).
 
 | 파일 | 역할 |
 |---|---|
-| `terraform/` | SNS 주제, 구독(고르면 메일), 도구 호출 경보 `<prefix>-tool-calls`, 게이트웨이 둘의 로그 그룹과 로그 전달(source, destination, delivery), 그 전달을 위한 자원 정책 `<prefix>-gateway-logs`. 입력은 `prefix`, `alert_email`, `tool_gateway_arn`, `agent_gateway_arn`, `watched_tool`, `tool_calls_per_minute`. 내보내는 값은 `topic_arn`, `tool_alarm_name`. |
+| `terraform/` | SNS 주제, SQS 수신함과 그 접근 정책, 구독(SQS, 고르면 메일), 도구 호출 경보 `<prefix>-tool-calls`, 게이트웨이 둘의 로그 그룹과 로그 전달(source, destination, delivery), 그 전달을 위한 자원 정책 `<prefix>-gateway-logs`. 입력은 `prefix`, `alert_email`, `tool_gateway_arn`, `agent_gateway_arn`, `watched_tool`, `tool_calls_per_minute`. 내보내는 값은 `topic_arn`, `tool_alarm_name`. |
 | `usage_report.py` | 사용량 보고(`usage`, `tool_calls`, `session_summary`)와 그 명령. 메트릭과 span을 읽기만 한다. |
 | `usage.sh` | 사용량 보고 명령. `.env`를 `make`와 같은 규칙으로 읽고 `usage_report.py`를 돌린다. |
 | `agent_logs.py` | 에이전트의 Runtime 로그 그룹에서 가장 새 줄을 오래된 줄부터 찍는다(`demo_scenes/logs`). 로그 그룹을 `DescribeLogGroups`로 찾고 `FilterLogEvents`로 읽는다(`runtime-logs-` 스트림만. `otel-rt-logs`의 복사본은 읽지 않는다). SSM을 읽지 않는다. 2026-11-23에 개발팀 역할로 AWS에서 돌렸다(`docs_adk`의 줄을 읽었고, 그 역할에 주지 않은 harness 에이전트 `spec_assistant`의 로그 그룹은 거부를 한 줄로 찍었다). |

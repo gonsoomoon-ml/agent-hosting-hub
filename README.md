@@ -160,7 +160,14 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ![허브의 시연 영상의 한 장면: release_review의 호스팅 심사가 일곱 단계를 지나는 화면](demo_video/poster.png)
 
-허브를 시연하는 영상을 2026-11-23에 찍었다. 전체 릴(10분 50초)과 단계마다의 릴 다섯(55초에서 3분 31초)이 있고, 위의 그림은 전체 릴의 한 장면이다. 준비는 허브 화면의 홈이다. 1단계에서는 개발자 PC의 Claude Code가 카탈로그의 MCP 서버에서 공유 도구를 찾고 표준 템플릿으로 `quality_agent`의 파일을 만든 뒤(실행하거나 올리지는 않는다), 개발자가 `release_review`와 `quality_agent`의 취약한 판을 신청한다. 2단계에서는 두 신청의 호스팅 심사가 저절로 돌아 `quality_agent`는 Scan에서 멈추고 `release_review`는 일곱 단계를 지나 승인되어 답하며, 플랫폼팀이 사유를 적어 반려하고 고친 판이 승인된다. 3단계에서는 전사 정책 `guard_prompt`를 기록 모드로 걸고, 에이전트에게 내리는 지시가 든 요청이 막히지 않은 채 집계에 한 건 잡힌다. 4단계에서는 적용 모드로 올리면 같은 요청이 `release_review`와 `docs_adk` 모두 403이고, 커스텀 가드레일을 붙이기 전과 뒤에 코드명이 든 요청과 사번이 든 답이 어떻게 다른지 보인다. 5단계에서는 되풀이하는 판이 심사를 통과해 답하지 않고 도구 호출 경보가 울리며, 그 에이전트 하나만 멈추고 이웃은 답한다. Claude Code가 로그와 코드를 읽어 원인을 짚고, 고친 판이 멈춘 채로 승인되고, 재개하면 다시 답한다.
+허브를 시연하는 영상을 2026-11-23에 찍었다. 전체 릴(10분 50초)과 단계마다의 릴 다섯(55초에서 3분 31초)이 있고, 위의 그림은 전체 릴의 한 장면이다.
+
+- 준비: 허브 화면의 홈이다.
+- 1단계: 개발자 PC의 Claude Code가 카탈로그의 MCP 서버에서 공유 도구를 찾고 표준 템플릿으로 `quality_agent`의 파일을 만든 뒤(실행하거나 올리지는 않는다), 개발자가 `release_review`와 `quality_agent`의 취약한 판을 신청한다.
+- 2단계: 두 신청의 호스팅 심사가 저절로 돌아 `quality_agent`는 Scan에서 멈추고 `release_review`는 일곱 단계를 지나 승인되어 답하며, 플랫폼팀이 사유를 적어 반려하고 고친 판이 승인된다.
+- 3단계: 전사 정책 `guard_prompt`를 기록 모드로 걸고, 에이전트에게 내리는 지시가 든 요청이 막히지 않은 채 집계에 한 건 잡힌다.
+- 4단계: 적용 모드로 올리면 같은 요청이 `release_review`와 `docs_adk` 모두 403이고, 커스텀 가드레일을 붙이기 전과 뒤에 코드명이 든 요청과 사번이 든 답이 어떻게 다른지 보인다.
+- 5단계: 되풀이하는 판이 심사를 통과해 답하지 않고 도구 호출 경보가 울리며, 그 에이전트 하나만 멈추고 이웃은 답한다. Claude Code가 로그와 코드를 읽어 원인을 짚고, 고친 판이 멈춘 채로 승인되고, 재개하면 다시 답한다.
 
 영상 파일은 이 저장소에 들어 있지 않다. 영상의 원본은 `demo_video/`에 있다. 장면마다의 스토리보드, 모든 자막이 든 편집 스크립트(`demo_video/scripts/build.py`), 개발자 PC(`demo_video/tools/dev_pc`)다. 어느 단계를 몇 번 찍었고 무엇을 잘라 냈는지는 [`demo_video/README.md`](demo_video/README.md)에 있다. 영상을 찍은 허브는 그 뒤에 지웠다. 허브를 올리고 확인하는 데(`make deploy`, `make e2e`, `make e2e-ops`)는 이 폴더도 `demo_scenes/`도 필요하지 않다.
 
@@ -180,7 +187,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | AgentCore Runtime(승인된 에이전트마다 하나. harness 에이전트는 AgentCore가 만든 Runtime 하나 위에서 돈다) | 에이전트가 호출을 처리하는 동안. AgentCore 개발자 안내서("AgentCore harness", 2026-11-22에 읽었다)는 harness에 따로 매기는 요금이 없고 쓰는 AgentCore 기능만큼 낸다고 적는다. 여기서는 확인하지 않았다. |
 | AgentCore Gateway 둘, Policy(policy engine과 가드레일 검사) | 호출과 권한 판단마다 |
 | CodeBuild 프로젝트 둘 | 심사마다 build가 도는 분만큼. 이 실행에서 Scan 단계는 28~47초, Deploy 단계는 310~363초였다. 고친 뒤의 실행에서는 Scan 27~71초, Deploy 315~316초였다. Deploy의 값은 CLI로 배포하던 때의 것이다(위의 "일곱 명령"). 지금의 배포 단계에서는 Deploy 단계가 244~266초였고, 그 가운데 221~241초는 build가 Runtime이 `READY`가 되기를 기다린 시간이다. 심사를 다진 뒤의 실행에서는 Scan 31~36초, Deploy 257초와 264초(그 가운데 `READY`를 기다린 시간 231초와 242초)였다. |
-| Lambda 일곱(심사 다섯, 샘플 도구 하나, 커스텀 가드레일의 interceptor 하나), Step Functions, EventBridge, SNS | 실행과 메시지마다. interceptor는 에이전트 게이트웨이에 붙어 있는 동안 호출마다 두 번(요청과 답) 돈다. 운영을 확인한 실행에서 그 Lambda의 로그에 요청 지점과 답 지점의 줄이 함께 있었다(위의 "`make e2e-ops`가 확인하는 것"). |
+| Lambda 일곱(심사 다섯, 샘플 도구 하나, 커스텀 가드레일의 interceptor 하나), Step Functions, EventBridge, SNS, SQS | 실행과 메시지마다. interceptor는 에이전트 게이트웨이에 붙어 있는 동안 호출마다 두 번(요청과 답) 돈다. 운영을 확인한 실행에서 그 Lambda의 로그에 요청 지점과 답 지점의 줄이 함께 있었다(위의 "`make e2e-ops`가 확인하는 것"). |
 | Amazon Bedrock Guardrails(커스텀 가드레일의 guardrail 하나) | interceptor가 붙어 있는 동안 호출마다 두 번(요청과 답) 검사한다. Amazon Bedrock 요금 페이지(2026-11-22에 읽었다)는 검사한 글의 양(text unit, 1,000자까지가 하나)을 필터마다 매기고, 이 guardrail이 쓰는 두 필터(낱말 필터, 정규식의 민감 정보 필터)는 무료라고 적는다. 여기서는 요금을 확인하지 않았다. |
 | S3(제출함: 제출물과 에이전트의 코드 묶음), CloudWatch Logs | 저장량과 들어온 로그만큼. Terraform이 만드는 로그 그룹 열둘(Lambda 일곱, CodeBuild 둘, state machine 하나, 게이트웨이 둘)은 14일 보관한다. 에이전트와 게이트웨이의 span은 계정의 Transaction Search가 받는다(2026-11-22의 실행에서는 로그 그룹 `aws/spans`에 들어갔다). 그 설정은 계정의 것이라 허브가 바꾸지 않는다. span의 요금은 확인하지 않았다. 양의 예로, 운영을 확인한 실행의 35분 동안 도구 게이트웨이의 로그 그룹에 줄 494개가 들어왔고, 되풀이하던 사고의 세션 하나(약 2분)가 `aws/spans`에 span 729개를 남겼다. Runtime이 만드는 로그 그룹(`/aws/bedrock-agentcore/runtimes/...`)에는 허브가 보관 기간을 정하지 않는다. 에이전트를 지울 때 함께 지운다. |
 | CloudWatch 알람 둘(모니터링의 `<prefix>-tool-calls`, 커스텀 가드레일의 `<prefix>-guardrail-errors`) | 알람이 있는 동안. CloudWatch 요금 페이지(2026-11-22에 읽었다)는 알람을 그 메트릭마다 시간 단위로 매기고, 무료 사용량(표준 해상도의 알람 메트릭 10개)이 있다고 적는다. 여기서는 확인하지 않았다. |
@@ -196,7 +203,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 3. 심사가 에이전트마다 만든 것(Terraform 밖): 정책 넷 이상(`entry_permit_`, `review_permit_`, `tool_`, `guard_secret_`, 운영 중에 더하면 `guard_prompt_`, `stop_agent_`), 에이전트 게이트웨이의 target, Runtime `<prefix>_<에이전트>`, Runtime의 로그 그룹, `make preload`가 만든 harness `<prefix>_<에이전트>`와 그 harness가 도는 Runtime(`harness_<prefix>_<에이전트>`)의 로그 그룹, 제출함의 코드 묶음(`packages/<에이전트>/`), 실행 역할, SSM 값, 그리고 에이전트의 카탈로그 record. 순서와 이유는 [호스팅 심사, 반려](platform_team/hosting_review/README.md#지우는-것과-순서)에 있다. Runtime의 workload identity는 허브가 따로 지우지 않는다. CLI로 배포하던 때의 실행에서는 Runtime과 함께 사라졌다. API로 만든 Runtime에서도 2026-11-22의 실행에서 Runtime과 함께 사라졌다(`reject.sh` 한 번과 `make destroy`의 Runtime 둘, 목록으로 확인했다). 그 이름은 Runtime ID와 같다. harness가 도는 Runtime(`harness_<prefix>_<에이전트>`)과 그 workload identity는 허브가 따로 지우지 않는다. 2026-11-22의 `make destroy`에서는 harness를 지우자 둘 다 함께 사라졌다(목록으로 확인했다). 그 Runtime의 로그 그룹은 정리가 지운다.
 4. `make seed`가 넣은 공유 도구 record.
 5. 그래도 카탈로그에 남은 record(AGENT가 아니거나 이름 규칙에 맞지 않아 3에서 찾지 못한 것). 종류와 이름에 상관없이 모두 지우고 하나씩 찍는다. 카탈로그는 허브의 것이고 다음 단계에서 지워진다.
-6. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, 커스텀 가드레일의 guardrail과 그 버전, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제, 알람, 게이트웨이 둘의 로그와 trace 전달(source, destination, delivery), SSM 값, 로그 그룹.
+6. `terraform destroy`: 게이트웨이 둘, policy engine과 그 정책, 카탈로그, Lambda, 커스텀 가드레일의 guardrail과 그 버전, CodeBuild 프로젝트, state machine, rule, 역할과 권한 경계, 제출함 bucket(모든 version까지), 알림 주제와 큐, 알람, 게이트웨이 둘의 로그와 trace 전달(source, destination, delivery), SSM 값, 로그 그룹.
 
 마지막에 `e2e_checks/check_cleanup.py`가 접두어로 시작하는 자원이 남았는지 종류마다 찾아보고 `still present: nothing`(또는 남은 종류)을 찍는다. 읽기만 한다.
 
