@@ -57,11 +57,11 @@ def _deploy(c, agent, version="v1", role=None):
     `role`), and the Runtime ARN in SSM (deploy_build.deploy on the fake)."""
     s = Settings()
     key = s.package_key(agent, version)
-    c.s3.put_object(Bucket=PLATFORM.bucket, Key=key, Body=b"zip")
+    version_id = c.s3.put_object(Bucket=PLATFORM.bucket, Key=key, Body=b"zip")["VersionId"]
     env = {"AGENT": agent, "PREFIX": "hub", "AWS_REGION": "us-west-2", "MODEL_ID": s.model_id, "BUCKET": PLATFORM.bucket,
            "TOOL_GW_URL": "https://hub-tools-abcdefghij.gateway.bedrock-agentcore.us-west-2.amazonaws.com/mcp",
            "ROLE_ARN": f"arn:aws:iam::{ACCOUNT}:role/{role or s.agent_role(agent)}"}
-    return deploy_build.deploy(c, env, key)
+    return deploy_build.deploy(c, env, key, version_id)
 
 
 def _review(c, spec):

@@ -13,8 +13,9 @@
 # boundary (its role's iam:PermissionsBoundary condition); a role of that name made outside the hub would not be
 # bounded, and making one takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves
 # every review, so code that runs in the deploy build could change another agent's Runtime, pass it another agent's
-# role, or write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy
-# leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
+# role, overwrite another agent's package under packages/ (a Runtime version names its package's object version, so
+# the versions already made keep the package they name; not run on AWS yet), or write another agent's runtime_arn
+# (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's
 # cleanup would not find (hosting_review/README.md, the known limit).
 # The steps that grant (Lambda) never open the submitted code. Read reads the catalog record (GetRegistryRecord)
 # and, to find an earlier review of the same record, lists this state machine's executions and reads their input
@@ -257,8 +258,8 @@ data "aws_iam_policy_document" "deploy" {
     resources = [local.hub_code]
   }
   statement {
-    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). The deploy worked with it; whether the service needs GetObject was not tried
-    actions   = ["s3:PutObject", "s3:GetObject"]
+    sid       = "ThePackage" # put_object packages/<agent>/<code version>.zip; GetObject in case the service reads the package with the caller's rights (the agent role has no S3 action). The deploy worked with it; whether the service needs GetObject was not tried. The Runtime names the package by object version (versionId), and a read of an object at a version is GetObjectVersion; that read has not run on AWS yet
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:GetObjectVersion"]
     resources = ["${aws_s3_bucket.inbox.arn}/packages/*"]
   }
   statement {

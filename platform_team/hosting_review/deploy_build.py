@@ -12,8 +12,10 @@ The team supplies code and requirements.txt only; the platform decides what is i
     that wrote the file the scan audited (submission_check.requirements_from), so the same lines are installed
   2 uv installs those requirements as wheels for the Runtime's platform (install_command); the package is what uv
     installed plus the submission's top-level .py files (package), uploaded to the inbox at Settings.package_key
-  3 the Runtime <prefix>_<agent> (Settings.runtime_name) is created the first time and updated after that; the
-    build waits until the version the call returns is READY (deploy)
+  3 the Runtime <prefix>_<agent> (Settings.runtime_name) is created the first time and updated after that, from the
+    package at the object version the upload returned (the inbox is versioned), so a Runtime version names the
+    package this build wrote even when the key is written again; the build waits until the version the call returns
+    is READY (deploy)
   4 the Runtime ARN goes to SSM /<prefix>/agents/<agent>/runtime_arn
 
 Environment: AGENT, CODE_KEY, CODE_VERSION, ROLE_ARN per run; BUCKET, PREFIX, TOOL_GW_URL, MODEL_ID on the
@@ -99,14 +101,16 @@ def package(src: Path, site: Path, out: Path) -> int:
     return out.stat().st_size
 
 
-def runtime_config(env: dict, key: str) -> dict:
-    """The arguments that create and update the Runtime alike: the package at `key` in the inbox, started with
-    tracing on (ENTRY_POINT), the execution role Grant made, a public network, HTTP, and the hub's four environment
-    variables."""
+def runtime_config(env: dict, key: str, version_id: str) -> dict:
+    """The arguments that create and update the Runtime alike: the package at `key` in the inbox, at the object
+    version `version_id` (the one this build wrote: without it the service reads the latest version of the key),
+    started with tracing on (ENTRY_POINT), the execution role Grant made, a public network, HTTP, and the hub's four
+    environment variables."""
     s = _settings(env)
+    code = {"s3": {"bucket": env["BUCKET"], "prefix": key, "versionId": version_id}}
     return {
-        "agentRuntimeArtifact": {"codeConfiguration": {"code": {"s3": {"bucket": env["BUCKET"], "prefix": key}},
-                                                       "runtime": RUNTIME_VERSION, "entryPoint": list(ENTRY_POINT)}},
+        "agentRuntimeArtifact": {"codeConfiguration": {"code": code, "runtime": RUNTIME_VERSION,
+                                                       "entryPoint": list(ENTRY_POINT)}},
         "roleArn": env["ROLE_ARN"],
         "networkConfiguration": {"networkMode": "PUBLIC"},
         "protocolConfiguration": {"serverProtocol": "HTTP"},
@@ -148,13 +152,13 @@ def _version_status(c, rid: str, version: str) -> dict:
     return {**r, "status": status, "statusReason": r.get("failureReason")}
 
 
-def deploy(c, env: dict, key: str, wait: int = READY_WAIT) -> dict:
-    """Create the agent's Runtime from the package at `key`, or update it when one of its name exists (every page of
-    ListAgentRuntimes is read). Wait until the version made is READY: a status ending in FAILED raises RuntimeError
-    with the Runtime's failureReason, and no READY within `wait` seconds raises TimeoutError. Then write the Runtime
-    ARN to SSM. Returns runtimeArn, runtimeId, version, created and readySeconds."""
+def deploy(c, env: dict, key: str, version_id: str, wait: int = READY_WAIT) -> dict:
+    """Create the agent's Runtime from the package at `key`, object version `version_id`, or update it when one of
+    its name exists (every page of ListAgentRuntimes is read). Wait until the version made is READY: a status ending
+    in FAILED raises RuntimeError with the Runtime's failureReason, and no READY within `wait` seconds raises
+    TimeoutError. Then write the Runtime ARN to SSM. Returns runtimeArn, runtimeId, version, created and readySeconds."""
     s, agent = _settings(env), env["AGENT"]
-    name, config = s.runtime_name(agent), runtime_config(env, key)
+    name, config = s.runtime_name(agent), runtime_config(env, key, version_id)
     found = next((r for r in all_items(c.ctl.list_agent_runtimes, maxResults=100) if r["agentRuntimeName"] == name), None)
     if found:
         made = c.ctl.update_agent_runtime(agentRuntimeId=found["agentRuntimeId"], **config)
@@ -232,12 +236,12 @@ def main(env: dict | None = None, c=None) -> dict:
     size = package(src, site, work / "package.zip")
     key = s.package_key(agent, env["CODE_VERSION"])
     with open(work / "package.zip", "rb") as body:
-        _aws(lambda: c.s3.put_object(Bucket=env["BUCKET"], Key=key, Body=body), f"upload the package {key}")
-    say(f"package uploaded: s3://{env['BUCKET']}/{key} ({size} bytes)")
+        put = _aws(lambda: c.s3.put_object(Bucket=env["BUCKET"], Key=key, Body=body), f"upload the package {key}")
+    say(f"package uploaded: s3://{env['BUCKET']}/{key} version {put['VersionId']} ({size} bytes)")
 
-    # 3, 4 the Runtime, its READY version, and its ARN in SSM for the Entry step
+    # 3, 4 the Runtime from that object version, its READY version, and its ARN in SSM for the Entry step
     try:
-        out = deploy(c, env, key)
+        out = deploy(c, env, key, put["VersionId"])
     except ClientError as e:
         err = e.response["Error"]
         raise SystemExit(f"deploy failed: Runtime {s.runtime_name(agent)}: {err['Code']}: {err['Message']}") from None

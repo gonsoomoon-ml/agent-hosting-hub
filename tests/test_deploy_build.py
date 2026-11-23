@@ -15,6 +15,7 @@ ENV = {"AGENT": "quality_agent", "PREFIX": "hub", "AWS_REGION": "us-west-2", "RO
        "MODEL_ID": MODEL, "BUCKET": "hub-123456789012-us-west-2", "CODE_KEY": "submissions/quality_agent/agent.zip",
        "CODE_VERSION": "v1"}
 BUILDSPEC = Path(d.__file__).with_name("buildspec_deploy.yml")
+VID = "object-version-abcdefghij"          # the VersionId put_object returned for the package
 
 
 @pytest.fixture(autouse=True)
@@ -94,12 +95,13 @@ def test_the_package_is_the_same_for_the_same_files(tmp_path):
 # ------------------------------------------------------------------ the Runtime
 
 def test_the_runtime_gets_the_agents_role_and_the_hubs_four_variables():
-    cfg = runtime_config(ENV, "packages/quality_agent/v1.zip")
+    cfg = runtime_config(ENV, "packages/quality_agent/v1.zip", VID)
     assert cfg["roleArn"] == ENV["ROLE_ARN"] and sorted(cfg["environmentVariables"]) == ["AGENT_NAME", "HUB_REGION", "MODEL_ID", "TOOL_GATEWAY_URL"]
     assert cfg["agentRuntimeArtifact"]["codeConfiguration"]["entryPoint"] == ["opentelemetry-instrument", "main.py"]
     assert cfg == {
         "agentRuntimeArtifact": {"codeConfiguration": {
-            "code": {"s3": {"bucket": "hub-123456789012-us-west-2", "prefix": "packages/quality_agent/v1.zip"}},
+            "code": {"s3": {"bucket": "hub-123456789012-us-west-2", "prefix": "packages/quality_agent/v1.zip",
+                            "versionId": VID}},
             "runtime": "PYTHON_3_13", "entryPoint": ["opentelemetry-instrument", "main.py"]}},
         "roleArn": ROLE, "networkConfiguration": {"networkMode": "PUBLIC"}, "protocolConfiguration": {"serverProtocol": "HTTP"},
         "environmentVariables": {"HUB_REGION": "us-west-2", "TOOL_GATEWAY_URL": GW, "MODEL_ID": MODEL, "AGENT_NAME": "quality_agent"},
@@ -112,7 +114,7 @@ def test_the_runtime_is_started_with_tracing_on():
     # The AWS guide's direct code deployment for Python: entryPoint ["opentelemetry-instrument", "main.py"], with the
     # ADOT package (aws-opentelemetry-distro) in the code package. The service model takes at most two items.
     import botocore.session
-    entry = runtime_config(ENV, "packages/quality_agent/v1.zip")["agentRuntimeArtifact"]["codeConfiguration"]["entryPoint"]
+    entry = runtime_config(ENV, "packages/quality_agent/v1.zip", VID)["agentRuntimeArtifact"]["codeConfiguration"]["entryPoint"]
     assert entry == ["opentelemetry-instrument", "main.py"]
     model = botocore.session.get_session().get_service_model("bedrock-agentcore-control")
     shape = model.operation_model("CreateAgentRuntime").input_shape.members["agentRuntimeArtifact"]
@@ -127,45 +129,71 @@ def test_the_runtime_is_started_with_tracing_on():
 
 def test_a_first_deploy_creates_the_runtime_and_a_later_one_updates_it():
     c = FakeClients()
-    first = deploy(c, ENV, "packages/quality_agent/v1.zip"); second = deploy(c, ENV, "packages/quality_agent/v2.zip")
+    first = deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
+    second = deploy(c, ENV, "packages/quality_agent/v2.zip", "object-version-2-abcdefghij")
     assert (first["created"], second["created"]) == (True, False) and first["runtimeArn"] == second["runtimeArn"]
     assert c.parameters["/hub/agents/quality_agent/runtime_arn"] == first["runtimeArn"]
     assert (first["version"], second["version"]) == ("1", "2") and first["runtimeId"] == "hub_quality_agent-Ab12Cd34Ef"
     assert c.runtime_calls == ["create hub_quality_agent", "update hub_quality_agent-Ab12Cd34Ef"]
     code = c.runtimes["hub_quality_agent"]["config"]["agentRuntimeArtifact"]["codeConfiguration"]["code"]["s3"]
-    assert code["prefix"] == "packages/quality_agent/v2.zip"
+    assert (code["prefix"], code["versionId"]) == ("packages/quality_agent/v2.zip", "object-version-2-abcdefghij")
+
+def test_the_runtime_is_made_from_the_package_version_the_build_wrote(tmp_path, monkeypatch):
+    """main() names the object version put_object returned for the package, on create and on update. The same code
+    version built again writes the same key: S3 gives it a new version, and the new Runtime version names that one."""
+    import io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("main.py", "M = 1\n")
+        z.writestr("requirements.txt", "strands-agents==1.65.0\n")
+    c = FakeClients()
+    c.s3.get_object = lambda Bucket, Key, VersionId: {"Body": io.BytesIO(buf.getvalue())}
+
+    def build(n):
+        work = tmp_path / f"build{n}"
+        work.mkdir()
+        monkeypatch.setattr(d.tempfile, "mkdtemp", lambda prefix: str(work))
+        monkeypatch.setattr(d, "run", lambda cmd, cwd: (work / "site").mkdir())          # uv installs nothing
+        d.main(ENV, c)
+        return c.runtimes["hub_quality_agent"]["config"]["agentRuntimeArtifact"]["codeConfiguration"]["code"]["s3"]
+
+    key = "packages/quality_agent/v1.zip"
+    assert build(1) == {"bucket": ENV["BUCKET"], "prefix": key, "versionId": f"{key}-version-1"}
+    assert build(2) == {"bucket": ENV["BUCKET"], "prefix": key, "versionId": f"{key}-version-2"}
+    assert c.runtime_calls == ["create hub_quality_agent", "update hub_quality_agent-Ab12Cd34Ef"]
+    assert c.objects[key] == [f"{key}-version-1", f"{key}-version-2"]
 
 def test_a_runtime_of_another_name_is_not_updated():
     c = FakeClients()
-    c.ctl.create_agent_runtime(agentRuntimeName="hub_quality", **runtime_config({**ENV, "AGENT": "quality"}, "k"))
-    assert deploy(c, ENV, "packages/quality_agent/v1.zip")["created"] is True
+    c.ctl.create_agent_runtime(agentRuntimeName="hub_quality", **runtime_config({**ENV, "AGENT": "quality"}, "k", VID))
+    assert deploy(c, ENV, "packages/quality_agent/v1.zip", VID)["created"] is True
     assert sorted(c.runtimes) == ["hub_quality", "hub_quality_agent"]
 
 def test_a_runtime_on_a_later_page_is_found():
     c = FakeClients()
-    deploy(c, ENV, "packages/quality_agent/v1.zip")
+    deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     listed = c.ctl.list_agent_runtimes()["agentRuntimes"]
     pages = {None: {"agentRuntimes": [{**listed[0], "agentRuntimeName": f"other_{i}"} for i in range(100)], "nextToken": "p2"},
              "p2": {"agentRuntimes": listed}}
     c.ctl.list_agent_runtimes = lambda **kw: pages[kw.get("nextToken")]
-    assert deploy(c, ENV, "packages/quality_agent/v2.zip")["created"] is False
+    assert deploy(c, ENV, "packages/quality_agent/v2.zip", VID)["created"] is False
 
 def test_deploy_fails_with_the_reason_when_the_runtime_does_not_become_ready():
     c = FakeClients(runtime_status="CREATE_FAILED", runtime_failure="the code package could not be read")
     with pytest.raises(RuntimeError, match="Runtime hub_quality_agent CREATE_FAILED: the code package could not be read"):
-        deploy(c, ENV, "packages/quality_agent/v1.zip")
+        deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     assert "/hub/agents/quality_agent/runtime_arn" not in c.parameters
 
 def test_deploy_waits_until_the_new_version_is_ready(clock):
     c = FakeClients(runtime_ready_after=3)
-    out = deploy(c, ENV, "packages/quality_agent/v1.zip")
+    out = deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     assert out["version"] == "1" and c.runtime_gets == 4                 # three looks at CREATING, then READY
     assert out["readySeconds"] == 3 * d.READY_STEP == clock["t"] - 1000.0
 
 def test_a_runtime_still_not_ready_after_the_wait_stops_the_deploy():
     c = FakeClients(runtime_ready_after=float("inf"))
     with pytest.raises(TimeoutError, match="Runtime hub_quality_agent not .* within 30s"):
-        deploy(c, ENV, "packages/quality_agent/v1.zip", wait=30)
+        deploy(c, ENV, "packages/quality_agent/v1.zip", VID, wait=30)
     assert "/hub/agents/quality_agent/runtime_arn" not in c.parameters
 
 
@@ -176,7 +204,7 @@ def test_create_is_tried_again_while_the_new_execution_role_settles():
     c = FakeClients()
     c.runtime_create_errors = [_error("ValidationException", "Role validation failed for the execution role"),
                                _error("AccessDeniedException", "The service cannot assume the role")]
-    assert deploy(c, ENV, "packages/quality_agent/v1.zip")["created"] is True
+    assert deploy(c, ENV, "packages/quality_agent/v1.zip", VID)["created"] is True
     assert c.runtime_create_tries == 3
 
 def test_create_is_not_tried_again_when_this_steps_own_role_lacks_a_permission():
@@ -185,7 +213,7 @@ def test_create_is_not_tried_again_when_this_steps_own_role_lacks_a_permission()
            "bedrock-agentcore:CreateAgentRuntime on resource: arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/*")
     c.runtime_create_errors = [_error("AccessDeniedException", own)]
     with pytest.raises(ClientError, match="is not authorized to perform: bedrock-agentcore:CreateAgentRuntime"):
-        deploy(c, ENV, "packages/quality_agent/v1.zip")
+        deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     assert c.runtime_create_tries == 1
 
 def test_create_is_not_tried_again_when_this_steps_own_role_cannot_pass_the_execution_role():
@@ -194,19 +222,19 @@ def test_create_is_not_tried_again_when_this_steps_own_role_cannot_pass_the_exec
            "iam:PassRole on resource: arn:aws:iam::123456789012:role/hub-agent-quality_agent-role")
     c.runtime_create_errors = [_error("AccessDeniedException", own)]
     with pytest.raises(ClientError, match="is not authorized to perform: iam:PassRole"):
-        deploy(c, ENV, "packages/quality_agent/v1.zip")
+        deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     assert c.runtime_create_tries == 1
 
 def test_create_stops_after_eight_tries():
     c = FakeClients()
     c.runtime_create_errors = [_error("ValidationException", "Role validation failed")] * 9
     with pytest.raises(ClientError, match="Role validation failed"):
-        deploy(c, ENV, "packages/quality_agent/v1.zip")
+        deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     assert c.runtime_create_tries == 8
 
 def test_any_other_create_error_is_not_tried_again():
     c = FakeClients()
     c.runtime_create_errors = [_error("ServiceQuotaExceededException", "too many Runtimes")]
     with pytest.raises(ClientError, match="too many Runtimes"):
-        deploy(c, ENV, "packages/quality_agent/v1.zip")
+        deploy(c, ENV, "packages/quality_agent/v1.zip", VID)
     assert c.runtime_create_tries == 1

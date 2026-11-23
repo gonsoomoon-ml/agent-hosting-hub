@@ -86,7 +86,7 @@ def test_the_deploy_role_makes_runtimes_and_hands_them_agent_roles_and_grants_no
     assert '"iam:PassRole"' in doc and "iam:PassedToService" in doc and "${var.prefix}-agent-*-role" in doc
     assert sorted(actions(doc)) == sorted([
         "logs:CreateLogStream", "logs:PutLogEvents", "s3:GetObject", "s3:GetObjectVersion", "s3:GetObject",
-        "s3:PutObject", "s3:GetObject",
+        "s3:PutObject", "s3:GetObject", "s3:GetObjectVersion",
         "bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
         "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
         "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity",
@@ -117,8 +117,10 @@ def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list_an
     find = _statement(doc, "FindTheRuntime")                  # the only statement on "*": a list that reads names
     assert actions(find) == ["bedrock-agentcore:ListAgentRuntimes"] and re.search(r'resources\s*=\s*\["\*"\]', find)
     assert [s for s in statements(doc) if '["*"]' in s] == [find]
+    # the Runtime names its package by object version: a read of the package at a version is GetObjectVersion
     pkg = _statement(doc, "ThePackage")
-    assert sorted(actions(pkg)) == ["s3:GetObject", "s3:PutObject"] and "/packages/*" in pkg
+    assert sorted(actions(pkg)) == ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"]
+    assert _resources(pkg) == ["${aws_s3_bucket.inbox.arn}/packages/*"]
     passing = _statement(doc, "PassAgentRole")
     assert actions(passing) == ["iam:PassRole"]
     assert re.search(r'test\s*=\s*"StringEquals"', passing) and re.search(r'variable\s*=\s*"iam:PassedToService"', passing)
