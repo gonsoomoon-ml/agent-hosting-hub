@@ -20,11 +20,11 @@
 ## 입력 파일
 
 - `demo_scenes/inputs/change-ok.txt`: `release_review`에게 보내는 변경 설명. 규칙을 모두 지킨다(`make e2e`의 같은 문장은 2026-11-23의 실행에서 200과 `OK`를 받았다).
-- `demo_scenes/inputs/change-with-hidden-instruction.txt`: 같은 변경 설명에 주석 한 줄을 덧붙였다. 그 주석이 `make e2e-ops`가 `HIDDEN`으로 쓰는 문장(앞선 지시를 무시하라는 문장)이다.
+- `demo_scenes/inputs/change-with-hidden-instruction.txt`: 같은 변경 설명에 주석 한 줄을 덧붙였다. 그 주석이 `make e2e-ops`가 `HIDDEN`으로 쓰는 문장(앞선 지시를 무시하라는 문장)이다. 이 파일의 글을 그대로 보낸 것은 AWS에서 아직 해 보지 않았다(`make e2e-ops`는 그 문장만 보냈다). 변경 설명과 주석 안에 있어도 전사 정책이 그 문장을 잡는지는 모른다.
 
 ## 장면의 순서
 
-각 장면의 명령, 프롬프트, 장면이 필요로 하는 상태와 남기는 상태다. 허브가 올라와 있고(`make deploy`, `make seed`, `make preload`가 끝나 있다) 개발자 컨테이너나 사용자 셸에 각자의 자격 증명이 있다고 본다.
+각 장면의 명령(프롬프트는 명령에 적혀 있다), 장면이 필요로 하는 상태와 남기는 상태다. 허브가 올라와 있고(`make deploy`, `make seed`, `make preload`가 끝나 있다) 개발자 컨테이너나 사용자 셸에 각자의 자격 증명이 있다고 본다.
 
 | 장면 | 명령 | 필요한 상태 | 남기는 상태 |
 |---|---|---|---|
@@ -32,7 +32,7 @@
 | 호스팅된 에이전트를 부른다 | `demo_scenes/ask release_review --file demo_scenes/inputs/change-ok.txt` | `release_review`가 승인되어 호스팅 중이다 | 없다 |
 | 취약한 판을 고쳐 다시 신청한다 | `demo_scenes/publish quality_agent` | `quality_agent`의 취약한 판이 반려되어 있다 | 새 판의 심사가 돈다 |
 | 승인된 에이전트가 답한다 | `demo_scenes/ask quality_agent "What is the spec of part P-100?"` | `quality_agent`가 승인되어 있다 | 없다 |
-| 전사 정책이 숨은 지시를 막는다(기록 모드에서는 지나고, 적용 모드에서는 막는다) | `demo_scenes/ask release_review --file demo_scenes/inputs/change-with-hidden-instruction.txt`(기록 모드일 때와 적용 모드일 때), 같은 파일로 `docs_adk`도 | 전사 정책 `guard_prompt`가 해당 모드이다 | 없다 |
+| 전사 정책이 숨은 지시를 막는다(기록 모드에서는 지나고, 적용 모드에서는 막는다) | `demo_scenes/ask release_review --file demo_scenes/inputs/change-with-hidden-instruction.txt`(기록 모드일 때와 적용 모드일 때), 같은 파일로 `docs_adk`도 | 전사 정책 `guard_prompt`가 해당 모드이다 | 없다 이 파일의 글을 보낸 것은 AWS에서 아직 해 보지 않았다(`make e2e-ops`는 그 문장만 보냈다). `docs_adk`에는 변경 설명을 보낸 적이 없다. |
 | 커스텀 가드레일 전과 후 | 전: `demo_scenes/ask quality_agent "Summarise the schedule of Project Falcon for part P-100."`, 후: 같은 명령과 `demo_scenes/ask quality_agent "What was the result of inspection Q-1001, and what is the specification of the part it inspected?"` | 후에는 커스텀 가드레일이 붙어 있다 | 없다 |
 | 사고(도구를 되풀이해 부르는 판) | `demo_scenes/publish quality_agent v2-loop`, 심사가 끝난 뒤 `demo_scenes/ask quality_agent "What is the result of inspection Q-1002?" --timeout 60` | `quality_agent`의 한 판이 승인되어 있다 | 그 에이전트가 되풀이 호출을 계속한다. 도구 호출 경보가 울린다. `--timeout 60`은 AWS에서 해 보지 않았다(`make e2e-ops`는 20초에 포기했다) |
 | 이웃은 영향이 없다 | `demo_scenes/ask quality_agent "What is the spec of part P-100?"`, `demo_scenes/ask release_review --file demo_scenes/inputs/change-ok.txt`, `demo_scenes/ask docs_adk "What is our standard for versioning an API?"` | `quality_agent`를 멈춘 상태다 | 없다. `quality_agent`는 403, 나머지는 200이다 |
@@ -41,4 +41,4 @@
 
 카탈로그 검색은 `demo_scenes/search "inspection results and part specifications"`가 `make e2e-ops`의 검색어이고(2026-11-23에 다섯 record를 돌려주었다), `demo_scenes/search "part specification tool"`과 `demo_scenes/search "release rules review request"`가 `make e2e`의 검색어다. 이 명령으로 낸 결과는 AWS에서 해 보지 않았다.
 
-위 표에서 `P-100`의 규격을 묻는 문장은 이 장면에 맞게 고른 것이다. 같은 문장을 `quality_agent`에게 보내 200을 받은 것은 2026-11-23의 `make e2e-ops` 첫 확인이고, 이 명령으로 보낸 것은 아니다.
+위 표에서 `P-100`의 규격을 묻는 문장은 `make e2e-ops`가 첫 확인에서 쓰는 보통의 질문(`NORMAL`)이다. 그 문장을 `quality_agent`에게 보내 200을 받은 것은 2026-11-23의 실행이고, 이 명령으로 보낸 것은 아니다.

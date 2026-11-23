@@ -20,7 +20,6 @@ def test_the_scene_commands_are_executable_and_call_their_modules():
         assert text.startswith("#!/usr/bin/env bash")
         assert module in text, f"{name} does not name {module}"
         assert "hub_env.sh" in text and "uv run --quiet" in text
-        assert "git " not in text.replace("# ", "")                      # the repo root is found from the file's own place
     assert sorted(p.name for p in SCENES.iterdir() if p.is_file()) == ["README.md", "ask", "logs", "publish", "search"]
 
 
@@ -51,6 +50,18 @@ def test_publish_lists_the_variants_of_the_agent():
     assert "v1-vulnerable" in r.stderr + r.stdout and "v2-loop" in r.stderr + r.stdout
 
 
-def test_the_wrapper_prints_the_line_it_calls_within_100_columns_and_does_not_call_aws_for_a_refusal():
-    r = _run("release_review", "v1-vulnerable")                         # release_review has no variants
+def test_each_wrapper_run_from_another_folder_stops_at_bad_usage_before_any_call_and_prints_at_most_100_columns(tmp_path):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")} | {"AWS_EC2_METADATA_DISABLED": "true"}
+    for name in MODULES:                                # no arguments: usage, exit 2, nothing was asked of AWS
+        r = subprocess.run([str(SCENES / name)], capture_output=True, text=True, env=env, cwd=tmp_path, timeout=120)
+        out = r.stdout + r.stderr
+        assert r.returncode == 2 and "usage" in out and "Traceback" not in out, (name, out)
+        assert all(len(line) <= 100 for line in out.splitlines()[:1]), name
+    long = subprocess.run([str(SCENES / "ask"), "quality_agent"] + ["a very long prompt " * 20, "--timeout", "x"],
+                          capture_output=True, text=True, env=env, cwd=tmp_path, timeout=120)
+    assert long.returncode == 2 and len(long.stdout.splitlines()[0]) <= 100 and long.stdout.startswith("+ python -m ")
+
+
+def test_publish_refuses_an_agent_without_variants_given_a_variant():
+    r = _run("release_review", "v1-vulnerable")
     assert r.returncode == 2 and "no variants" in r.stdout + r.stderr

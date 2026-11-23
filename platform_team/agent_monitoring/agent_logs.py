@@ -31,10 +31,11 @@ class NoLogGroup(LookupError):
 
 def _log_groups(c, s: Settings, agent: str) -> list[str]:
     """The DEFAULT-endpoint log groups of the agent's Runtime (a harness agent's Runtime is harness_<prefix>_<agent>)."""
-    names = (s.runtime_name(agent), s.harness_runtime_name(agent))
-    own = [re.compile(re.escape(f"{RUNTIME_LOGS}{n}") + RUNTIME_ID_TAIL + f"-{QUALIFIER}") for n in names]
-    found = {g["logGroupName"] for n in names for page in c.logs.get_paginator("describe_log_groups").paginate(
-        logGroupNamePrefix=f"{RUNTIME_LOGS}{n}-") for g in page["logGroups"]}
+    harness = re.escape(f"{RUNTIME_LOGS}{s.harness_runtime_name(agent)}") + RUNTIME_ID_TAIL + f"-{QUALIFIER}"
+    own = [re.compile(re.escape(RUNTIME_LOGS) + s.runtime_id_pattern(agent) + f"-{QUALIFIER}"), re.compile(harness)]
+    found = {g["logGroupName"] for n in (s.runtime_name(agent), s.harness_runtime_name(agent))
+             for page in c.logs.get_paginator("describe_log_groups").paginate(logGroupNamePrefix=f"{RUNTIME_LOGS}{n}-")
+             for g in page["logGroups"]}
     return sorted(n for n in found if any(p.fullmatch(n) for p in own))
 
 
