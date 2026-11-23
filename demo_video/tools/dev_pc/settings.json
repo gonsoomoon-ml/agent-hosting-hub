@@ -9,6 +9,7 @@
   },
   "awsCredentialExport": "cat /run/dev-pc/bedrock.json",
   "permissions": {
+    "defaultMode": "default",
     "allow": [
       "mcp__hub-catalog__*",
       "Read(./**)",

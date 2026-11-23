@@ -32,7 +32,9 @@ def test_the_settings_hold_no_credential_and_allow_only_the_listed_tools():
     s = _settings()
     assert set(s) == {"env", "awsCredentialExport", "permissions", "enabledMcpjsonServers"}
     assert s["permissions"]["allow"] == ALLOWED
-    assert set(s["permissions"]) <= {"allow", "deny"} and "defaultMode" not in s["permissions"]
+    # Claude Code 2.1.330 starts in auto mode unless told otherwise (it said so at its first start in the container on
+    # 2026-11-23): the mode that asks before any tool the list does not allow is set here, and no other mode
+    assert set(s["permissions"]) == {"defaultMode", "allow", "deny"} and s["permissions"]["defaultMode"] == "default"
     assert s["permissions"].get("deny", []) == ["Read(//run/dev-pc/**)"]       # the credential files, never the tools'
     assert s["enabledMcpjsonServers"] == [SERVER]
     env = s["env"]
