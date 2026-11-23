@@ -8,7 +8,7 @@ variable "region" {
 }
 
 variable "prefix" {
-  description = "Every resource name starts with this: 2 to 10 lower-case letters or digits, starting with a letter"
+  description = "Every resource name starts with this: 2 to 10 lower-case letters or digits, starting with a letter, not harness"
   type        = string
   default     = "hub"
   # The same rule as PREFIX_PATTERN in shared_code/config.py: the policy engine name and a Runtime name take no "-",
@@ -16,6 +16,12 @@ variable "prefix" {
   validation {
     condition     = can(regex("^[a-z][a-z0-9]{1,9}$", var.prefix))
     error_message = "The prefix must be 2 to 10 lower-case letters or digits, starting with a letter (for example hub)."
+  }
+  # RESERVED_PREFIXES in shared_code/config.py: AgentCore names the Runtime of a harness harness_<harness name>, so with
+  # this prefix one agent's Runtime could have the name of another agent's harness Runtime.
+  validation {
+    condition     = !contains(["harness"], var.prefix)
+    error_message = "The prefix harness is not taken: AgentCore names the Runtime of a harness harness_<harness name>."
   }
 }
 

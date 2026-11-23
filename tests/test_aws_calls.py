@@ -358,10 +358,12 @@ def test_rollout_calls_match_the_service_models(aws):
                                                          "createdAt": NOW, "updatedAt": NOW}]},
                      {"gatewayIdentifier": GW, "maxResults": 100})
     ctl.add_response("list_policies", {"policies": []}, {"policyEngineId": ENGINE, "maxResults": 100})
-    _made_policy(ctl, "guard_prompt_quality_agent",
-                 {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", AGENT_GW_ARN)}}, mode="LOG_ONLY")
+    pol = _made_policy(ctl, "guard_prompt_quality_agent",
+                       {"policy": {"statement": review_steps.cedar.guard_prompt("QualityAgent", AGENT_GW_ARN)}}, mode="LOG_ONLY")
+    ctl.add_response("list_policies", {"policies": [{**pol, "enforcementMode": "LOG_ONLY"}]},      # the read-back
+                     {"policyEngineId": ENGINE, "maxResults": 100})
     out = policy_rollout.rollout(c, S, ROLLOUT_P, "guard_prompt", "log-only", say=lambda line: None)
-    assert out == {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {AGENT: "created"}}
+    assert out == {"policy": "guard_prompt", "mode": "LOG_ONLY", "agents": {AGENT: "created"}, "read": {AGENT: "LOG_ONLY"}}
 
 
 def test_remove_and_forget_calls_match_the_service_models(aws):
@@ -374,8 +376,10 @@ def test_remove_and_forget_calls_match_the_service_models(aws):
     ctl.add_response("delete_policy", {**pol, "status": "DELETING"}, {"policyEngineId": ENGINE, "policyId": pol["policyId"]})
     ctl.add_client_error("get_policy", "ResourceNotFoundException", http_status_code=404,
                          expected_params={"policyEngineId": ENGINE, "policyId": pol["policyId"]})
+    ctl.add_response("list_policies", {"policies": [_policy("entry_permit_quality_agent")]},         # the read-back
+                     {"policyEngineId": ENGINE, "maxResults": 100})
     assert policy_rollout.remove(c, S, ROLLOUT_P, "guard_prompt", say=lambda line: None) == {
-        "policy": "guard_prompt", "agents": {AGENT: "removed"}}
+        "policy": "guard_prompt", "agents": {AGENT: "removed"}, "read": {AGENT: None}}
     ssm.add_response("get_parameters_by_path", {"Parameters": [
         {"Name": "/hub/policies/guard_prompt", "Type": "String", "Value": "ACTIVE"}]}, {"Path": "/hub/policies"})
     ssm.add_response("delete_parameter", {}, {"Name": "/hub/policies/guard_prompt"})
@@ -483,7 +487,7 @@ def test_the_deploy_builds_calls_match_the_service_models(aws, monkeypatch, tmp_
     ctl = stubs["ctl"]
     ctl.add_response("list_agent_runtimes", {"agentRuntimes": []}, {"maxResults": 100})
     ctl.add_response("create_agent_runtime", _made("1", created=True),
-                     {"agentRuntimeName": RUNTIME, **deploy_build.runtime_config(DEPLOY_ENV, PACKAGE)})
+                     {"agentRuntimeName": RUNTIME, **deploy_build.runtime_config(DEPLOY_ENV, PACKAGE, "package-version-1")})
     _ready_and_written(ctl, stubs["ssm"], "1", "CREATING")
     out = deploy_build.main(DEPLOY_ENV, c)
     assert installed and out["created"] is True and out["runtimeArn"] == RUNTIME_ARN and out["version"] == "1"
@@ -497,10 +501,10 @@ def test_a_later_deploy_updates_the_runtime_and_its_calls_match_the_service_mode
     ctl = stubs["ctl"]
     ctl.add_response("list_agent_runtimes", {"agentRuntimes": [_listed_runtime(version="1")]}, {"maxResults": 100})
     ctl.add_response("update_agent_runtime", _made("2", created=False),
-                     {"agentRuntimeId": RUNTIME_ID, **deploy_build.runtime_config(DEPLOY_ENV, PACKAGE)})
+                     {"agentRuntimeId": RUNTIME_ID, **deploy_build.runtime_config(DEPLOY_ENV, PACKAGE, "package-version-2")})
     ctl.add_response("get_agent_runtime", _runtime("READY", "1"), {"agentRuntimeId": RUNTIME_ID})   # not the new version yet
     _ready_and_written(ctl, stubs["ssm"], "2", "UPDATING")
-    out = deploy_build.deploy(c, DEPLOY_ENV, PACKAGE)
+    out = deploy_build.deploy(c, DEPLOY_ENV, PACKAGE, "package-version-2")
     assert (out["created"], out["version"], out["runtimeId"]) == (False, "2", RUNTIME_ID)
 
 

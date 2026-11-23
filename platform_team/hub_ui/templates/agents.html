@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{# The bars of the alarm's last minutes: one SVG, 15 bars, the threshold as a dashed line. A bar above the threshold
+   has the class "over" (another color, a heavy outline and a mark before its number), so it reads without color. #}
+{% macro bars(alarm) %}
+{% set w, h, left, right, top, bottom = 900, 270, 56, 12, 28, 34 %}
+{% set values = alarm.series | map(attribute=1) | list %}
+{% set ymax = ([values | max, alarm.threshold or 0, 1] | max) * 1.15 %}
+{% set slot = (w - left - right) / values | length %}
+{% set plot = h - top - bottom %}
+{% set ty = top + plot - (alarm.threshold or 0) / ymax * plot %}
+<svg class="bars" viewBox="0 0 {{ w }} {{ h }}" role="img" aria-label="{{ t('alarm.chart', n=alarm_minutes, threshold=alarm.threshold) }}">
+  <line class="axis" x1="{{ left }}" y1="{{ top + plot }}" x2="{{ w - right }}" y2="{{ top + plot }}"/>
+  {% for label, value in alarm.series %}
+  {% set bh = value / ymax * plot %}
+  {% set x = left + loop.index0 * slot + slot * 0.15 %}
+  {% set over = alarm.threshold is not none and value > alarm.threshold %}
+  <rect class="bar{{ ' over' if over }}" x="{{ '%.1f' | format(x) }}" y="{{ '%.1f' | format(top + plot - bh) }}" width="{{ '%.1f' | format(slot * 0.7) }}" height="{{ '%.1f' | format(bh) }}" rx="3"/>
+  <text class="val{{ ' over' if over }}" x="{{ '%.1f' | format(x + slot * 0.35) }}" y="{{ '%.1f' | format(top + plot - bh - 6) }}" text-anchor="middle">{{ '▲ ' if over }}{{ value }}</text>
+  <text class="tick" x="{{ '%.1f' | format(x + slot * 0.35) }}" y="{{ h - 10 }}" text-anchor="middle">{{ label }}</text>
+  {% endfor %}
+  {% if alarm.threshold is not none %}
+  <line class="threshold" x1="{{ left }}" y1="{{ '%.1f' | format(ty) }}" x2="{{ w - right }}" y2="{{ '%.1f' | format(ty) }}"/>
+  <text class="thr-label" x="{{ left - 6 }}" y="{{ '%.1f' | format(ty + 5) }}" text-anchor="end">{{ alarm.threshold }}</text>
+  {% endif %}
+</svg>
+{% endmacro %}
+{% block content %}
+<h1>{{ t("agents.title") }}</h1>
+<p class="intro">{{ t("agents.intro") }} <span class="tech">{{ t("drawn_at") }} {{ ts(now) }}</span></p>
+
+<section id="panel-alarm" class="card p2">
+  <h2>{{ t("alarm.title") }} <span class="tech">{{ services.alarm }}</span></h2>
+  {% if view.alarm.ok %}
+  {% set a = view.alarm.value %}
+  {% if a %}
+  <div class="alarm">
+    <dl class="facts">
+      <dt>{{ t("col.state") }}</dt>
+      <dd><span class="pill big {{ pill(a.state) }}">{{ a.state }}</span> <span class="state-word">{{ t("alarm.state." ~ a.state) if t.has("alarm.state." ~ a.state) else "" }}</span></dd>
+      <dt>{{ t("alarm.threshold_label") }}</dt>
+      <dd><strong>{{ t("alarm.threshold", n=a.threshold) }}</strong> <span class="muted">{{ t("alarm.per_minute") }}</span></dd>
+      <dt>{{ t("alarm.tool") }}</dt>
+      <dd class="mono">{{ a.tool }} <span class="tech">{{ services.gateway }}</span></dd>
+      <dt>{{ t("alarm.name") }}</dt>
+      <dd class="mono">{{ a.name }}</dd>
+    </dl>
+    <div class="chart">
+      <p class="hint">{{ t("alarm.hint", n=alarm_minutes) }}</p>
+      {% if a.series_error %}{% with panel = {"error": a.series_error} %}{% include "_panel_error.html" %}{% endwith %}
+      {% else %}{{ bars(a) }}{% endif %}
+    </div>
+  </div>
+  {% else %}<p class="muted">{{ t("alarm.none") }}</p>{% endif %}
+  {% else %}{% with panel = view.alarm %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+
+<section id="panel-agents" class="card p2">
+  <h2>{{ t("agents.hosted") }} <span class="tech">{{ services.runtime }} · {{ services.catalog }} · {{ services.engine }} · {{ services.metrics }}</span></h2>
+  <p class="hint">{{ t("agents.hint", n=minutes) }}</p>
+  {% if view.agents.ok %}
+  {% if view.agents.usage_error %}{% with panel = {"error": view.agents.usage_error} %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+  {% if view.agents.value %}
+  <div class="table-wrap">
+  <table class="big agents">
+    <thead><tr><th>{{ t("agents.col.agent") }}</th>
+<th>{{ t("reviews.app.team") }}</th>
+<th>{{ t("reviews.app.framework") }}</th>
+<th>{{ t("agents.col.hosted") }}</th>
+      <th>{{ t("agents.col.catalog") }}</th>
+<th>{{ t("agents.col.stop") }}</th>
+      <th class="right">{{ t("agents.col.calls") }}</th>
+<th class="right">{{ t("agents.col.sessions") }}</th>
+<th class="right">{{ t("agents.col.errors") }}</th>
+      <th class="right">{{ t("agents.col.cpu") }}</th>
+<th class="right">{{ t("agents.col.memory") }}</th>
+<th></th></tr></thead>
+    <tbody>
+    {% for a in view.agents.value %}
+      <tr id="agent-{{ a.agent }}">
+        <td class="mono name">{{ a.agent }}{% if a.app_error %}<div class="err row-err" role="status"><strong>{{ t("agents.app_error") }}</strong> · <span class="mono">{{ a.app_error }}</span></div>{% endif %}</td>
+        <td>{{ a.team or "—" }}</td>
+<td>{{ a.framework or "—" }}</td>
+        <td><span class="tech">{{ a.hosted_as }}</span></td>
+        <td><span class="pill {{ pill(a.status) }}">{{ a.status or "—" }}</span></td>
+        <td>{% if a.stopped is none %}<span class="pill">—</span>{% elif a.stopped %}<span class="pill big bad">■ {{ t("agent.state.stopped") }}</span>{% else %}<span class="pill ok">● {{ t("agent.state.running") }}</span>{% endif %}
+          {% if a.stop_error %}<div class="err row-err" role="status"><strong>{{ t("agents.stop_error") }}</strong> · <span class="mono">{{ a.stop_error }}</span></div>{% endif %}</td>
+        {% if a.usage %}
+        <td class="right num">{{ a.usage.invocations }}</td>
+<td class="right num">{{ a.usage.sessions }}</td>
+<td class="right num">{{ a.usage.errors }}</td>
+        <td class="right num">{{ "%.4f" | format(a.usage.cpu_vcpu_hours) }}</td>
+<td class="right num">{{ "%.4f" | format(a.usage.memory_gb_hours) }}</td>
+        {% else %}<td class="right muted" colspan="5">—</td>{% endif %}
+        <td class="act">
+          {% if a.stopped %}
+          <form method="post" action="/agents/{{ a.agent }}/resume"><input type="hidden" name="token" value="{{ token }}"><button class="primary" type="submit"{% if view.busy %} disabled{% endif %} data-busy="{{ t('agent.resuming') }}">{{ t("agent.resume") }}</button></form>
+          {% elif a.can_stop is false %}<span class="muted why">{{ t("agent.no_entry") }}</span>
+          {% elif a.stopped is none or a.can_stop is none %}
+          {% else %}
+          <form method="post" action="/agents/{{ a.agent }}/stop"><input type="hidden" name="token" value="{{ token }}"><button class="danger" type="submit"{% if view.busy %} disabled{% endif %} data-busy="{{ t('agent.stopping') }}">{{ t("agent.stop") }}</button></form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">{{ t("agents.stop_hint") }}</p>
+  {% if view.busy %}<p class="hint">{{ t("agents.job_running") }}</p>{% endif %}
+  {% else %}<p class="muted">{{ t("agents.none") }}</p>{% endif %}
+  {% else %}{% with panel = view.agents %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+
+<section id="panel-tools" class="card p2">
+  <h2>{{ t("tools.title") }} <span class="tech">{{ services.gateway }} · {{ services.metrics }}</span></h2>
+  <p class="hint">{{ t("tools.hint", n=minutes) }}</p>
+  {% if view.tools.ok %}
+  <table class="big tools">
+    <thead><tr><th>{{ t("tools.col.tool") }}</th>
+<th class="right">{{ t("agents.col.calls") }}</th></tr></thead>
+    <tbody>{% for tool, calls in view.tools.value.items() %}<tr><td class="mono name">{{ tool }}</td>
+<td class="right num">{{ calls }}</td></tr>{% endfor %}</tbody>
+  </table>
+  {% else %}{% with panel = view.tools %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+{% endblock %}

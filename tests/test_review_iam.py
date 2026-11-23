@@ -86,7 +86,7 @@ def test_the_deploy_role_makes_runtimes_and_hands_them_agent_roles_and_grants_no
     assert '"iam:PassRole"' in doc and "iam:PassedToService" in doc and "${var.prefix}-agent-*-role" in doc
     assert sorted(actions(doc)) == sorted([
         "logs:CreateLogStream", "logs:PutLogEvents", "s3:GetObject", "s3:GetObjectVersion", "s3:GetObject",
-        "s3:PutObject", "s3:GetObject",
+        "s3:PutObject", "s3:GetObject", "s3:GetObjectVersion",
         "bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:UpdateAgentRuntime", "bedrock-agentcore:GetAgentRuntime",
         "bedrock-agentcore:CreateAgentRuntimeEndpoint", "bedrock-agentcore:GetAgentRuntimeEndpoint",
         "bedrock-agentcore:CreateWorkloadIdentity", "bedrock-agentcore:GetWorkloadIdentity",
@@ -117,8 +117,10 @@ def test_the_deploy_roles_resources_are_the_hubs_by_name_but_the_runtime_list_an
     find = _statement(doc, "FindTheRuntime")                  # the only statement on "*": a list that reads names
     assert actions(find) == ["bedrock-agentcore:ListAgentRuntimes"] and re.search(r'resources\s*=\s*\["\*"\]', find)
     assert [s for s in statements(doc) if '["*"]' in s] == [find]
+    # the Runtime names its package by object version: a read of the package at a version is GetObjectVersion
     pkg = _statement(doc, "ThePackage")
-    assert sorted(actions(pkg)) == ["s3:GetObject", "s3:PutObject"] and "/packages/*" in pkg
+    assert sorted(actions(pkg)) == ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"]
+    assert _resources(pkg) == ["${aws_s3_bucket.inbox.arn}/packages/*"]
     passing = _statement(doc, "PassAgentRole")
     assert actions(passing) == ["iam:PassRole"]
     assert re.search(r'test\s*=\s*"StringEquals"', passing) and re.search(r'variable\s*=\s*"iam:PassedToService"', passing)
@@ -162,6 +164,75 @@ def test_an_agent_role_gets_tokens_for_its_own_workload_only():
     assert fnmatchcase(identity % "hub_quality_agent", tokens["Resource"][1])
     assert not [n for n in ("hub_quality_agent_v2", "hub_release_review", "other_quality_agent")
                 if fnmatchcase(identity % n, tokens["Resource"][1])]
+
+
+LOG_GROUP = "arn:aws:logs:us-west-2:123456789012:log-group:/aws/bedrock-agentcore/runtimes/%s-Ab12Cd34Ef-DEFAULT"
+
+
+def _log_statements(perms) -> dict[str, list[str]]:
+    """The agent role's log statements: the first log action of each -> its resources."""
+    return {s["Action"][0]: s["Resource"] for s in perms["Statement"] if s["Action"][0].startswith("logs:")}
+
+
+def test_an_agent_role_writes_only_its_own_runtime_logs():
+    # A Runtime's log group is /aws/bedrock-agentcore/runtimes/<Runtime ID>-<endpoint>, and its ID is <Runtime name>-
+    # <10 characters>. An agent's Runtime is <prefix>_<agent> (a Runtime agent) or harness_<prefix>_<agent> (the one
+    # AgentCore runs a harness on). An agent name has no "-", so no other agent's group matches.
+    from fnmatch import fnmatchcase
+    from platform_team.hosting_review.review_steps import _execution_role
+    from tests.fakes import ENV
+    base = "arn:aws:logs:us-west-2:123456789012:log-group:/aws/bedrock-agentcore/runtimes"
+    for agent in ("quality_agent", "spec_assistant"):
+        _, perms = _execution_role(ENV, agent)
+        groups = [f"{base}/hub_{agent}-*", f"{base}/harness_hub_{agent}-*"]
+        assert _log_statements(perms) == {
+            "logs:DescribeLogStreams": groups, "logs:CreateLogStream": [g + ":log-stream:*" for g in groups],
+            "logs:DescribeLogGroups": ["arn:aws:logs:us-west-2:123456789012:log-group:*"]}   # it lists: no group
+        [read] = [s for s in perms["Statement"] if "logs:DescribeLogStreams" in s["Action"]]
+        [write] = [s for s in perms["Statement"] if "logs:PutLogEvents" in s["Action"]]
+        assert read["Action"] == ["logs:DescribeLogStreams", "logs:CreateLogGroup"]
+        assert write["Action"] == ["logs:CreateLogStream", "logs:PutLogEvents"]
+        stream = ":log-stream:runtime-logs-abcdefghij"
+        for group in (LOG_GROUP % f"hub_{agent}", LOG_GROUP % f"harness_hub_{agent}"):
+            assert [g for g in read["Resource"] if fnmatchcase(group, g)], group
+            assert [w for w in write["Resource"] if fnmatchcase(group + stream, w)], group
+        for name in (f"hub_{agent}_v2", "hub_release_review", "harness_hub_release_review", f"hub2_{agent}",
+                     f"other_{agent}"):
+            group = LOG_GROUP % name
+            assert not [r for r in read["Resource"] + write["Resource"]
+                        if fnmatchcase(group, r) or fnmatchcase(group + stream, r)], name
+
+
+def test_the_boundary_holds_the_runtime_logs_to_this_hubs_runtimes():
+    # <prefix>_* (Runtime agents) and harness_<prefix>_* (the Runtime of a harness), for the log groups and their
+    # streams. DescribeLogGroups has no resource type in the Service Authorization Reference: it keeps log-group:*.
+    boundary = document("agent_boundary")
+    runtimes = "arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes"
+    groups = [runtimes + "/${var.prefix}_*", runtimes + "/harness_${var.prefix}_*"]
+    found = _statement(boundary, "RuntimeLogGroups")
+    assert actions(found) == ["logs:DescribeLogStreams", "logs:CreateLogGroup"] and _resources(found) == groups
+    streams = _statement(boundary, "RuntimeLogs")
+    assert actions(streams) == ["logs:CreateLogStream", "logs:PutLogEvents"]
+    assert _resources(streams) == [g + ":log-stream:*" for g in groups]
+    listing = _statement(boundary, "FindLogGroups")
+    assert actions(listing) == ["logs:DescribeLogGroups"]
+    assert _resources(listing) == ["arn:aws:logs:${local.region}:${local.account}:log-group:*"]
+    assert [s for s in statements(boundary) if "logs:" in s] == [found, listing, streams]
+    # what an agent role may do on its log groups lies inside the boundary, for the prefix hub
+    from fnmatch import fnmatchcase
+    from platform_team.hosting_review.review_steps import _execution_role
+    from tests.fakes import ENV
+    hub = lambda r: (r.replace("${local.region}", "us-west-2").replace("${local.account}", "123456789012")
+                     .replace("${var.prefix}", "hub"))
+    for agent in ("quality_agent", "spec_assistant"):
+        _, perms = _execution_role(ENV, agent)
+        for first, resources in _log_statements(perms).items():
+            ceiling = [hub(r) for s in (found, listing, streams) if first in actions(s) for r in _resources(s)]
+            for r in resources:
+                sample = r.replace("*", "Ab12Cd34Ef-DEFAULT", 1).replace("*", "runtime-logs-abcdefghij")
+                assert [c for c in ceiling if fnmatchcase(sample, c)], (agent, first, r)
+    for name in ("hub2_quality_agent", "harness_hub2_quality_agent", "other_team_runtime"):
+        assert not [g for g in groups if fnmatchcase(LOG_GROUP % name, hub(g))], name
 
 
 def test_the_inbox_refuses_requests_without_tls():

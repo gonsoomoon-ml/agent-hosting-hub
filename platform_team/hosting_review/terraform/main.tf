@@ -12,10 +12,13 @@
 # and no other parameter); it cannot make a role, a policy, a gateway target or an approval. Grant makes roles of that
 # name only under the agent boundary; a role of that name made outside the hub would not be bounded, and making one
 # takes IAM rights that none of the review's roles hold. Its limits: one deploy role serves every review, so code
-# that runs in the deploy build could change another agent's Runtime, pass it another agent's role, or write another
-# agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves open that such
-# code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's cleanup would not find
-# (../README.md, the known limit). Every step has its own role (iam.tf). Read reads the catalog record
+# that runs in the deploy build could change another agent's Runtime, pass it another agent's role, overwrite another
+# agent's package under packages/ (a Runtime version names its package's object version, so the versions already
+# made keep the package they name: GetAgentRuntime showed the versionId in the code location of two Runtimes on
+# 2026-11-23, read by hand with the AWS CLI, its output not kept; overwriting another agent's key was not tried), or
+# write another agent's runtime_arn (Entry refuses an ARN that is not that agent's Runtime); and the policy leaves
+# open that such code creates a Runtime whose name does not start with <prefix>_ (not tried), which the hub's cleanup
+# would not find (../README.md, the known limit). Every step has its own role (iam.tf). Read reads the catalog record
 # (GetRegistryRecord) and, to find an earlier review of the same record, lists this state machine's executions and
 # reads their input (states:ListExecutions, states:DescribeExecution); it changes nothing. Approve reads one SSM
 # path, /<prefix>/policies (the modes of the company policies, GetParametersByPath), and makes those policies and the

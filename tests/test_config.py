@@ -1,5 +1,7 @@
 import re
 
+import pytest
+
 from platform_team.agent_catalog.application_form import NAME_LENGTH
 from platform_team.shared_code.config import Settings
 
@@ -51,3 +53,25 @@ def test_a_harness_is_named_like_a_runtime_and_the_service_model_takes_that_shap
     assert re.fullmatch(shape.metadata["pattern"], s.harness_name("spec_assistant"))
     # shorter than a Runtime's 48: the longest agent name with the longest prefix does not fit, so host_harness refuses it
     assert len(Settings(prefix="abcdefghij").harness_name("a" + "_b" * 15)) == 42 > HARNESS_NAME_MAX
+
+
+def test_the_prefix_harness_is_refused():
+    # AgentCore names the Runtime a harness runs on harness_<harness name>. With the prefix harness, agent harness_b's
+    # Runtime would be harness_harness_b, the name of agent b's harness Runtime, and the same would hold for their
+    # workload identities and log groups; with the prefix hub, agent x's harness Runtime harness_hub_x would be the
+    # Runtime of agent hub_x in a hub of the prefix harness.
+    from platform_team.shared_code import config
+    with pytest.raises(ValueError, match="prefix 'harness' is not taken: AgentCore names the Runtime of a harness"):
+        Settings(prefix="harness")
+    assert config.RESERVED_PREFIXES == ("harness",)
+    for prefix in ("harnes", "harnessx", "xharness"):            # only the one word
+        assert Settings(prefix=prefix).prefix == prefix
+
+
+def test_terraform_refuses_the_prefix_harness_too():
+    import pathlib
+    from platform_team.shared_code import config
+    text = (pathlib.Path(__file__).resolve().parents[1] / "platform_team" / "terraform" / "variables.tf").read_text()
+    block = re.search(r'variable\s+"prefix"\s*{(.*?)\n}\n', text, re.S).group(1)
+    reserved = re.findall(r'condition\s*=\s*!contains\(\[(.*?)\], var\.prefix\)', block)
+    assert [re.findall(r'"([^"]+)"', r) for r in reserved] == [list(config.RESERVED_PREFIXES)]

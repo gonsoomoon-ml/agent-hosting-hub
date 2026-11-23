@@ -231,7 +231,8 @@ def test_the_start_guard_fails_after_the_bound_and_the_cleanup_does_not_run(monk
     assert sum(clock.sleeps) == e2e.RUNNING_WAIT == 60 and set(clock.sleeps) == {e2e.RUNNING_STEP}
 
 
-@pytest.mark.parametrize("script", ["check_platform.py", "check_cleanup.py", "e2e_operations.py"])
+@pytest.mark.parametrize("script", ["check_platform.py", "check_cleanup.py", "e2e_operations.py",
+                                    "e2e_hub_ui.py"])
 def test_a_check_script_reads_the_env_file_before_it_builds_its_settings(script):
     """Each calls os.environ.update(env_file_updates(os.environ, REPO / ".env")) before Settings.from_env(), as e2e_hosting.py does."""
     text = (pathlib.Path(__file__).resolve().parents[1] / "e2e_checks" / script).read_text()
@@ -425,3 +426,190 @@ def test_a_scene_that_raises_fails_its_own_check_and_the_run_goes_on(monkeypatch
     assert out[0] == ("[FAIL] 6 the scene of check 6: stopped by AccessDeniedException: arn:aws:iam::<ACCOUNT>:role/x "
                       "is not authorized")
     assert out[-1] == "[INFO] the scene of check 7 stopped after its line: RuntimeError: later"
+
+
+# ------------------------------------------------------------------ e2e_hub_ui.py: what it reads on the screen's pages
+# Each reader runs on a page the screen renders (tests/fakes.py for AWS), so it reads the templates as they are.
+
+def test_the_screen_check_reads_the_page_token_from_the_meta_or_the_form():
+    from e2e_checks import e2e_hub_ui as ui
+    from tests.fakes import FakeClients
+    from tests.test_hub_ui_home import screen
+    assert ui.token_of('<head><meta name="hub-token" content="abc123"></head>') == "abc123"
+    assert ui.token_of('<form method="post"><input type="hidden" name="token" value="def456"></form>') == "def456"
+    with pytest.raises(ValueError):
+        ui.token_of("<p>no token here</p>")
+    web = screen(FakeClients(record_status=None))
+    page = web.get("/").text
+    assert ui.token_of(page) == web.app.state.hub.token                 # the token the screen checks on a press
+
+
+def test_the_screen_check_reads_the_home_counts_alarms_and_platform_parts():
+    from e2e_checks import e2e_hub_ui as ui
+    from tests.fakes import ACCOUNT, FakeClients
+    from tests.test_hub_ui_home import record, screen
+    c = FakeClients(record_status=None)
+    c.other_records = [record("release_review", "AGENT", "APPROVED"), record("quality_agent", "AGENT", "APPROVED"),
+                       record("docs_adk", "AGENT", "PENDING_APPROVAL"), record("parts-tools", "MCP", "APPROVED"),
+                       record("old_agent", "AGENT", "REJECTED")]
+    c.alarms = [{"AlarmName": "hub-tool-calls", "StateValue": "ALARM"},
+                {"AlarmName": "hub-guardrail-errors", "StateValue": "OK"}]
+    page = screen(c).get("/").text
+    assert ui.home_counts(page) == {"hosted": 2, "in_review": 1, "tools": 1}
+    assert ui.home_alarms(page) == {"hub-guardrail-errors": "OK", "hub-tool-calls": "ALARM"}
+    parts = ui.home_platform(page)
+    assert [(p["name"], p["state"]) for p in parts] == [
+        ("hub-agents", "READY"), ("hub-tools", "READY"), ("hub_pe", "ACTIVE"), ("hub-registry", "READY"),
+        ("hub-review", "ACTIVE"), ("hub-alerts", "확인된 구독 1")]
+    assert parts[0]["service"] == "Amazon Bedrock AgentCore Gateway"
+    assert ui.account_free(page, ACCOUNT) and not ui.account_free(page + ACCOUNT, ACCOUNT)
+    assert not ui.account_free(page, "")                                # no account known: not proven free
+
+
+def test_the_screen_check_reads_a_review_card_and_the_failed_scan_on_the_detail_page():
+    from datetime import timedelta
+    from e2e_checks import e2e_hub_ui as ui
+    from tests.test_hub_ui_reviews import (AT_SCAN, PASSED, T0, app_record, execution, failed_at_scan, history,
+                                           screen)
+    c = failed_at_scan()                                    # quality_agent (rec-1, PENDING_APPROVAL), failed at Scan
+    c.other_records = [app_record("release_review", "APPROVED")]
+    c.executions.append(execution("release", "rec-release_review", "SUCCEEDED", PASSED, "ExecutionSucceeded",
+                                  start=T0 - timedelta(hours=1)))
+    web = screen(c)
+    listing = web.get("/reviews").text
+    release = ui.review_card(listing, "release_review")
+    assert release["status"] == "APPROVED" and release["review"] == "SUCCEEDED" and release["error"] == ""
+    assert release["steps"] == [{"name": n, "state": "passed", "seconds": s} for n, s in (
+        ("Read", 1), ("Scan", 41), ("Grant", 15), ("Deploy", 257), ("Entry", 35), ("TestCall", 7), ("Approve", 15))]
+    # the history alone gives the same seconds (what check 3 compares the page with)
+    assert ui.step_seconds(history(PASSED, "ExecutionSucceeded")) == {r["name"]: r["seconds"] for r in release["steps"]}
+    quality = ui.review_card(listing, "quality_agent")
+    assert quality["status"] == "PENDING_APPROVAL" and quality["review"] == "FAILED"
+    assert [r["state"] for r in quality["steps"]] == ["passed", "failed"] + ["waiting"] * 5
+    assert "Scan" in quality["error"] and ui.review_card(listing, "docs_adk") is None
+
+    detail = ui.review_detail(web.get("/reviews/quality_agent").text)
+    assert detail["status"] == "PENDING_APPROVAL" and detail["review"] == "FAILED" and detail["can_reject"]
+    assert detail["steps"][1] == {"name": "Scan", "state": "failed", "seconds": 36}
+    assert "Scan" in detail["failed"] and "States.TaskFailed" in detail["failed"]
+    assert detail["findings"] == ["jinja2 2.11.2  PYSEC-2021-66       2.11.3", "jinja2 2.11.2  GHSA-h5c8-rqwp-cp95 3.1.3"]
+    assert detail["log"].startswith("/aws/codebuild/hub-review-scan ")
+    assert not ui.review_detail(web.get("/reviews/release_review").text)["can_reject"]     # APPROVED: no Reject form
+    # the events from the failed Scan's entry on, as check 4 printed them on 2026-11-23 (both runs): Scan's own six,
+    # its exit event included, then Notify's, FailStateEntered and ExecutionFailed; the fixture writes that shape
+    assert ui.after_state(history(AT_SCAN, "ExecutionFailed"), "Scan") == [
+        "TaskStateEntered", "TaskScheduled", "TaskStarted", "TaskSubmitted", "TaskFailed", "TaskStateExited",
+        "TaskStateEntered", "TaskScheduled", "TaskStarted", "TaskSucceeded", "TaskStateExited", "FailStateEntered",
+        "ExecutionFailed"]
+    assert ui.after_state([], "Scan") == []
+
+
+def test_the_screen_check_reads_the_policy_modes_the_report_and_the_guardrail():
+    from e2e_checks import e2e_hub_ui as ui
+    from tests.fakes import PLATFORM
+    from tests.test_hub_ui_policies import INTERCEPTOR, fleet, screen
+    c = fleet("LOG_ONLY")
+    c.statistics = {("LogOnlyMatches", "guard_prompt_quality_agent-id"): 3}       # by the policy's ID, as the fake keys it
+    page = screen(c).get("/policies").text
+    found = ui.policy_rows(page)
+    assert found["guard_prompt_quality_agent"] == {"status": "ACTIVE", "mode": "LOG_ONLY"}
+    assert "shared_tool_read" not in found and "shared_tool_read" in ui.policy_rows(page, "tool_gw")
+    assert ui.company_mode(page) == "LOG_ONLY"
+    assert ui.mode_buttons(page) == {"log-only": False, "active": True, "off": True}    # the mode it is in: not pressable
+    report = ui.report_rows(page)
+    assert report["quality_agent"]["mode"] == "기록 모드" and report["quality_agent"]["flips"] == 0
+    assert report["quality_agent"]["matches"] == 3                    # the number check 5 passes on
+    assert ui.guardrail_panel(page) == {"word": "떨어져 있음", "points": [], "press": "/guardrail/attach"}
+    c.gateways[PLATFORM.agent_gw["id"]]["interceptorConfigurations"] = [INTERCEPTOR]
+    assert ui.company_mode(screen(fleet(None)).get("/policies").text) is None             # off
+    attached = screen(c).get("/policies").text
+    assert ui.guardrail_panel(attached) == {"word": "붙어 있음", "points": ["REQUEST", "RESPONSE"],
+                                            "press": "/guardrail/detach"}
+
+
+def test_the_screen_check_reads_an_agents_stop_state_its_buttons_and_the_alarm():
+    from e2e_checks import e2e_hub_ui as ui
+    from tests.test_hub_ui_agents import fleet, screen
+    page = screen(fleet()).get("/agents").text            # release_review stopped, parts_harness a harness agent
+    release, quality, harness = (ui.agent_row(page, a) for a in ("release_review", "quality_agent", "parts_harness"))
+    assert release["stopped"] is True and release["presses"] == ["/agents/release_review/resume"]
+    assert quality["stopped"] is False and quality["presses"] == ["/agents/quality_agent/stop"]
+    assert "멈춤" in release["stop"] and "동작 중" in quality["stop"]
+    assert harness["presses"] == [] and ui.agent_row(page, "nobody") is None
+    assert len(quality["usage"]) == 5
+    alarm = ui.alarm_panel(page)
+    assert alarm["state"] == "ALARM" and "Parts___get_part_spec" in alarm["tool"] and len(alarm["bars"]) == 15
+
+
+def test_the_screen_check_reads_a_refused_press_and_the_job_of_a_page():
+    import threading
+    from e2e_checks import e2e_hub_ui as ui
+    from platform_team.hub_ui.texts import STRINGS
+    from tests.fakes import FakeClients
+    from tests.test_hub_ui_home import BASE, screen
+    web = screen(FakeClients(record_status=None))
+    hub, release = web.app.state.hub, threading.Event()
+    job = hub.jobs.start("rollout", "guard_prompt", lambda say: release.wait(5) and None)
+    page = web.get("/policies").text
+    assert ui.job_of(page) == (job.id, "running")
+    second = web.post("/policies/guard_prompt/mode", data={"token": ui.token_of(page), "mode": "log-only"},
+                      headers={"Origin": BASE, "Referer": f"{BASE}/policies"}, follow_redirects=False)
+    assert second.status_code == 303 and ui.query_of(second.headers["location"]) == {"err": "busy"}
+    assert ui.sentence(web.get(second.headers["location"]).text) == STRINGS["ko"]["err.busy"]
+    release.set()
+    job.wait(5)
+    assert ui.sentence(web.get("/").text) == "" and ui.job_of("<p>no job</p>") == ("", "")
+
+
+def test_line_0_of_the_screen_check_says_what_is_not_as_e2e_ops_leaves_it():
+    from e2e_checks import e2e_hub_ui as ui
+    four = ["docs_adk", "quality_agent", "release_review", "spec_assistant"]
+    left = {"hosted": four, "records": dict.fromkeys(four, "APPROVED"), "mode": None, "policies": [], "attached": False,
+            "stopped": []}
+    assert ui.start_refusal(left) == ""
+    said = ui.start_refusal({**left, "hosted": four[:3], "mode": "LOG_ONLY", "policies": ["guard_prompt_docs_adk"],
+                             "attached": True, "stopped": ["quality_agent"],
+                             "records": {**left["records"], "quality_agent": "PENDING_APPROVAL"}})
+    assert said.startswith("[FAIL] 0 ") and "make e2e-ops" in said
+    for part in ("not hosted: spec_assistant", "quality_agent PENDING_APPROVAL", "guard_prompt is on (LOG_ONLY",
+                 "guard_prompt_docs_adk", "the custom guardrail is attached", "stopped: quality_agent"):
+        assert part in said, part
+    # make e2e-ops refuses a hub whose quality_agent is not APPROVED: the record is put back first, then make e2e-ops
+    assert said.index("dev_team/agent_template/publish.sh dev_team/quality_agent") < said.index("run `make e2e-ops`")
+
+
+def test_line_0_names_the_command_that_puts_a_record_back_not_make_e2e_ops():
+    """What a check 4 that stopped halfway leaves (quality_agent REJECTED or PENDING_APPROVAL, nothing else) is told
+    with the one command that puts the record back, and the wait for its review; make e2e-ops would refuse that hub."""
+    from e2e_checks import e2e_hub_ui as ui
+    four = ["docs_adk", "quality_agent", "release_review", "spec_assistant"]
+    left = {"hosted": four, "records": dict.fromkeys(four, "APPROVED"), "mode": None, "policies": [], "attached": False,
+            "stopped": []}
+    for status in ("REJECTED", "PENDING_APPROVAL"):
+        said = ui.start_refusal({**left, "records": {**left["records"], "quality_agent": status}})
+        assert said.startswith("[FAIL] 0 ") and f"quality_agent {status}" in said
+        assert ("`dev_team/agent_template/publish.sh dev_team/quality_agent`, then wait until the hosting review page "
+                "or `make e2e-ui`'s line 0 reads it APPROVED") in said
+        assert "run `make e2e-ops`" not in said
+    said = ui.start_refusal({**left, "records": {**left["records"], "release_review": "REJECTED"}})
+    assert "publish.sh dev_team/release_review" in said and "run `make e2e-ops`" not in said
+    said = ui.start_refusal({**left, "records": {**left["records"], "docs_adk": "REJECTED"}})    # make preload's agent
+    assert "publish.sh" not in said and "run `make e2e-ops`" in said
+
+
+def test_the_end_of_the_screen_check_names_the_command_for_a_record_left_not_approved():
+    from e2e_checks import e2e_hub_ui as ui
+    assert ui.record_left("quality_agent", "APPROVED") == ""
+    for status in ("REJECTED", "PENDING_APPROVAL", "absent"):
+        said = ui.record_left("quality_agent", status)
+        assert said.startswith(f"{status}, not APPROVED: put it back with ")
+        assert said.endswith("`dev_team/agent_template/publish.sh dev_team/quality_agent`, then wait until the hosting "
+                             "review page or `make e2e-ui`'s line 0 reads it APPROVED")
+
+
+def test_check_5_needs_at_least_one_agent_to_read_the_mode():
+    from e2e_checks import e2e_hub_ui as ui
+    assert ui.read_as({"a": "LOG_ONLY"}, {"a": "LOG_ONLY"}, ["a"], "LOG_ONLY")
+    assert not ui.read_as({"a": "LOG_ONLY"}, {"a": "ACTIVE"}, ["a"], "LOG_ONLY")
+    assert not ui.read_as({"a": None}, {"a": None}, ["a"], "LOG_ONLY")
+    assert not ui.read_as({}, {}, [], "LOG_ONLY")                    # no agent: nothing was read, so it does not pass

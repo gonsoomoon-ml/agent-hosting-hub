@@ -96,6 +96,21 @@ def test_the_agent_gateway_invokes_one_lambda():
     [line] = [l for l in gateway_block("aws_iam_role_policy", "agents").splitlines() if "lambda:InvokeFunction" in l]
     assert re.search(r'Resource\s*=\s*\["\$\{local\.lambda\}:\$\{var\.prefix\}-guardrail"\]', line)
 
+def test_the_agent_gateway_invokes_this_hubs_runtimes_only():
+    # The review's Runtimes are <prefix>_<agent> (Settings.runtime_name): runtime/<prefix>_* holds them and no Runtime
+    # of a hub whose prefix starts with this one (hub2_...). A harness has no entry target, so its Runtime is not in.
+    from fnmatch import fnmatchcase
+    from platform_team.shared_code.config import Settings
+    [line] = [l for l in gateway_block("aws_iam_role_policy", "agents").splitlines() if "InvokeAgentRuntime" in l]
+    assert re.search(r'Action\s*=\s*\["bedrock-agentcore:InvokeAgentRuntime"\]', line)
+    [resource] = re.findall(r'Resource\s*=\s*\["([^"]+)"\]', line)
+    assert resource == "${local.agentcore}:runtime/${var.prefix}_*"
+    pattern = resource.replace("${local.agentcore}", "arn:aws:bedrock-agentcore:us-west-2:123456789012").replace("${var.prefix}", "hub")
+    runtime = "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/%s-Ab12Cd34Ef"
+    assert fnmatchcase(runtime % Settings().runtime_name("quality_agent"), pattern)
+    assert not [n for n in ("hub2_quality_agent", "hubquality", Settings().harness_runtime_name("spec_assistant"))
+                if fnmatchcase(runtime % n, pattern)]
+
 def test_a_gateway_role_authorizes_on_the_hubs_gateways_only():
     for name in GATEWAYS:
         policy = gateway_block("aws_iam_role_policy", name)

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="cover">
+  <h1>{{ t("not_deployed.title") }}</h1>
+  <p>{{ t("not_deployed.hint", path=ssm_path) }}</p>
+  <p class="tech">{{ t("not_deployed.where", prefix=prefix, region=region) }} · AWS Systems Manager Parameter Store · GetParametersByPath {{ ssm_path }}</p>
+</section>
+{% endblock %}

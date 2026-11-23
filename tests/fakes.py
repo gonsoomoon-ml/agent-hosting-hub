@@ -73,6 +73,8 @@ class _Client:
 
         def recorded(*args, **kw):
             self.o.calls.append((self.service, name))
+            if (self.service, name) in self.o.errors:
+                raise self.o.errors[(self.service, name)]
             return attr(*args, **kw)
         return recorded
 
@@ -92,7 +94,8 @@ class _Ctl(_Client):
 
 
     def list_policies(self, **kw):
-        return {"policies": [{"policyId": p["id"], "name": n, "status": "ACTIVE", "enforcementMode": p["mode"],
+        return {"policies": [{"policyId": p["id"], "name": n, "status": p.get("status", "ACTIVE"),
+                              "enforcementMode": p["mode"],
                               "definition": {p["kind"]: {"statement": p["statement"]}}}
                              for n, p in self.o.policies.items()]}
 
@@ -124,6 +127,15 @@ class _Ctl(_Client):
 
     def get_waiter(self, name):
         return types.SimpleNamespace(wait=lambda **kw: None)
+
+    def get_gateway(self, gatewayIdentifier):
+        """A gateway of `gateways` (by ID): its name, status and interceptors."""
+        if gatewayIdentifier not in self.o.gateways:
+            raise _client_error("ResourceNotFoundException", f"no gateway {gatewayIdentifier}", "GetGateway")
+        return {"gatewayId": gatewayIdentifier, **self.o.gateways[gatewayIdentifier]}
+
+    def get_policy_engine(self, policyEngineId):
+        return {"policyEngineId": policyEngineId, "name": "hub_pe", "status": "ACTIVE"}
 
     def list_gateway_targets(self, **kw):
         return {"items": [{"name": n, "targetId": t} for n, t in self.o.targets.items()]}
@@ -382,6 +394,19 @@ class _Logs(_Client):
             raise _client_error("ResourceNotFoundException", "The specified log group does not exist.", "DeleteLogGroup")
         self.o.log_groups.discard(logGroupName)
 
+    def get_log_events(self, logGroupName, logStreamName, limit=10000, startFromHead=False, **kw):
+        """The lines of log_events[(group, stream)] as log events: the last `limit` ones (the first ones with
+        startFromHead), oldest first. Each call's arguments go to log_reads. A stream not in log_events does not
+        exist."""
+        self.o.log_reads.append({"logGroupName": logGroupName, "logStreamName": logStreamName, "limit": limit,
+                                 "startFromHead": startFromHead, **kw})
+        if (logGroupName, logStreamName) not in self.o.log_events:
+            raise _client_error("ResourceNotFoundException", "The specified log stream does not exist.", "GetLogEvents")
+        lines = self.o.log_events[(logGroupName, logStreamName)]
+        lines = lines[:limit] if startFromHead else lines[-limit:]
+        return {"events": [{"timestamp": i, "message": m, "ingestionTime": i} for i, m in enumerate(lines)],
+                "nextForwardToken": "f/end", "nextBackwardToken": "b/end"}
+
 
 class _Data(_Client):
     """bedrock-agentcore, the data plane: StopRuntimeSession. Each session it stops is written to stopped_sessions as
@@ -443,13 +468,18 @@ class _Reg(_Client):
 
     def get_registry_record(self, registryId, recordId):
         """A record the code created, as it is; else the record quality_agent: its name is record_name, or else the
-        name its application gives (quality_agent by default)."""
+        name its application gives (quality_agent by default). A record ID in record_errors raises that error."""
+        if recordId in self.o.record_errors:
+            raise self.o.record_errors[recordId]
         if self._other(recordId) and "descriptors" in self._other(recordId):
             return dict(self._other(recordId))
         spec = self.o.record_spec
         name = self.o.record_name or (spec.get("name") if isinstance(spec, dict) else None) or "quality_agent"
         return {"name": name, "recordType": self.o.record_type, "status": self.o.record_status,
                 "descriptors": {"custom": {"data": json.dumps(spec)}}}
+
+    def get_registry(self, registryId):
+        return {"registryId": registryId, "name": "hub-registry", "status": "READY"}
 
     def update_registry_record_status(self, registryId, recordId, status, statusReason):
         if self._other(recordId):
@@ -462,28 +492,93 @@ class _Reg(_Client):
 class _Sfn(_Client):
     """Step Functions: `running` holds (execution name, record ID) for each review still RUNNING, in the order they
     started. list_executions gives them most recent first, as the service documents it, each with its startDate (one
-    second after the one before); an execution's input is the Registry's event for its record."""
+    second after the one before); an execution's input is the Registry's event for its record.
+    `executions` holds reviews a test gives in full: {"name", "record" (its record ID), "status", "startDate",
+    "stopDate" (when it ended), "events" (what GetExecutionHistory gives)}, and optionally "input_error" and
+    "history_error" (the exception DescribeExecution or GetExecutionHistory raises for that execution only).
+    list_executions gives them with the running ones, most recent first, at most maxResults; a running one's history
+    is empty."""
     service = "sfn"
 
 
+    def _arn(self, stateMachineArn, n):
+        return f"{stateMachineArn.replace(':stateMachine:', ':execution:', 1)}:{n}"
+
     def _execution(self, stateMachineArn, n, i):
-        return {"executionArn": f"{stateMachineArn.replace(':stateMachine:', ':execution:', 1)}:{n}",
+        return {"executionArn": self._arn(stateMachineArn, n),
                 "stateMachineArn": stateMachineArn, "name": n, "status": "RUNNING",
                 "startDate": STARTED + datetime.timedelta(seconds=i)}
 
-    def list_executions(self, stateMachineArn, statusFilter=None, **kw):
-        return {"executions": [self._execution(stateMachineArn, n, i) for i, (n, _) in enumerate(self.o.running)
-                               if statusFilter in (None, "RUNNING")][::-1]}
+    def _given(self, stateMachineArn, x):
+        return {"executionArn": self._arn(stateMachineArn, x["name"]), "stateMachineArn": stateMachineArn,
+                "name": x["name"], "status": x["status"], "startDate": x["startDate"],
+                **({"stopDate": x["stopDate"]} if x.get("stopDate") else {})}
+
+    def list_executions(self, stateMachineArn, statusFilter=None, maxResults=None, **kw):
+        found = [self._execution(stateMachineArn, n, i) for i, (n, _) in enumerate(self.o.running)]
+        found += [self._given(stateMachineArn, x) for x in self.o.executions]
+        found = sorted((e for e in found if statusFilter in (None, e["status"])), key=lambda e: e["startDate"],
+                       reverse=True)
+        return {"executions": found[:maxResults] if maxResults else found}
 
     def describe_execution(self, executionArn):
         machine, name = executionArn.replace(":execution:", ":stateMachine:", 1).rsplit(":", 1)
+        given = next((x for x in self.o.executions if x["name"] == name), None)
+        if given and given.get("input_error"):
+            raise given["input_error"]
+        if given:
+            return {**self._given(machine, given),
+                    "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": given["record"]}})}
         i = [n for n, _ in self.o.running].index(name)
         return {**self._execution(machine, name, i),
                 "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": self.o.running[i][1]}})}
 
+    def get_execution_history(self, executionArn, **kw):
+        given = next((x for x in self.o.executions if x["name"] == executionArn.rsplit(":", 1)[-1]), None)
+        if given and given.get("history_error"):
+            raise given["history_error"]
+        return {"events": list(given["events"]) if given else []}
+
+    def describe_state_machine(self, stateMachineArn):
+        return {"stateMachineArn": stateMachineArn, "name": stateMachineArn.rsplit(":", 1)[-1], "status": "ACTIVE"}
+
+
+class _Sns(_Client):
+    """The alert topic: one confirmed subscription."""
+    service = "sns"
+
+    def get_topic_attributes(self, TopicArn):
+        return {"Attributes": {"TopicArn": TopicArn, "SubscriptionsConfirmed": "1", "SubscriptionsPending": "0"}}
+
+
+class _Cw(_Client):
+    """CloudWatch alarms: alarms holds MetricAlarms entries (AlarmName, StateValue, ...)."""
+    service = "cw"
+
+    def describe_alarms(self, AlarmNamePrefix="", AlarmNames=None, **kw):
+        return {"MetricAlarms": [a for a in self.o.alarms if a["AlarmName"].startswith(AlarmNamePrefix)
+                                 and (AlarmNames is None or a["AlarmName"] in AlarmNames)]}
+
+    def get_metric_data(self, MetricDataQueries, **kw):
+        """Each query's points from `metric_data` ((metric name, the value of its Name dimension) -> [(time, value)])."""
+        out = []
+        self.o.metric_queries.extend(MetricDataQueries)
+        for q in MetricDataQueries:
+            metric = q["MetricStat"]["Metric"]
+            name = next((d["Value"] for d in metric["Dimensions"] if d["Name"] == "Name"), "")
+            points = self.o.metric_data.get((metric["MetricName"], name), [])
+            out.append({"Id": q["Id"], "Timestamps": [t for t, _ in points], "Values": [v for _, v in points]})
+        return {"MetricDataResults": out}
+
+    def get_metric_statistics(self, MetricName, Dimensions, **kw):
+        """One datapoint with the sum in `statistics` ((metric name, the value of its Policy dimension) -> sum)."""
+        policy = next((d["Value"] for d in Dimensions if d["Name"] == "Policy"), "")
+        found = self.o.statistics.get((MetricName, policy))
+        return {"Datapoints": [] if found is None else [{"Sum": found}]}
+
 
 class FakeClients:
-    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3, data).
+    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3, data, sns, cw).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     policy_mode: the enforcement mode of the existing_policies; parameters: the SSM values at the start; targets: the
@@ -494,11 +589,18 @@ class FakeClients:
     policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
     "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects, stopped_sessions
     ((Runtime ARN, session ID) of each StopRuntimeSession), harnesses, deleted_harnesses (harness IDs), harness_calls
-    (the arguments of each InvokeHarness). Tests may also fill log_groups, log_streams, parameters, objects,
-    other_records, runtime_create_errors, session_errors, running (the reviews still running), harnesses and
-    harness_stream (the events InvokeHarness answers)."""
+    (the arguments of each InvokeHarness), log_reads (the arguments of each GetLogEvents). Tests may also fill
+    log_groups, log_streams, log_events ((group, stream) -> its lines), parameters, objects,
+    other_records, runtime_create_errors, session_errors, running (the reviews still running), executions (reviews
+    given in full, with their history), record_errors (record ID -> the exception GetRegistryRecord raises for it),
+    harnesses,
+    harness_stream (the events InvokeHarness answers), gateways (ID -> name, status, interceptorConfigurations; the
+    two gateways of PLATFORM at the start), alarms (MetricAlarms entries), metric_data (GetMetricData's points by
+    (metric name, Name dimension)), statistics (GetMetricStatistics' sum by (metric name, Policy dimension)) and errors ((service, method) -> the
+    exception that call raises, after it is recorded)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
+    account = ACCOUNT   # as Clients.account reads it from STS
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, record_name=None,
@@ -526,11 +628,17 @@ class FakeClients:
         self.runtime_delete_keeps_status, self.runtime_create_errors, self.workload_identities = \
             runtime_delete_keeps_status, [], []
         self.role_boundaries, self.attached, self.instance_profiles = {}, {}, {}
-        self.running = list(running)
+        self.running, self.executions = list(running), []
         self.log_streams, self.stopped_sessions, self.session_errors = {}, [], {}
+        self.log_events, self.log_reads, self.record_errors = {}, [], {}
         self.harnesses, self.deleted_harnesses, self.harness_calls, self.harness_stream = {}, [], [], []
+        self.gateways = {PLATFORM.agent_gw["id"]: {"name": "hub-agents", "status": "READY", "interceptorConfigurations": []},
+                         PLATFORM.tool_gw["id"]: {"name": "hub-tools", "status": "READY"}}
+        self.alarms, self.errors, self.metric_data, self.statistics = [], {}, {}, {}
+        self.metric_queries = []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
+        self.sns, self.cw = _Sns(self), _Cw(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):

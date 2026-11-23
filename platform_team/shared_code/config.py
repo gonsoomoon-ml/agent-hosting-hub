@@ -10,6 +10,10 @@ DEFAULT_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # The prefix starts every name: the policy engine takes [A-Za-z][A-Za-z0-9_]*, a Runtime [a-zA-Z][a-zA-Z0-9_]*,
 # a gateway no "_", a bucket no upper case. platform_team/terraform/variables.tf checks the same rule.
 PREFIX_PATTERN = r"[a-z][a-z0-9]{1,9}"
+# AgentCore names the Runtime a harness runs on harness_<harness name> (harness_runtime_name). With the prefix harness,
+# agent harness_b's Runtime would carry the name of agent b's harness Runtime (harness_harness_b), and so would their
+# workload identities and log groups, which the agent roles reach by name. variables.tf refuses it too.
+RESERVED_PREFIXES = ("harness",)
 
 # .env (README, ".env"): only these three names are read from it, as NAME=value lines. Make, publish.sh, reject.sh,
 # rollout.sh, guardrail.sh, stop.sh, resume.sh, usage.sh and e2e_hosting.py follow the same rule; whoever reads .env sets
@@ -52,6 +56,10 @@ class Settings:
             raise ValueError(f"prefix {self.prefix!r} must be 2 to 10 lower-case letters or digits, starting with a "
                              "letter: it starts the names of the policy engine, the Runtimes, the gateways and the "
                              "bucket")
+        if self.prefix in RESERVED_PREFIXES:
+            raise ValueError(f"prefix {self.prefix!r} is not taken: AgentCore names the Runtime of a harness "
+                             "harness_<harness name>, so in a hub of this prefix one agent's Runtime could have the name "
+                             "of another agent's harness Runtime")
 
     @classmethod
     def from_env(cls) -> "Settings":

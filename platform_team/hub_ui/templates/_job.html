@@ -1,0 +1,14 @@
+{# The job panel: the running job, else the last one; the page script redraws its lines while it runs. #}
+{% if job %}
+<section id="panel-job" class="card job {{ job.state }}" data-job="{{ job.id }}" data-state="{{ job.state }}" aria-live="polite">
+  <div class="jobhead">
+    <strong>{{ t("job.title") }}</strong>
+    <span>{{ t("job.kind." ~ job.kind) if t.has("job.kind." ~ job.kind) else job.kind }}</span>
+    <span class="mono">{{ job.target }}</span>
+    <span class="pill {{ pill(job.state) }}">{{ t("job.state." ~ job.state) }}</span>
+    <span class="muted">{{ t("job.started") }} {{ ts(job.started) }}{% if job.ended %} · {{ t("job.ended") }} {{ ts(job.ended) }}{% endif %}</span>
+  </div>
+  {% if job.error %}<p class="err"><span class="mono">{{ job.error }}</span></p>{% endif %}
+  <pre class="lines">{{ job.lines | join("\n") if job.lines else t("job.no_lines") }}</pre>
+</section>
+{% endif %}
