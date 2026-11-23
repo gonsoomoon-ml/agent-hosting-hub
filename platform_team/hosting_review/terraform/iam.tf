@@ -180,19 +180,21 @@ data "aws_iam_policy_document" "grant" {
 # and cannot change or remove a boundary, so an agent role never holds more than this, whatever its inline policy says.
 data "aws_iam_policy_document" "agent_boundary" {
   statement {
-    sid       = "RuntimeLogGroups"
-    actions   = ["logs:DescribeLogStreams", "logs:CreateLogGroup"]
-    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/*"]
+    sid     = "RuntimeLogGroups" # the log groups of this hub's Runtimes: <prefix>_<agent>, and harness_<prefix>_<agent> that a harness runs on. Not run on AWS yet
+    actions = ["logs:DescribeLogStreams", "logs:CreateLogGroup"]
+    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/${var.prefix}_*",
+    "arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/harness_${var.prefix}_*"]
   }
   statement {
-    sid       = "FindLogGroups"
+    sid       = "FindLogGroups" # lists the account's log groups: the Service Authorization Reference (read on 2026-11-23) gives DescribeLogGroups no resource type, so a log group cannot narrow it; it keeps the resource of the AWS example of a Runtime execution role
     actions   = ["logs:DescribeLogGroups"]
     resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:*"]
   }
   statement {
-    sid       = "RuntimeLogs"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*"]
+    sid     = "RuntimeLogs" # the streams of those log groups. Not run on AWS yet
+    actions = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/${var.prefix}_*:log-stream:*",
+    "arn:aws:logs:${local.region}:${local.account}:log-group:/aws/bedrock-agentcore/runtimes/harness_${var.prefix}_*:log-stream:*"]
   }
   statement {
     sid       = "Traces" # the agent's spans (the AWS example of a Runtime execution role). The Service Authorization Reference gives these actions no resource type, so only "*" matches them

@@ -154,22 +154,29 @@ def _model_resources(env: dict) -> list[str]:
 def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
     """Trust policy and permissions of an agent's execution role. The role is created under the permissions
     boundary AGENT_BOUNDARY (hosting_review/terraform/iam.tf), which allows no more than these permissions.
-    It may call the hub's model (MODEL_ID) and no other, and get tokens for the workload identity of its own Runtime
-    only: AgentCore names that identity after the Runtime's ID, <Runtime name>-<10 characters>, so the resource is
-    <Runtime name>-* (the shape of the AWS example of a Runtime execution role). It may send traces to X-Ray and
+    It may write the logs of its own Runtime only (<Runtime name>-*, for a Runtime agent and for the Runtime of a
+    harness; listing the log groups keeps log-group:*), call the hub's model (MODEL_ID) and no other, and get tokens
+    for the workload identity of its own Runtime only: AgentCore names that identity after the Runtime's ID,
+    <Runtime name>-<10 characters>, so the resource is <Runtime name>-* (the shape of the AWS example of a Runtime
+    execution role). It may send traces to X-Ray and
     put metrics into the CloudWatch namespace bedrock-agentcore only (any metric there), as that example does."""
-    region, account = env["HUB_REGION"], env["ACCOUNT"]
+    region, account, s = env["HUB_REGION"], env["ACCOUNT"], _settings(env)
     trust = {"Version": "2012-10-17", "Statement": [{
         "Effect": "Allow", "Principal": {"Service": "bedrock-agentcore.amazonaws.com"}, "Action": "sts:AssumeRole",
         "Condition": {"StringEquals": {"aws:SourceAccount": account}}}]}
     logs = f"arn:aws:logs:{region}:{account}:log-group"
+    # The log groups of the agent's own Runtime: <Runtime ID>-<endpoint>, the ID being <Runtime name>-<10 characters>,
+    # for a Runtime agent (<prefix>_<agent>) and for the Runtime AgentCore runs a harness on (harness_<prefix>_<agent>).
+    own = [f"{logs}:/aws/bedrock-agentcore/runtimes/{name}-*" for name in (s.runtime_name(agent),
+                                                                         s.harness_runtime_name(agent))]
     wid = f"arn:aws:bedrock-agentcore:{region}:{account}:workload-identity-directory/default"
     perms = {"Version": "2012-10-17", "Statement": [
-        {"Effect": "Allow", "Action": ["logs:DescribeLogStreams", "logs:CreateLogGroup"],
-         "Resource": [logs + ":/aws/bedrock-agentcore/runtimes/*"]},
+        {"Effect": "Allow", "Action": ["logs:DescribeLogStreams", "logs:CreateLogGroup"], "Resource": own},
+        # DescribeLogGroups lists the account's log groups: the Service Authorization Reference gives it no resource
+        # type, so a log group cannot narrow it. It keeps the AWS example's resource.
         {"Effect": "Allow", "Action": ["logs:DescribeLogGroups"], "Resource": [logs + ":*"]},
         {"Effect": "Allow", "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
-         "Resource": [logs + ":/aws/bedrock-agentcore/runtimes/*:log-stream:*"]},
+         "Resource": [group + ":log-stream:*" for group in own]},
         # Traces, and metrics into the namespace bedrock-agentcore only, copied from the AWS example of a Runtime
         # execution role ("IAM Permissions for AgentCore Runtime", read on 2026-11-22). The Service Authorization
         # Reference gives the four X-Ray actions no resource type, so only "*" matches them; a condition key was not
@@ -187,7 +194,7 @@ def _execution_role(env: dict, agent: str) -> tuple[dict, dict]:
         {"Effect": "Allow", "Action": ["bedrock-agentcore:GetWorkloadAccessToken",
                                        "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
                                        "bedrock-agentcore:GetWorkloadAccessTokenForUserId"],
-         "Resource": [wid, f"{wid}/workload-identity/{_settings(env).runtime_name(agent)}-*"]},
+         "Resource": [wid, f"{wid}/workload-identity/{s.runtime_name(agent)}-*"]},
     ]}
     return trust, perms
 
