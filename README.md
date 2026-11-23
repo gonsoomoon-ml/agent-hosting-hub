@@ -8,6 +8,40 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ## 무엇이 들어 있나
 
+폴더는 쓰는 사람에 따라 나뉜다. 아래는 두 번째 단계까지의 구조다. 그 밑의 표는 폴더마다 무엇이 들어 있는지 적고 각 README로 이어진다.
+
+```text
+agent-hosting-hub/
+├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy 등(아래 "일곱 명령")
+├── .env.example          # 허브의 세 값: 리전, 접두어, 모델
+│
+├── platform_team/        # 플랫폼팀: 허브의 틀과 운영 명령. 기능 하나가 폴더 하나다
+│   ├── terraform/        #   루트 모듈. 기능 폴더의 terraform/을 묶어 한 번에 올린다
+│   ├── shared_code/      #   여러 기능이 같이 쓰는 코드(설정, AWS 호출, 코드 묶음)
+│   ├── agent_catalog/    #   카탈로그(AWS Agent Registry): 신청, 검색, 공유 도구 등록
+│   ├── hosting_review/   #   호스팅 심사(Step Functions, Lambda, CodeBuild)와 반려
+│   ├── agent_gateway/    #   에이전트 게이트웨이와 에이전트를 부르는 명령
+│   ├── tool_gateway/     #   도구 게이트웨이
+│   ├── sample_tools/     #   샘플 사내 도구(합성 데이터)
+│   ├── company_policy/   #   전사 정책: Cedar 템플릿, 정책 엔진, rollout.sh
+│   ├── custom_guardrail/ #   커스텀 가드레일: interceptor Lambda, guardrail.sh
+│   ├── agent_monitoring/ #   알림, 도구 호출 알람, 사용량 보고(usage.sh), 로그 읽기
+│   ├── agent_stop/       #   에이전트 하나 멈추기와 재개(stop.sh, resume.sh)
+│   ├── dev_access/       #   개발팀 역할
+│   └── hub_ui/           #   허브 화면(샘플, 이 PC에서만)
+│
+├── dev_team/             # 개발팀: 템플릿과 예시 에이전트
+│   ├── agent_template/   #   표준 템플릿과 올리는 명령(publish.sh)
+│   ├── release_review/   #   예시 에이전트(LangGraph)
+│   ├── quality_agent/    #   예시 에이전트(Strands). variants/에 데모를 위한 버전 둘
+│   └── preloaded_agents/ #   처음부터 올라와 있는 에이전트 둘(docs_adk, spec_assistant)
+│
+├── e2e_checks/           # 실제 AWS에서 돌리는 확인 스크립트. spikes/는 가정을 확인한 기록
+├── tests/                # 단위 시험. AWS를 부르지 않는다
+├── demo_scenes/          # 시연 영상의 터미널에서 치는 명령 넷(ask, publish, search, logs)
+└── demo_video/           # 시연 영상을 만드는 것: 스토리보드, 녹화 스크립트, 개발자 PC
+```
+
 | 폴더 | 누가 쓰나 | 내용 |
 |---|---|---|
 | `platform_team/` | 플랫폼팀 | 허브의 틀과 운영 명령. 기능마다 폴더 하나이고, AWS에 틀을 두는 기능은 그 안에 Terraform 모듈이 있다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md), [커스텀 가드레일](platform_team/custom_guardrail/README.md), [에이전트 멈추기와 재개](platform_team/agent_stop/README.md)(Terraform 없음), [허브 화면](platform_team/hub_ui/README.md)(샘플, 이 PC에서만, Terraform 없음) |
