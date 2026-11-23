@@ -41,7 +41,7 @@ make ui                                   # http://127.0.0.1:8300 , Ctrl+C로 �
 | `panel-applications`(`/reviews`) | 신청마다 이름, 레코드 상태, 팀, 프레임워크, 신청한 도구, 설명, 가장 최근 심사의 상태와 일곱 단계의 띠, 실패했으면 그 단계와 오류 | AWS Agent Registry `ListRegistryRecords`, 레코드마다 `GetRegistryRecord`(신청서는 `descriptors.custom.data`에 있고 목록에는 없다), AWS Step Functions `ListExecutions`(새로운 것부터 50개), `DescribeExecution`(입력에 든 레코드 ID), `GetExecutionHistory` |
 | `panel-application`(`/reviews/<에이전트>`) | 레코드 상태, 팀, 프레임워크, 신청한 도구, 레코드 ID, 설명 | 위와 같은 읽기 |
 | `panel-steps` | 실행의 이름, 상태, 시작 시각, 걸린 시간, 일곱 단계의 띠, 실패한 단계의 오류, 단계마다 하는 일과 돌리는 AWS 서비스와 상태와 걸린 시간의 표, Step Functions 콘솔로 가는 링크 | `GetExecutionHistory` |
-| `panel-findings` | Scan에서 실패한 심사만: 스캔 build 로그의 마지막 200줄 가운데 알려진 취약점이 있는 패키지의 줄(pip-audit 표의 이름, 버전, 권고 ID, 고친 버전)과 `submission refused:` 줄, 20줄까지 | 실패의 원인(build 기록)에 적힌 로그 그룹과 stream, Amazon CloudWatch Logs `GetLogEvents` |
+| `panel-findings` | Scan에서 실패한 심사만: 스캔 build 로그의 마지막 200줄 가운데 알려진 취약점이 있는 패키지의 줄(pip-audit 표의 이름, 버전, 권고 ID, 고친 버전)과 `submission refused:` 줄, 같은 줄은 처음 나온 자리에 한 번만, 20줄까지 | 실패의 원인(build 기록)에 적힌 로그 그룹과 stream, Amazon CloudWatch Logs `GetLogEvents` |
 | `panel-reject` | 반려 사유 칸과 반려 버튼 | 이 앱(아래 "반려") |
 
 단계의 상태는 실행 기록에서 정한다(`reviews.steps_of`). 단계의 state에 들어간 사건(`TaskStateEntered`)과 나온 사건(`TaskStateExited`) 사이가 그 단계의 시간이고, 나왔으면 통과다. 단계의 Catch가 심사를 `Notify`로 보냈으면 그 단계는 실패이고, 오류는 그 단계의 마지막 실패 사건(`TaskFailed` 등)의 error와 cause를 한 줄 300자로 줄인 것이다. CodeBuild 단계의 cause는 build 기록이라서 build ID, 상태, 실패한 phase와 그 메시지로 줄이고, Lambda 단계의 cause는 함수의 오류 메시지로 줄인다. Read 뒤에 `Skipped`로 갔으면 나머지 여섯 단계는 건너뜀이고, 아직 닿지 않은 단계는 대기다. 진행 중인 단계의 시간은 들어간 때부터 센다. 실행이 끝났는데 나오지 않은 단계(중단, 시간 초과)는 실패로 보이고, 그 단계에 실패 사건이 없으면 실행이 끝난 사건의 error와 cause가 오류다. 모르는 사건과 이 상태 머신의 단계가 아닌 state는 상태를 바꾸지 않는다.

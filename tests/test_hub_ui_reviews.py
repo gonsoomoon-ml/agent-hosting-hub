@@ -236,6 +236,26 @@ def test_scan_findings_keep_the_lines_that_name_a_vulnerable_package():
     assert reviews.scan_findings(SCAN_LOG[:9] + many) == [line.rstrip() for line in many[:20]]     # at most 20
 
 
+# pip-audit's table in a real scan log (the run of 2026-11-23): 10 rows for 5 advisories, each row twice
+REPEATED = ["Found 10 known vulnerabilities in 1 package", "Name   Version ID              Fix Versions",
+            "------ ------- --------------- ------------",
+            *[f"jinja2 2.11.2  {advisory} {fix}" for advisory, fix in (
+                ("PYSEC-2021-66  ", "2.11.3"), ("PYSEC-2021-66  ", "2.11.3"), ("PYSEC-2026-1473", "3.1.3"),
+                ("PYSEC-2026-1474", "3.1.4"), ("PYSEC-2026-1475", "3.1.5"), ("PYSEC-2026-1471", "3.1.6"),
+                ("PYSEC-2026-1473", "3.1.3"), ("PYSEC-2026-1471", "3.1.6"), ("PYSEC-2026-1474", "3.1.4"),
+                ("PYSEC-2026-1475", "3.1.5"))]]
+
+
+def test_scan_findings_show_a_row_pip_audit_repeats_once():
+    """The page lists each line once, in the order of its first appearance."""
+    assert reviews.scan_findings(REPEATED) == [
+        "jinja2 2.11.2  PYSEC-2021-66   2.11.3", "jinja2 2.11.2  PYSEC-2026-1473 3.1.3",
+        "jinja2 2.11.2  PYSEC-2026-1474 3.1.4", "jinja2 2.11.2  PYSEC-2026-1475 3.1.5",
+        "jinja2 2.11.2  PYSEC-2026-1471 3.1.6"]
+    refused = "submission refused: missing: main.py"
+    assert reviews.scan_findings([refused, refused + "  "]) == [refused]          # the same line with trailing blanks
+
+
 def test_scan_findings_keep_the_submission_checks_refusal():
     refusals = ["submission refused: missing: main.py",
                 "submission refused: requirements.txt: direct references are not allowed (name a package on the "

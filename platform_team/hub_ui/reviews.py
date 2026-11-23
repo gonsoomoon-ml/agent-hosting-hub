@@ -159,9 +159,10 @@ def scan_log(events: list[dict]) -> tuple[str, str] | None:
 
 def scan_findings(lines: list[str]) -> list[str]:
     """The lines of a Scan build's log that say why it failed, at most MAX_FINDINGS: the rows of pip-audit's table
-    (a package, its version, an advisory ID, the fix versions) and the lines of submission_check's refusal."""
+    (a package, its version, an advisory ID, the fix versions) and the lines of submission_check's refusal. Each line
+    once, in the order it first came: pip-audit 2.10.1 printed every row of its table twice in the run of 2026-11-23."""
     found = [line.rstrip() for line in lines if _ADVISORY.match(line) or line.lstrip().startswith(_REFUSED)]
-    return found[:MAX_FINDINGS]
+    return list(dict.fromkeys(found))[:MAX_FINDINGS]
 
 
 # ------------------------------------------------------------------ the reads
