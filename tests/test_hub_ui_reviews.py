@@ -42,9 +42,11 @@ ENDS = {"ExecutionSucceeded": {"executionSucceededEventDetails": {"output": "{}"
 
 def history(states, end=None, start=T0, end_at=None) -> list[dict]:
     """GetExecutionHistory's events (boto3's shape) for states given as (state, entered_at, exited_at | None,
-    failed | None), the times in seconds after `start`. A failed Task state has TaskFailed with `failed` as its cause
-    (or, for failed = (event type, error, cause), that event) and no exit event; `end` adds the execution's last event
-    (a key of ENDS), at `end_at` seconds or with the last event's time."""
+    failed | None), the times in seconds after `start`. A Task state that runs a build (.sync) has TaskSubmitted after
+    TaskStarted. A failed Task state has TaskFailed with `failed` as its cause (or, for failed = (event type, error,
+    cause), that event), then its exit event: what AWS wrote for the Scan that failed into Notify on 2026-11-23
+    (TaskStateEntered, TaskScheduled, TaskStarted, TaskSubmitted, TaskFailed, TaskStateExited). `end` adds the
+    execution's last event (a key of ENDS), at `end_at` seconds or with the last event's time."""
     events: list[dict] = []
 
     def add(kind, at, **details):
@@ -61,13 +63,14 @@ def history(states, end=None, start=T0, end_at=None) -> list[dict]:
             task = {"resourceType": resource_type, "resource": resource}
             add("TaskScheduled", entered, taskScheduledEventDetails={**task, "region": "us-west-2", "parameters": "{}"})
             add("TaskStarted", entered, taskStartedEventDetails=task)
+            if resource.endswith(".sync"):
+                add("TaskSubmitted", entered, taskSubmittedEventDetails={**task, "output": "{}"})
             if failed is not None:
                 kind_failed, error, cause = failed if isinstance(failed, tuple) else ("TaskFailed", "States.TaskFailed",
                                                                                        failed)
                 add(kind_failed, exited, **{f"{kind_failed[0].lower()}{kind_failed[1:]}EventDetails": {
                     **task, "error": error, "cause": cause}})
-                continue
-            if exited is not None:
+            elif exited is not None:
                 add("TaskSucceeded", exited, taskSucceededEventDetails={**task, "output": "{}"})
         if exited is not None:
             add(f"{kind}StateExited", exited, stateExitedEventDetails={"name": state, "output": "{}"})
@@ -166,14 +169,6 @@ def test_steps_of_a_review_that_failed_at_scan():
     assert reviews.scan_log(history(AT_SCAN, "ExecutionFailed")) == (LOG_GROUP, LOG_STREAM)
     assert reviews.scan_log(history(PASSED, "ExecutionSucceeded")) is None
 
-    exited = history(AT_SCAN, "ExecutionFailed")     # the same, if AWS also wrote an exit event for the caught state
-    at = next(i for i, e in enumerate(exited) if e["type"] == "TaskFailed")
-    exited.insert(at + 1, {"type": "TaskStateExited", "timestamp": exited[at]["timestamp"],
-                           "stateExitedEventDetails": {"name": "Scan", "output": "{}"}})
-    for i, e in enumerate(exited, 1):
-        e["id"] = i
-    assert reviews.steps_of(exited, "FAILED") == steps
-
     at_testcall = PASSED[:6] + [("TestCall", 349, 356, LAMBDA_CAUSE), ("Notify", 356, 356, None),
                                 ("Failed", 356, None, None)]
     steps = reviews.steps_of(history(at_testcall, "ExecutionFailed"), "FAILED")
@@ -181,6 +176,29 @@ def test_steps_of_a_review_that_failed_at_scan():
     error = steps[5]["error"]
     assert error.startswith("States.TaskFailed: the normal question was not answered: xxx") and len(error) == 300
     assert reviews.scan_log(history(at_testcall, "ExecutionFailed")) is None
+
+
+def without_exit_after_failure(events: list[dict]) -> list[dict]:
+    """The history with no exit event right after a failure event (the state that failed into Notify), numbered
+    again."""
+    out = [dict(e) for i, e in enumerate(events) if not (
+        i and e["type"] == "TaskStateExited" and events[i - 1]["type"] in ("TaskFailed", "TaskTimedOut"))]
+    for i, e in enumerate(out, 1):
+        e["id"], e["previousEventId"] = i, i - 1
+    return out
+
+
+def test_a_caught_step_without_an_exit_event_is_a_shape_the_code_also_accepts():
+    """The code was first written for a history in which the state that failed into Notify has no exit event. AWS
+    wrote one on 2026-11-23 (the fixture's shape); without it, the steps read the same."""
+    at_testcall = PASSED[:6] + [("TestCall", 349, 356, LAMBDA_CAUSE), ("Notify", 356, 356, None),
+                                ("Failed", 356, None, None)]
+    for states in (AT_SCAN, at_testcall):
+        events = history(states, "ExecutionFailed")
+        older = without_exit_after_failure(events)
+        assert len(older) == len(events) - 1                         # only the failed state's exit event is gone
+        assert reviews.steps_of(older, "FAILED") == reviews.steps_of(events, "FAILED")
+        assert reviews.scan_log(older) == reviews.scan_log(events)
 
 
 def test_steps_of_a_skipped_review():

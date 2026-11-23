@@ -495,10 +495,12 @@ def test_the_screen_check_reads_a_review_card_and_the_failed_scan_on_the_detail_
     assert detail["findings"] == ["jinja2 2.11.2  PYSEC-2021-66       2.11.3", "jinja2 2.11.2  GHSA-h5c8-rqwp-cp95 3.1.3"]
     assert detail["log"].startswith("/aws/codebuild/hub-review-scan ")
     assert not ui.review_detail(web.get("/reviews/release_review").text)["can_reject"]     # APPROVED: no Reject form
-    # what AWS writes from a failed state on: the events check 4 prints
+    # the events from the failed Scan's entry on, as check 4 printed them on 2026-11-23 (both runs): Scan's own six,
+    # its exit event included, then Notify's, FailStateEntered and ExecutionFailed; the fixture writes that shape
     assert ui.after_state(history(AT_SCAN, "ExecutionFailed"), "Scan") == [
-        "TaskStateEntered", "TaskScheduled", "TaskStarted", "TaskFailed", "TaskStateEntered", "TaskScheduled",
-        "TaskStarted", "TaskSucceeded", "TaskStateExited", "FailStateEntered", "ExecutionFailed"]
+        "TaskStateEntered", "TaskScheduled", "TaskStarted", "TaskSubmitted", "TaskFailed", "TaskStateExited",
+        "TaskStateEntered", "TaskScheduled", "TaskStarted", "TaskSucceeded", "TaskStateExited", "FailStateEntered",
+        "ExecutionFailed"]
     assert ui.after_state([], "Scan") == []
 
 

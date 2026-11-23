@@ -148,8 +148,8 @@ def test_a_block_from_the_check_of_the_prompt_refuses_the_request():
 
 
 def test_masking_still_reads_the_prompt_path():
-    # As before the block decision read the whole body: only the prompt goes on masked, the rest of the request as it
-    # came; a body without a prompt goes on masked as a whole.
+    # What goes on when the guardrail masks: in a body with a text prompt, only the prompt goes on masked and the rest
+    # of the request as it came; a body without a prompt goes on masked as a whole; nothing masked, nothing changed.
     body = {"prompt": "I am EMP-204817", "note": "by EMP-204817"}
     out = handler(event(raw=b64(json.dumps(body))), None, guard=MASK)
     assert body_of(out["http"]["transformedGatewayRequest"]) == {"prompt": "I am {employee_id}", "note": "by EMP-204817"}
