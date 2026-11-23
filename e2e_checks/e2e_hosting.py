@@ -46,7 +46,7 @@ from botocore.exceptions import ClientError
 
 from platform_team.agent_catalog.catalog_records import drop_record, records, search
 from platform_team.agent_catalog.seed_catalog import SHARED_RECORD
-from platform_team.agent_gateway.gateway_targets import targets
+from platform_team.agent_gateway.gateway_targets import gateway_url, targets
 from platform_team.company_policy.policy_engine import list_policies
 from platform_team.company_policy.policy_names import policy_names
 from platform_team.hosting_review.agent_cleanup import remove_agent
@@ -170,10 +170,6 @@ def run_command(what: str, cmd: list[str], env: dict) -> tuple[int, str]:
 def publish(dev: DevTeam, agent: str, variant: str | None = None) -> tuple[int, str]:
     cmd = [str(PUBLISH), str(REPO / "dev_team" / agent)] + ([variant] if variant else [])
     return run_command(f"publish.sh dev_team/{agent}{' ' + variant if variant else ''} (dev team role)", cmd, dev.env())
-
-
-def gateway_url(s: Settings, p: Platform, agent: str) -> str:
-    return f"https://{p.agent_gw['id']}.gateway.bedrock-agentcore.{s.region}.amazonaws.com/{s.target_name(agent)}/invocations"
 
 
 def call_agent(s: Settings, p: Platform, agent: str, prompt: str, tries: int = 3) -> tuple[int, str, float]:

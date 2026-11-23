@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Search the catalog as a developer: the approved records that match, with their tools' input fields.
+#   demo_scenes/search "<query>"
+set -euo pipefail
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+module=platform_team.agent_catalog.search_catalog
+# The hub's prefix, region and model: the three hub lines of <repo>/.env, as make reads them (README, ".env").
+. "$repo/platform_team/shared_code/hub_env.sh"
+# The one line of what is called, at most 100 columns.
+line="+ python -m $module"
+for a in "$@"; do case "$a" in *[[:space:]]*) line+=" \"$a\"" ;; *) line+=" $a" ;; esac; done
+[ ${#line} -le 100 ] || line="${line:0:97}..."
+echo "$line"
+PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -m "$module" "$@"

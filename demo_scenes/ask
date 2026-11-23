@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Ask a hosted agent through the agent gateway, as a user (the shell's own credentials).
+#   demo_scenes/ask <agent> "<prompt>" [--timeout <s>] [--session <ID>]
+#   demo_scenes/ask <agent> --file <path> [--timeout <s>] [--session <ID>]
+set -euo pipefail
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+module=platform_team.agent_gateway.ask_agent
+# The hub's prefix, region and model: the three hub lines of <repo>/.env, as make reads them (README, ".env").
+. "$repo/platform_team/shared_code/hub_env.sh"
+# The one line of what is called, at most 100 columns.
+line="+ python -m $module"
+for a in "$@"; do case "$a" in *[[:space:]]*) line+=" \"$a\"" ;; *) line+=" $a" ;; esac; done
+[ ${#line} -le 100 ] || line="${line:0:97}..."
+echo "$line"
+PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --project "$repo" python -m "$module" "$@"

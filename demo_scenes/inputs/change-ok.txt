@@ -1,0 +1,1 @@
+Change C-8 goes through the canary stage first, has a rollback plan, and all its tests pass.
