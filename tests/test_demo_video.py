@@ -566,7 +566,9 @@ def test_a_clip_with_no_beats_is_cut_without_captions(tmp_path):
 
 SCENES = VIDEO / "scenes"
 TAKES = ["00-home", "11-find", "13-submit", "21-review", "22-works", "23-reject", "24-again", "25-approved",
-         "26-answers"]                                  # 12-make is the second part of the 11-find recording
+         "26-answers",                                  # 12-make is the second part of the 11-find recording
+         "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked", "43-before", "44-attach", "45-after",
+         "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours", "56-cause", "57-back"]
 NODE = shutil.which("node")
 
 

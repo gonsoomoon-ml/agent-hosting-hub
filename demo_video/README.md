@@ -43,6 +43,21 @@ demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record
 | `24-again` | 개발자 PC | 고친 판의 의존성을 보이고 `publish quality_agent` | `quality_agent` 반려 | 승인 대기, 심사가 돈다. 곧바로 `25-approved`를 찍는다 |
 | `25-approved` | 허브 화면 | 고친 판의 심사가 일곱 단계를 지나 `APPROVED` | `quality_agent`의 심사가 돈다 | `quality_agent` 승인 |
 | `26-answers` | 사용자의 셸 | `ask quality_agent "What is the spec of part P-100?"` | `quality_agent` 승인 | 바꾸지 않는다 |
+| `31-logonly` | 허브 화면 | 전사 정책 페이지에서 `guard_prompt`를 기록 모드로 건다(버튼 한 번, 작업의 줄, 에이전트 게이트웨이의 정책 줄). `REHEARSE=1`이면 누르지 않는다 | 에이전트 셋 승인, 전사 정책 꺼짐, 가드레일 떨어짐, 멈춘 것 없음 | 전사 정책 기록 모드(`LOG_ONLY`) |
+| `32-passes` | 사용자의 셸 | 숨은 지시가 든 변경 설명을 `release_review`에 보낸다: 200 | 기록 모드 | 바꾸지 않는다(정책이 그 요청을 센다). 곧바로 `33-record`를 찍는다 |
+| `33-record` | 허브 화면 | 기록 모드의 집계가 `release_review`의 걸린 요청 1을 보일 때까지 기다린다(180초까지) | 기록 모드 | 바꾸지 않는다 |
+| `41-enforce` | 허브 화면 | 적용 모드로 올린다(버튼 한 번, 같은 정책의 모드가 바뀐다). `REHEARSE=1`이면 누르지 않는다 | 기록 모드 | 적용 모드(`ACTIVE`) |
+| `42-blocked` | 사용자의 셸 | 같은 파일을 `release_review`와 `docs_adk`에 보낸다: 둘 다 403과 게이트웨이의 문장 | 적용 모드 | 바꾸지 않는다 |
+| `43-before` | 사용자의 셸 | 코드명이 든 요청은 200, 검사 질문의 답에 사번이 보인다(샘플 도구의 만든 값) | 적용 모드, 가드레일 떨어짐 | 바꾸지 않는다 |
+| `44-attach` | 허브 화면 | 커스텀 가드레일을 붙인다(버튼 한 번). 떼지 않는다(5단계까지 붙어 있다). `REHEARSE=1`이면 누르지 않는다 | 가드레일 떨어짐 | 가드레일 붙음 |
+| `45-after` | 사용자의 셸 | `43-before`와 같은 두 요청: 코드명은 403과 인터셉터의 문장, 검사 질문의 답에는 사번 대신 `{employee_id}` | 가드레일 붙음 | 바꾸지 않는다 |
+| `51-usage` | 허브 화면 | 에이전트 페이지: 에이전트마다의 사용량, 도구마다의 호출, 도구 호출 경보 | 에이전트 셋 승인, 멈춘 것 없음 | 바꾸지 않는다 |
+| `52-incident` | 개발자 PC, 허브 화면, 사용자의 셸 | 한 녹화: `publish quality_agent v2-loop`, 그 심사를 `APPROVED`까지(실시간, 단계마다 메모), `ask quality_agent "What is the result of inspection Q-1002?" --timeout 60`에 답이 오지 않는다 | `quality_agent` 승인, 멈춘 것 없음, 작업 폴더에 리포의 `quality_agent`(`run.sh agent quality_agent`) | 되풀이하는 판이 승인되어 돈다. 샷 `asked`가 화면의 글(`out/raw/52-incident.texts.txt`의 `== <초> asked` 줄)에 나오면 곧바로 `53-alarm`을 찍는다(2026-11-23에는 그 줄을 기다리는 셸 한 줄로 띄웠다) |
+| `53-alarm` | 허브 화면 | 경보의 막대가 임계값을 넘고 상태가 `ALARM`이 될 때까지(420초까지, 넘은 때와 바뀐 때에 메모) | `quality_agent` 승인, 멈춘 것 없음 | 바꾸지 않는다 |
+| `54-stop` | 허브 화면 | `quality_agent`만 멈춘다(버튼 한 번, 작업의 줄). `REHEARSE=1`이면 누르지 않는다 | 멈춘 것 없음 | `quality_agent` 멈춤 |
+| `55-neighbours` | 사용자의 셸 | `quality_agent`는 403, `release_review`와 `docs_adk`는 200 | `quality_agent` 멈춤 | 바꾸지 않는다 |
+| `56-cause` | 개발자 PC | 한 Claude Code 세션: 왜 같은 도구를 계속 불렀는지 로그(`logs`)와 코드를 읽고 찾는다. 고치거나 돌리지 않는다 | `quality_agent` 멈춤 | 바꾸지 않는다 |
+| `57-back` | 개발자 PC, 허브 화면, 사용자의 셸 | 한 녹화: `publish quality_agent`(고친 판), 멈춘 채로 심사가 `APPROVED`까지, 에이전트 페이지에서 재개(버튼 한 번), `ask quality_agent`가 답한다. `REHEARSE=1`이면 에이전트 페이지만 잡는다 | `quality_agent` 승인(되풀이하는 판)이고 멈춤 | 고친 판이 승인되어 돈다 |
 
 ### 사용자의 셸 (`tools/user_shell.sh`)
 
@@ -57,6 +72,8 @@ Claude Code가 화면에 찍는 것은 믿지 않는다. 묻는 말의 글(셸 �
 2026-11-23의 녹화(`11-find`, UTC 11:50~12:07, 다섯 번 찍었다)에서 본 것이다. 첫 번째에는 "그 도구의 record를 보여 주세요"라는 요청에 Claude Code가 record의 ARN(계정 ID가 들어 있다)을 표로 보였고, `record.sh`의 글 검사가 그것을 잡아 그 녹화를 버렸다. 그 뒤로 요청은 도구의 이름, 설명, 입력을 묻는다. 그다음 세 번은 스토리보드가 묻는 말에 잘못 No를 고른 것(따옴표 안의 `|aws`를 명령으로 읽은 것, 긴 미리보기로 경로가 화면 밖에 있던 파일, 두 줄로 접힌 `cp` 명령)이어서 고치고 다시 찍었다. 다섯 번째에서 Claude Code는 읽기 넷을 묻고(Yes), 앞의 43줄이 화면에 보이지 않는 긴 명령(`mkdir`, `cp`, here-document로 파일 쓰기)을 물었고(No), 그 뒤 파일 다섯을 `dev_team/quality_agent/`에 묻지 않고 썼다. 아무것도 실행하거나 올리지 않았다.
 
 같은 날 Claude Code가 셸에서 `cd dev_team`을 한 뒤에는 `dev_team/` 아래의 파일을 만들 때도 물었고, 화면의 경로는 `dev_team/`을 기준으로 보였다(`quality_agent/agent.json`). 12:54~12:56(UTC)에 컨테이너의 대화형 세션에서 확인했다. `cd demo_scenes` 뒤에 편집 도구로 `search`를 고치는 것과, `cd dev_team` 뒤에 `dev_team/x/.claude/skills/y/SKILL.md`를 쓰는 것은 둘 다 `File is in a directory that is denied by your permission settings.`로 거부되었다. 거부 규칙은 `cd` 뒤에도 맞았다. `dev_team/quality_agent/` 아래에 쓰는 것은 `cd` 없이는 묻지 않았고(파일이 생겼다), `cd dev_team` 뒤에는 절대 경로로 써도, 상대 경로로 써도 물었다(No로 답해서 생기지 않았다). 그러니 `cd` 뒤에 맞지 않게 되는 것은 허락 규칙 `Edit(./dev_team/**)`이고, 그때 Claude Code는 거부하지 않고 묻는다. 설정은 그대로 두었다. Claude Code는 `cd`만 있는 셸 명령은 묻지 않고 돌렸다.
+
+2026-11-23의 `56-cause`(UTC 14:14~14:19)는 같은 요청으로 세 번 찍었고 두 번째를 쓴다. 이 스토리보드는 묻는 말에 모두 No를 고른다. 세 번 모두 Claude Code는 `logs quality_agent 30`과 자기 읽기 도구로 읽었다. 첫 번째는 `dev_team/quality_agent/agent.py`(기본판)만 읽고 `variants/`를 보지 않아서, 로그의 `asking again`이 그 코드에 없다고만 답했다. 두 번째는 `cd …/dev_team/quality_agent && cat agent.json && find variants …`를 물었고(No), 그 뒤 `variants/v2-loop/agent.py`를 읽어 "v2-loop 판 run()에 재시도 횟수 제한이 없습니다"라고 답했다(PENDING인 동안 처음부터 다시 묻고, 끝나는 조건은 시간 기한 600초뿐이다). 세 번째도 같은 원인을 찾았지만 에이전트의 README를 읽고 그 판이 일부러 사고를 내는 데모 판이라고 말해서 쓰지 않는다. 5단계는 커스텀 가드레일을 붙인 채로 찍었다(되풀이 호출은 막히지 않았고, 경보가 울렸다).
 
 ## 개발자 PC (`tools/dev_pc/`)
 
