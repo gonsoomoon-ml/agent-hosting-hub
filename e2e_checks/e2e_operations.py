@@ -63,9 +63,10 @@ sys.path.insert(0, str(REPO))           # run as a script, e2e_checks is importe
 
 from e2e_checks import e2e_hosting as hosting                                   # noqa: E402
 from e2e_checks.e2e_hosting import (QUALITY, QUALITY_TOOLS, RELEASE, STEPS, AlertInbox, DevTeam,  # noqa: E402
-                                    as_json, call_agent, check, error_of, gateway_url, info,
+                                    as_json, call_agent, check, error_of, info,
                                     no_review_running, publish, record_status, review, say)
 from platform_team.agent_catalog.catalog_records import search                  # noqa: E402
+from platform_team.agent_gateway.gateway_targets import gateway_url             # noqa: E402
 from platform_team.agent_monitoring import usage_report                         # noqa: E402
 from platform_team.agent_stop.stop_agent import SESSION_HEADER, log_group, runtime_arn  # noqa: E402
 from platform_team.company_policy.policy_engine import list_policies            # noqa: E402

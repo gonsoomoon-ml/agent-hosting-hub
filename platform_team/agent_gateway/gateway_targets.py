@@ -4,6 +4,8 @@ import json
 from botocore.exceptions import ClientError
 
 from platform_team.shared_code.aws_helpers import all_items, already_exists, wait_status
+from platform_team.shared_code.config import Settings
+from platform_team.shared_code.hub_state import Platform
 
 # The agent's entry point as the gateway sees it: POST /invocations with a prompt.
 # Policies name it <Target>___POST:/invocations.
@@ -17,6 +19,11 @@ INVOCATION_SCHEMA = {
         "responses": {"200": {"description": "Successful invocation"}},
     }}},
 }
+
+
+def gateway_url(s: Settings, p: Platform, agent: str) -> str:
+    """Where a user calls the agent through the agent gateway: POST <gateway>/<target>/invocations."""
+    return f"https://{p.agent_gw['id']}.gateway.bedrock-agentcore.{s.region}.amazonaws.com/{s.target_name(agent)}/invocations"
 
 
 def find_gateway(c, name: str) -> dict | None:

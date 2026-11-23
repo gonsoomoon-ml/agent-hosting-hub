@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Publish a team's agent to the hub: upload its code, write its application to the catalog, ask for approval.
+#   demo_scenes/publish <agent> [variant]       # <agent> is a folder of dev_team/, a variant one of its variants/
+set -euo pipefail
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+module=platform_team.agent_catalog.publish_agent
+agents() { for f in "$repo"/dev_team/*/agent.json; do d="$(basename "$(dirname "$f")")"; [ "$d" = agent_template ] || echo "$d"; done | tr '\n' ' '; }
+[ $# -ge 1 ] && [ $# -le 2 ] || { echo "usage: demo_scenes/publish <agent> [variant]   (agents: $(agents))"; exit 2; }
+agent="$1"
+[[ "$agent" =~ ^[a-z][a-z0-9_]*$ ]] && [ "$agent" != agent_template ] && [ -f "$repo/dev_team/$agent/agent.json" ] \
+  || { echo "no agent '$agent' in dev_team/ (agents: $(agents))"; exit 2; }
+if [ $# -eq 2 ]; then
+  variants="$(ls "$repo/dev_team/$agent/variants" 2>/dev/null | tr '\n' ' ' || true)"
+  if ! [[ "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || [ ! -d "$repo/dev_team/$agent/variants/$2" ]; then
+    if [ -n "$variants" ]; then echo "no variant '$2' of $agent (variants: $variants)"; else echo "$agent has no variants"; fi
+    exit 2
+  fi
+fi
+# The hub's prefix, region and model: the three hub lines of <repo>/.env, as make reads them (README, ".env").
+. "$repo/platform_team/shared_code/hub_env.sh"
+# The one line of what is called, at most 100 columns (the agent folder is shown as dev_team/<agent>).
+line="+ python -m $module dev_team/$agent${2:+ $2}"
+[ ${#line} -le 100 ] || line="${line:0:97}..."
+echo "$line"
+# python -I (isolated): the folder the command is called in never goes on the module search path, and no PYTHON*
+# variable of the caller and no user site is read; the hub's modules come from the project's editable install.
+exec uv run --quiet --project "$repo" python -I -m "$module" "$repo/dev_team/$agent" ${2:+"$2"}

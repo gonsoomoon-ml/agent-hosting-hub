@@ -46,10 +46,16 @@ def set_status(c, registry_id: str, record_id: str, status: str, reason: str) ->
                                                status=status, statusReason=reason)["status"]
 
 
+def search_records(c, registry_id: str, query: str) -> list[dict]:
+    """The approved records that match the query as the search gives them (name, recordType, description, ...), best
+    match first."""
+    found = c.disc.search_discoverable_registry_records(searchQuery=query, registryIds=[registry_id], maxResults=20)
+    return found["registryRecords"]
+
+
 def search(c, registry_id: str, query: str) -> list[str]:
     """Names of the approved records that match the query, best match first."""
-    found = c.disc.search_discoverable_registry_records(searchQuery=query, registryIds=[registry_id], maxResults=20)
-    return [r["name"] for r in found["registryRecords"]]
+    return [r["name"] for r in search_records(c, registry_id, query)]
 
 
 def drop_record(c, registry_id: str, record_id: str, timeout: int = 90) -> None:

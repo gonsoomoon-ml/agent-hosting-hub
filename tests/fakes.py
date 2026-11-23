@@ -389,6 +389,21 @@ class _Logs(_Client):
         return {"logStreams": [x for x in self.o.log_streams[logGroupName]
                                if x["logStreamName"].startswith(logStreamNamePrefix)]}
 
+    def filter_log_events(self, logGroupName, startTime=0, logStreamNamePrefix="", **kw):
+        """The events of log_lines[group] ({"logStreamName", "timestamp" (ms), "message"}) from startTime on, of the
+        streams whose name starts with logStreamNamePrefix, oldest first (equal times keep their order), each with an
+        eventId. A group that does not exist raises ResourceNotFoundException. Each call's arguments go to
+        log_filters."""
+        self.o.log_filters.append({"logGroupName": logGroupName, "startTime": startTime,
+                                   "logStreamNamePrefix": logStreamNamePrefix, **kw})
+        if logGroupName not in self.o.log_groups:
+            raise _client_error("ResourceNotFoundException", "The specified log group does not exist.", "FilterLogEvents")
+        found = sorted((e for e in self.o.log_lines.get(logGroupName, [])
+                        if e["timestamp"] >= startTime and e["logStreamName"].startswith(logStreamNamePrefix)),
+                       key=lambda e: e["timestamp"])
+        return {"events": [{**e, "eventId": f"{i:08d}", "ingestionTime": e["timestamp"]} for i, e in enumerate(found)],
+                "searchedLogStreams": []}
+
     def delete_log_group(self, logGroupName):
         if logGroupName not in self.o.log_groups:
             raise _client_error("ResourceNotFoundException", "The specified log group does not exist.", "DeleteLogGroup")
@@ -487,6 +502,23 @@ class _Reg(_Client):
         else:
             self.o.record_status, self.o.status_reason = status, statusReason
         return {"status": status}
+
+
+class _Disc(_Client):
+    """The registry's search (agent-registry): approved records only, each as GetRegistryRecord gives it, whose name or
+    description holds a word of the query (the real search is semantic; this one is only as good as that). With
+    search_descriptors False the items come without their descriptors, as a search result may."""
+    service = "disc"
+
+    def search_discoverable_registry_records(self, searchQuery, registryIds, maxResults=10, **kw):
+        words = searchQuery.lower().split()
+        found = []
+        for r in self.o.reg.list_registry_records(registryIds[0])["registryRecords"]:
+            full = {**r, **self.o.reg.get_registry_record(registryIds[0], r["recordId"])}
+            text = f"{full['name']} {full.get('description', '')}".lower()
+            if full["status"] == "APPROVED" and any(w in text for w in words):
+                found.append(full if self.o.search_descriptors else {k: v for k, v in full.items() if k != "descriptors"})
+        return {"registryRecords": found[:maxResults]}
 
 
 class _Sfn(_Client):
@@ -589,7 +621,8 @@ class FakeClients:
     policy names), targets, posts (url, body), record_status, status_reason, runtimes, runtime_calls ("create <name>",
     "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects, stopped_sessions
     ((Runtime ARN, session ID) of each StopRuntimeSession), harnesses, deleted_harnesses (harness IDs), harness_calls
-    (the arguments of each InvokeHarness), log_reads (the arguments of each GetLogEvents). Tests may also fill
+    (the arguments of each InvokeHarness), log_reads (the arguments of each GetLogEvents), log_filters (the arguments of
+    each FilterLogEvents). Tests may also fill log_lines (group -> its FilterLogEvents events), search_descriptors,
     log_groups, log_streams, log_events ((group, stream) -> its lines), parameters, objects,
     other_records, runtime_create_errors, session_errors, running (the reviews still running), executions (reviews
     given in full, with their history), record_errors (record ID -> the exception GetRegistryRecord raises for it),
@@ -631,6 +664,7 @@ class FakeClients:
         self.running, self.executions = list(running), []
         self.log_streams, self.stopped_sessions, self.session_errors = {}, [], {}
         self.log_events, self.log_reads, self.record_errors = {}, [], {}
+        self.log_lines, self.log_filters, self.search_descriptors = {}, [], True
         self.harnesses, self.deleted_harnesses, self.harness_calls, self.harness_stream = {}, [], [], []
         self.gateways = {PLATFORM.agent_gw["id"]: {"name": "hub-agents", "status": "READY", "interceptorConfigurations": []},
                          PLATFORM.tool_gw["id"]: {"name": "hub-tools", "status": "READY"}}
@@ -638,7 +672,7 @@ class FakeClients:
         self.metric_queries = []
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
-        self.sns, self.cw = _Sns(self), _Cw(self)
+        self.sns, self.cw, self.disc = _Sns(self), _Cw(self), _Disc(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):

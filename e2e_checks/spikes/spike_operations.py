@@ -55,11 +55,12 @@ import boto3                                                                   #
 from botocore.config import Config                                             # noqa: E402
 
 from e2e_checks import e2e_hosting as e2e                                      # noqa: E402
-from e2e_checks.e2e_hosting import (DevTeam, call_agent, clean, gateway_url, record_status,  # noqa: E402
+from e2e_checks.e2e_hosting import (DevTeam, call_agent, clean, record_status,  # noqa: E402
                                     review, wait_search)
 from platform_team.agent_catalog.catalog_records import records, search        # noqa: E402
 from platform_team.agent_catalog.publish_agent import publish                  # noqa: E402
 from platform_team.agent_catalog.seed_catalog import SHARED_RECORD             # noqa: E402
+from platform_team.agent_gateway.gateway_targets import gateway_url             # noqa: E402
 from platform_team.company_policy.policy_engine import drop_policy, ensure_policy, list_policies  # noqa: E402
 from platform_team.shared_code.aws_helpers import Clients, all_items, signed_post  # noqa: E402
 from platform_team.shared_code.config import Settings, env_file_updates        # noqa: E402

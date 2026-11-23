@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "hub-catalog": {
+      "type": "stdio",
+      "command": "mcp-proxy-for-aws",
+      "args": [
+        "https://agent-registry.<REGION>.api.aws/registry/<REGISTRY_ID>/mcp",
+        "--service", "agent-registry",
+        "--region", "<REGION>"
+      ]
+    }
+  }
+}

@@ -4,17 +4,18 @@
 
 Twelve checks, one [PASS] / [FAIL] line each, [INFO] lines for what was observed (timings, answers, the alert),
 then `== N checks passed, M failed, K observations`. Exit code 1 if a check failed.
-   1  as the dev team role, a catalog search finds the shared tool record parts-tools           (picture 1)
+The numbers in parentheses are the steps of the concept picture, docs/hosting-hub-concept.png.
+   1  as the dev team role, a catalog search finds the shared tool record parts-tools           (step 1)
    2  as the dev team role, the shared read tool answers and another tool is refused by policy
       (JSON-RPC error -32002, "policy enforcement"; any other error does not count)
-   3  as the dev team role, publish.sh dev_team/release_review: the record is PENDING_APPROVAL  (picture 2)
-   4  the review starts within 120 s of the request (timed from just before publish.sh)         (picture 3)
-   5  the review SUCCEEDED with the steps Read:lambda .. Approve:lambda in order                (pictures 4 5 6)
-   6  the record is APPROVED and a catalog search finds it                                      (picture 6)
+   3  as the dev team role, publish.sh dev_team/release_review: the record is PENDING_APPROVAL  (step 2)
+   4  the review starts within 120 s of the request (timed from just before publish.sh)         (step 3)
+   5  the review SUCCEEDED with the steps Read:lambda .. Approve:lambda in order                (steps 4 5 6)
+   6  the record is APPROVED and a catalog search finds it                                      (step 6)
    7  a user calls release_review through the agent gateway: 200, and a change that breaks a rule
       makes it use Release___file_review_request
    8  quality_agent v1-vulnerable: the review FAILED at Scan; an alert arrives that names the agent and the step;
-      the scan build's log, found from what the alert carries, has the jinja2 advisory line    (picture 4-1)
+      the scan build's log, found from what the alert carries, has the jinja2 advisory line    (step 4-1)
    9  that submission made no role, policy, gateway target or Runtime
   10  reject.sh: the record is REJECTED
   11  the fixed version (no variant) again: a new review starts, SUCCEEDED, and the record is APPROVED
@@ -46,7 +47,7 @@ from botocore.exceptions import ClientError
 
 from platform_team.agent_catalog.catalog_records import drop_record, records, search
 from platform_team.agent_catalog.seed_catalog import SHARED_RECORD
-from platform_team.agent_gateway.gateway_targets import targets
+from platform_team.agent_gateway.gateway_targets import gateway_url, targets
 from platform_team.company_policy.policy_engine import list_policies
 from platform_team.company_policy.policy_names import policy_names
 from platform_team.hosting_review.agent_cleanup import remove_agent
@@ -170,10 +171,6 @@ def run_command(what: str, cmd: list[str], env: dict) -> tuple[int, str]:
 def publish(dev: DevTeam, agent: str, variant: str | None = None) -> tuple[int, str]:
     cmd = [str(PUBLISH), str(REPO / "dev_team" / agent)] + ([variant] if variant else [])
     return run_command(f"publish.sh dev_team/{agent}{' ' + variant if variant else ''} (dev team role)", cmd, dev.env())
-
-
-def gateway_url(s: Settings, p: Platform, agent: str) -> str:
-    return f"https://{p.agent_gw['id']}.gateway.bedrock-agentcore.{s.region}.amazonaws.com/{s.target_name(agent)}/invocations"
 
 
 def call_agent(s: Settings, p: Platform, agent: str, prompt: str, tries: int = 3) -> tuple[int, str, float]:
