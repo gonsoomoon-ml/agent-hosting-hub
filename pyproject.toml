@@ -6,7 +6,8 @@ requires-python = ">=3.12"
 dependencies = ["boto3>=1.44.9"]
 
 [dependency-groups]
-dev = ["pytest", "pyyaml>=6.0.4", "langgraph", "strands-agents", "google-adk==2.14.1"]   # pyyaml: the tests read the buildspecs; langgraph, strands-agents, google-adk: the example agents' tests (google-adk at the version docs_adk pins)
+ui = ["fastapi>=0.165.0", "jinja2>=3.1.6", "uvicorn>=0.54.0", "python-multipart>=0.0.34", "httpx>=0.28.1"]   # the local hub screen (platform_team/hub_ui)
+dev = [{include-group = "ui"}, "pytest", "pyyaml>=6.0.4", "langgraph", "strands-agents", "google-adk==2.14.1"]   # pyyaml: the tests read the buildspecs; langgraph, strands-agents, google-adk: the example agents' tests (google-adk at the version docs_adk pins)
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -17,6 +18,7 @@ include = ["platform_team*"]
 
 [tool.setuptools.package-data]
 "platform_team.company_policy" = ["policy_templates/*.cedar"]
+"platform_team.hub_ui" = ["templates/*.html", "static/*.png"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

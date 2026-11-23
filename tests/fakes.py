@@ -73,6 +73,8 @@ class _Client:
 
         def recorded(*args, **kw):
             self.o.calls.append((self.service, name))
+            if (self.service, name) in self.o.errors:
+                raise self.o.errors[(self.service, name)]
             return attr(*args, **kw)
         return recorded
 
@@ -124,6 +126,15 @@ class _Ctl(_Client):
 
     def get_waiter(self, name):
         return types.SimpleNamespace(wait=lambda **kw: None)
+
+    def get_gateway(self, gatewayIdentifier):
+        """A gateway of `gateways` (by ID): its name, status and interceptors."""
+        if gatewayIdentifier not in self.o.gateways:
+            raise _client_error("ResourceNotFoundException", f"no gateway {gatewayIdentifier}", "GetGateway")
+        return {"gatewayId": gatewayIdentifier, **self.o.gateways[gatewayIdentifier]}
+
+    def get_policy_engine(self, policyEngineId):
+        return {"policyEngineId": policyEngineId, "name": "hub_pe", "status": "ACTIVE"}
 
     def list_gateway_targets(self, **kw):
         return {"items": [{"name": n, "targetId": t} for n, t in self.o.targets.items()]}
@@ -451,6 +462,9 @@ class _Reg(_Client):
         return {"name": name, "recordType": self.o.record_type, "status": self.o.record_status,
                 "descriptors": {"custom": {"data": json.dumps(spec)}}}
 
+    def get_registry(self, registryId):
+        return {"registryId": registryId, "name": "hub-registry", "status": "READY"}
+
     def update_registry_record_status(self, registryId, recordId, status, statusReason):
         if self._other(recordId):
             self._other(recordId).update(status=status, statusReason=statusReason)
@@ -481,9 +495,28 @@ class _Sfn(_Client):
         return {**self._execution(machine, name, i),
                 "input": json.dumps({"detail": {"registryId": "reg-1", "registryRecordId": self.o.running[i][1]}})}
 
+    def describe_state_machine(self, stateMachineArn):
+        return {"stateMachineArn": stateMachineArn, "name": stateMachineArn.rsplit(":", 1)[-1], "status": "ACTIVE"}
+
+
+class _Sns(_Client):
+    """The alert topic: one confirmed subscription."""
+    service = "sns"
+
+    def get_topic_attributes(self, TopicArn):
+        return {"Attributes": {"TopicArn": TopicArn, "SubscriptionsConfirmed": "1", "SubscriptionsPending": "0"}}
+
+
+class _Cw(_Client):
+    """CloudWatch alarms: alarms holds MetricAlarms entries (AlarmName, StateValue, ...)."""
+    service = "cw"
+
+    def describe_alarms(self, AlarmNamePrefix="", **kw):
+        return {"MetricAlarms": [a for a in self.o.alarms if a["AlarmName"].startswith(AlarmNamePrefix)]}
+
 
 class FakeClients:
-    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3, data).
+    """Stands in for platform_team.shared_code.aws_helpers.Clients (iam, ssm, ctl, reg, logs, sfn, s3, data, sns, cw).
     http: the (status, text) answers of the signed POSTs, in turn; the last one repeats; an exception
     instance is raised instead (tests patch review_steps.signed_post with FakeClients.latest.post).
     policy_mode: the enforcement mode of the existing_policies; parameters: the SSM values at the start; targets: the
@@ -495,10 +528,13 @@ class FakeClients:
     "update <ID>", "delete <ID>"), runtime_gets, runtime_create_tries, parameters, objects, stopped_sessions
     ((Runtime ARN, session ID) of each StopRuntimeSession), harnesses, deleted_harnesses (harness IDs), harness_calls
     (the arguments of each InvokeHarness). Tests may also fill log_groups, log_streams, parameters, objects,
-    other_records, runtime_create_errors, session_errors, running (the reviews still running), harnesses and
-    harness_stream (the events InvokeHarness answers)."""
+    other_records, runtime_create_errors, session_errors, running (the reviews still running), harnesses,
+    harness_stream (the events InvokeHarness answers), gateways (ID -> name, status, interceptorConfigurations; the
+    two gateways of PLATFORM at the start), alarms (MetricAlarms entries) and errors ((service, method) -> the
+    exception that call raises, after it is recorded)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
+    account = ACCOUNT   # as Clients.account reads it from STS
 
     def __init__(self, record_spec=None, record_status="PENDING_APPROVAL", existing_policies=(), existing_roles=(),
                  policy_status="ACTIVE", policy_reasons=None, runtime_arn=None, http=None, record_name=None,
@@ -529,8 +565,12 @@ class FakeClients:
         self.running = list(running)
         self.log_streams, self.stopped_sessions, self.session_errors = {}, [], {}
         self.harnesses, self.deleted_harnesses, self.harness_calls, self.harness_stream = {}, [], [], []
+        self.gateways = {PLATFORM.agent_gw["id"]: {"name": "hub-agents", "status": "READY", "interceptorConfigurations": []},
+                         PLATFORM.tool_gw["id"]: {"name": "hub-tools", "status": "READY"}}
+        self.alarms, self.errors = [], {}
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
+        self.sns, self.cw = _Sns(self), _Cw(self)
         FakeClients.latest = self
 
     def post(self, url, body, region, **kw):

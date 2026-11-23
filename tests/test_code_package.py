@@ -1,4 +1,4 @@
-import json, subprocess, sys, zipfile
+import json, pathlib, subprocess, sys, zipfile
 from platform_team.shared_code.code_package import build
 
 BUNDLED = ("platform_team.sample_tools.tool_handler", "platform_team.shared_code.aws_helpers",
@@ -38,3 +38,10 @@ def test_the_interceptor_can_make_its_amazon_bedrock_client_from_the_package_alo
             "assert c.meta.service_model.operation_model('ApplyGuardrail')")
     r = subprocess.run([sys.executable, "-I", "-S", "-c", code, str(tmp_path / "task")], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
+
+def test_the_lambda_package_leaves_the_screens_out(tmp_path):
+    """The hub screen (platform_team/hub_ui) runs on the presenter's PC and imports FastAPI, which Lambda does not have."""
+    build(tmp_path)
+    names = zipfile.ZipFile(tmp_path / "platform_team.zip").namelist()
+    assert (pathlib.Path("platform_team") / "hub_ui" / "app.py").is_file()       # the screens are there to leave out
+    assert [n for n in names if n.startswith("platform_team/hub_ui/")] == []

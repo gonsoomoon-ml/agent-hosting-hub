@@ -1,0 +1,30 @@
+{# Adapted from https://github.com/gonsoomoon-ml/ai-governance-hub hub/templates/_nav.html at commit 02035ca (MIT-0) -#}
+{# The menu: home, then the pages of flow 1 (coral) and flow 2 (blue), each with a one-line description; the hosting
+   review shows a badge with the agents in review. #}
+{% set icons = {
+  "home": '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.5V19h12V9.5"/><path d="M10 19v-5h4v5"/></svg>',
+  "reviews": '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 4h12v16H6z"/><path d="M9 8h6M9 12h6"/><path d="M9 16l1.6 1.6L14 14.2"/></svg>',
+  "policies": '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l7 3v5.5c0 4.3-2.9 7.8-7 9.5-4.1-1.7-7-5.2-7-9.5V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+  "agents": '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>'
+} %}
+{% macro item(href, key) -%}
+<a{% if path == href or (href != "/" and path.startswith(href + "/")) %} aria-current="page" class="active"{% endif %} href="{{ href }}" title="{{ t('nav.' ~ key) }} — {{ t('nav.desc.' ~ key) }}">
+  <span class="icon">{{ icons[key] | safe }}</span>
+  <span class="label">{{ t("nav." ~ key) }}<span class="desc">{{ t("nav.desc." ~ key) }}</span></span>
+  {% if key in nav %}<span class="badge" id="badge-{{ key }}" title="{{ t('nav.badge.' ~ key) }}">{{ nav[key] or "" }}</span>{% endif %}
+</a>
+{%- endmacro %}
+<aside class="nav" aria-label="{{ t('nav.label') }}">
+  <div class="group">
+    {{ item("/", "home") }}
+  </div>
+  <div class="group p1">
+    <div class="group-title">{{ t("nav.group.hosting") }}</div>
+    {{ item("/reviews", "reviews") }}
+  </div>
+  <div class="group p2">
+    <div class="group-title">{{ t("nav.group.operations") }}</div>
+    {{ item("/policies", "policies") }}
+    {{ item("/agents", "agents") }}
+  </div>
+</aside>

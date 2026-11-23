@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t("home.title") }}</h1>
+<p class="intro">{{ t("home.intro") }} <span class="tech">{{ t("drawn_at") }} {{ ts(now) }}</span></p>
+
+<section id="panel-counts" class="stats">
+  {% if view.counts.ok %}
+  {% for key in ("hosted", "in_review", "tools") %}
+  <div class="card stat {{ 'p2' if key == 'tools' else 'p1' }}">
+    <div class="num">{{ view.counts.value[key] }}</div>
+    <div class="label">{{ t("home.counts." ~ key) }}</div>
+    <div class="tech">{{ services.catalog }}</div>
+    <p class="hint">{{ t("home.counts." ~ key ~ ".tip") }}</p>
+  </div>
+  {% endfor %}
+  {% else %}{% with panel = view.counts %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+
+<section id="pictures" class="pictures">
+  {% for key, file in pictures %}
+  <figure class="card picture {{ 'p1' if key == 'flow1' else 'p2' }}">
+    <figcaption>{{ t("home." ~ key ~ ".title") }}</figcaption>
+    <a href="/static/{{ file }}" target="_blank" rel="noopener" title="{{ t('home.picture.open') }}"><img src="/static/{{ file }}" alt="{{ t('home.' ~ key ~ '.alt') }}" width="2400" height="1600"></a>
+  </figure>
+  {% endfor %}
+</section>
+
+<div class="grid2">
+  <section id="panel-platform" class="card">
+    <h2>{{ t("home.platform.title") }}</h2>
+    {% if view.platform.ok %}
+    <table>
+      <thead><tr><th>{{ t("col.part") }}</th><th>{{ t("col.name") }}</th><th>{{ t("col.service") }}</th><th>{{ t("col.state") }}</th></tr></thead>
+      <tbody>
+      {% for row in view.platform.value %}
+        <tr>
+          <td>{{ t("part." ~ row.key) }}</td>
+          <td class="mono name">{{ row.name }}</td>
+          <td class="tech">{{ row.service }}</td>
+          <td>{% if row.state is none %}<span class="pill">{{ t("part.missing") }}</span>{% elif row.key == "topic" %}<span class="pill ok">{{ t("part.subscriptions", n=row.state) }}</span>{% else %}<span class="pill {{ pill(row.state) }}">{{ row.state }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}{% with panel = view.platform %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+  </section>
+
+  <div>
+    <section id="panel-company" class="card p2">
+      <h2>{{ t("home.company.title") }}</h2>
+      {% if view.company.ok %}
+      {% set mode = view.company.value.guard_prompt %}
+      {% set attached = view.company.value.guardrail_attached %}
+      <dl class="facts">
+        <dt>{{ t("home.company.guard_prompt") }}</dt>
+        <dd><span class="pill {{ pill(mode) }}">{{ t("mode." ~ (mode or "off")) }}</span>{% if mode %} <span class="mono">{{ mode }}</span>{% endif %}
+          <span class="tech">{{ services.parameters }} · {{ parameters_path }} · {{ services.engine }}</span></dd>
+        <dt>{{ t("home.company.guardrail") }}</dt>
+        <dd><span class="pill {{ 'ok' if attached }}">{{ t("guardrail.attached") if attached else t("guardrail.detached") }}</span>
+          <span class="tech">{{ services.guardrail }}</span></dd>
+      </dl>
+      {% else %}{% with panel = view.company %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+    </section>
+
+    <section id="panel-alarms" class="card">
+      <h2>{{ t("home.alarms.title") }}<span class="tech">{{ services.alarms }}</span></h2>
+      {% if view.alarms.ok %}
+      {% if view.alarms.value %}
+      <table>
+        <thead><tr><th>{{ t("col.name") }}</th><th>{{ t("col.state") }}</th></tr></thead>
+        <tbody>
+        {% for alarm in view.alarms.value %}
+          <tr><td class="mono name">{{ alarm.name }}</td><td><span class="pill {{ pill(alarm.state) }}">{{ alarm.state }}</span></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}<p class="muted">{{ t("home.alarms.none") }}</p>{% endif %}
+      {% else %}{% with panel = view.alarms %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+    </section>
+  </div>
+</div>
+
+<section id="panel-catalog" class="card">
+  <h2>{{ t("home.catalog.title") }}<span class="tech">{{ services.catalog }}</span></h2>
+  {% if view.catalog.ok %}
+  {% if view.catalog.value %}
+  <table>
+    <thead><tr><th>{{ t("col.name") }}</th><th>{{ t("col.type") }}</th><th>{{ t("col.status") }}</th></tr></thead>
+    <tbody>
+    {% for r in view.catalog.value %}
+      <tr>
+        <td class="mono name">{{ r.name }}</td>
+        <td class="mono">{{ r.type }}</td>
+        <td><span class="pill {{ pill(r.status) }}">{{ r.status }}</span>{% if t.has("status." ~ r.status) %} <span class="muted">{{ t("status." ~ r.status) }}</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">{{ t("home.catalog.none") }}</p>{% endif %}
+  {% else %}{% with panel = view.catalog %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="cover">
+  <h1>{{ t("unreadable.title") }}</h1>
+  <p class="err"><span class="mono">{{ error }}</span></p>
+  <p>{{ t("unreadable.hint") }}</p>
+</section>
+{% endblock %}

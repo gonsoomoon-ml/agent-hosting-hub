@@ -2,10 +2,10 @@
 
     python -m platform_team.shared_code.code_package        # writes build/platform_team.zip and build/tool_schemas.json
 
-The zip holds the platform_team package (.py files and the Cedar templates) and the boto3 installed in this
-environment, copied file by file, so AWS runs the same boto3 version as the tests. Only the API models of the
-services the hub's clients use are kept. The zip is byte-for-byte the same for the same input, so Terraform
-sees no change when nothing changed.
+The zip holds the platform_team package (.py files and the Cedar templates; not the hub screen, hub_ui) and the
+boto3 installed in this environment, copied file by file, so AWS runs the same boto3 version as the tests. Only the
+API models of the services the hub's clients use are kept. The zip is byte-for-byte the same for the same input, so
+Terraform sees no change when nothing changed.
 """
 import json
 import sys
@@ -19,6 +19,7 @@ from platform_team.shared_code.aws_helpers import _SERVICES
 
 PACKAGE = Path(platform_team.__file__).parent
 CODE_SUFFIXES = {".py", ".cedar"}
+LOCAL_ONLY = {"hub_ui"}     # the hub screen: runs on the presenter's PC and imports FastAPI, which Lambda does not have
 # boto3 and everything it imports (pure Python, so the zip runs on any Lambda architecture).
 BOTO3_DISTRIBUTIONS = ("boto3", "botocore", "s3transfer", "jmespath", "python-dateutil", "six", "urllib3")
 KEEP_MODELS = set(_SERVICES.values())
@@ -28,7 +29,8 @@ _FIXED_TIME = (1980, 1, 1, 0, 0, 0)
 def _hub_files() -> dict[str, Path]:
     return {f"platform_team/{f.relative_to(PACKAGE).as_posix()}": f
             for f in PACKAGE.rglob("*")
-            if f.is_file() and f.suffix in CODE_SUFFIXES and "__pycache__" not in f.parts}
+            if f.is_file() and f.suffix in CODE_SUFFIXES and "__pycache__" not in f.parts
+            and f.relative_to(PACKAGE).parts[0] not in LOCAL_ONLY}
 
 
 def _keep(name: str) -> bool:

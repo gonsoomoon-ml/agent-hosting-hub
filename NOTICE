@@ -1,7 +1,11 @@
 Third-party material used in this project.
 Fill in one entry per item copied or adapted.
 
-- Source repository: <url>
-  Path: <path in that repository>
-  Commit: <commit sha>
-  License: <license>
+- Source repository: https://github.com/gonsoomoon-ml/ai-governance-hub
+  Path: hub/templates/base.html, hub/templates/_nav.html, hub/i18n.py, hub/timefmt.py
+  Commit: 02035ca
+  License: MIT-0
+  Used in: platform_team/hub_ui/templates/base.html, platform_team/hub_ui/templates/_nav.html,
+  platform_team/hub_ui/texts.py, platform_team/hub_ui/timefmt.py (adapted: the page frame, its colors and themes,
+  the menu, the busy-form script, the text tables and the time format; the source's login, roles, store and pages
+  are left out)

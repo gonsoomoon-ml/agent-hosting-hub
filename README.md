@@ -10,7 +10,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 | 폴더 | 누가 쓰나 | 내용 |
 |---|---|---|
-| `platform_team/` | 플랫폼팀 | 허브의 틀과 운영 명령. 기능마다 폴더 하나이고, AWS에 틀을 두는 기능은 그 안에 Terraform 모듈이 있다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md), [커스텀 가드레일](platform_team/custom_guardrail/README.md), [에이전트 멈추기와 재개](platform_team/agent_stop/README.md)(Terraform 없음) |
+| `platform_team/` | 플랫폼팀 | 허브의 틀과 운영 명령. 기능마다 폴더 하나이고, AWS에 틀을 두는 기능은 그 안에 Terraform 모듈이 있다. [게이트웨이 둘](platform_team/agent_gateway/README.md)([도구 쪽](platform_team/tool_gateway/README.md)), [전사 정책](platform_team/company_policy/README.md), [카탈로그](platform_team/agent_catalog/README.md), [호스팅 심사](platform_team/hosting_review/README.md), [샘플 사내 도구](platform_team/sample_tools/README.md), [모니터링](platform_team/agent_monitoring/README.md), [개발팀의 권한](platform_team/dev_access/README.md), [커스텀 가드레일](platform_team/custom_guardrail/README.md), [에이전트 멈추기와 재개](platform_team/agent_stop/README.md)(Terraform 없음), [허브 화면](platform_team/hub_ui/README.md)(샘플, 이 PC에서만, Terraform 없음) |
 | `dev_team/` | 개발팀 | [에이전트 템플릿](dev_team/agent_template/README.md)과 올리는 명령(`publish.sh`), 예시 에이전트 둘: [release_review](dev_team/release_review/README.md)(LangGraph), [quality_agent](dev_team/quality_agent/README.md)(Strands). `preloaded_agents/`에는 처음부터 올라와 있는 에이전트 둘이 있다(플랫폼팀이 `make preload`로 올린다): [docs_adk](dev_team/preloaded_agents/docs_adk/README.md)(Google ADK), [spec_assistant](dev_team/preloaded_agents/spec_assistant/README.md)(코드가 없는 managed harness). 아래 "처음부터 올라와 있는 에이전트 둘" |
 | `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트. `e2e_hosting.py`(흐름 1의 끝에서 끝까지), `e2e_operations.py`(흐름 2의 끝에서 끝까지), `check_platform.py`(허브의 틀), `check_cleanup.py`(지운 뒤 남은 것). `spikes/`는 제품의 일부가 아니라 만들면서 가정을 확인한 스크립트다([확인 시험](e2e_checks/spikes/README.md)) |
 | `tests/` | 누구나 | 단위 시험(`make test`). AWS를 부르지 않는다. |
@@ -139,6 +139,10 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 | `platform_team/agent_stop/stop.sh <에이전트> [--session <ID> ...]` | 에이전트 하나의 진입을 막고(`stop_agent_<에이전트>`), 그 Runtime의 최근 세션을 끝낸다. 심사의 시험 호출은 막지 않는다. 이웃 에이전트는 건드리지 않는다. [에이전트 멈추기와 재개](platform_team/agent_stop/README.md) | 20초(정책이 `ACTIVE`가 되기까지와 세션 여덟). 두 번째 실행에서 17초(세션 열둘) |
 | `platform_team/agent_stop/resume.sh <에이전트>` | 멈춤 정책을 지운다. 그 밖의 것은 바꾸지 않는다. | 8초와 12초(그 뒤 첫 호출부터 200) |
 | `platform_team/agent_monitoring/usage.sh [분]` | 에이전트마다 불린 수, 세션, 오류, CPU와 메모리, 도구마다 불린 수를 CloudWatch 메트릭에서 읽어 표로 찍는다. 읽기만 한다. [모니터링](platform_team/agent_monitoring/README.md#사용량-보고) | 2초 |
+
+## 허브 화면(샘플)
+
+`make ui`는 플랫폼팀의 샘플 화면을 이 PC에서 띄운다(`http://127.0.0.1:8300`). 브라우저에서 허브의 지금 상태(플랫폼 구성과 그것을 돌리는 AWS 서비스, 호스팅된 에이전트와 심사 중인 에이전트의 수, 전사 정책의 모드, 커스텀 가드레일, 알람, 카탈로그)를 그 순간 AWS에서 읽어 보인다. 로그인이 없고 `127.0.0.1`에서만 듣는다. 띄운 셸의 자격 증명으로 돈다. 다른 사이트의 페이지가 브라우저를 통해 이 화면을 쓰지 못하게 하는 규칙과 그 규칙이 막지 못하는 것, 값을 읽는 곳은 [허브 화면](platform_team/hub_ui/README.md)에 있다. 지금 있는 페이지는 홈뿐이다.
 
 ## 허브가 떠 있는 동안 요금이 드는 것
 
