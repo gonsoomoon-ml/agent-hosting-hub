@@ -49,7 +49,7 @@ SPEC = {
     "clips": {
         "00-home": clip("00-home"),
         "11-find": clip("11-find"),
-        "12-make": clip("12-make"),
+        "12-make": clip("11-find"),      # the second part of the 11-find recording, from its note make_asked
         "13-submit": clip("13-submit"),
         "21-review": clip("21-review"),
         "22-works": clip("22-works"),

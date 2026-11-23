@@ -15,6 +15,47 @@ python3 demo_video/scripts/build.py             # 그다음 클립, 카드, 릴�
 
 무엇을 쓰기 전에 모든 글을 플러그인의 자막 규칙으로 검사하고, 어긋난 글이 하나라도 있으면 글마다 한 줄로 말하고 멈춘다(종료 값 2). 규칙은 이렇다. 45자 이하, em dash, 가운뎃점, 화살표(U+2014, U+00B7, U+2192)를 쓰지 않는다, 속도 표시나 녹화에 대한 말을 쓰지 않는다. 자막, 장의 제목, 카드의 줄은 합니다체 한 문장이다(`니다`로 끝난다). 단계마다 자막 수의 한도(준비 5, 1단계 11, 2단계 12, 3단계 8, 4단계 10, 5단계 18)를 넘지 않는다. 릴은 이 파일이 정한 클립과 카드만 쓴다. 자막이 없는 클립은 자막 없이 자른다(플러그인은 자막이 없으면 카메라의 샷 이름을 대신 넣는데, 그것은 녹화하는 사람의 메모다).
 
+## 녹화 (`scenes/`)
+
+장면마다 폴더 하나에 `storyboard.mjs`(플러그인의 `record_demo.mjs`가 부르는 함수)가 있고, 녹화는 `scenes/record.sh`로 한다.
+
+```
+export DEMO_VIDEO_PLUGIN=<플러그인의 scripts 폴더> PLAYWRIGHT_ROOT=<node_modules/playwright가 있는 폴더>
+demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record.sh 00-home, record.sh 21-review 720
+```
+
+- 스토리보드는 찍는 화면을 한 줄(`export const surfaces = ['hub'];`)로 적는다. `hub`는 허브 화면(`make ui`, `127.0.0.1:8300`), `dev`는 개발자 PC의 터미널(`tools/dev_pc/run.sh term`, `127.0.0.1:7681`), `user`는 사용자의 셸(`tools/user_shell.sh up`, `127.0.0.1:7682`)이다. `record.sh`는 그 화면이 답하지 않으면 띄우는 명령을 말하고 멈춘다.
+- 녹화는 `out/raw/<장면>.webm`, 카메라 기록 `out/raw/<장면>.camlog.json`, 샷마다 화면의 글 `out/raw/<장면>.texts.txt`로 남는다. 같은 장면을 다시 찍으면 앞의 것은 `out/raw/old/`로 옮긴다. 끝나면 샷, 메모, 선택자가 아무것도 찾지 못한 샷을 찍고, 화면의 글에 12자리 숫자나 이메일 주소가 있으면 그 줄을 (숫자는 가리고) 찍고 종료 값 1로 끝난다.
+- 스토리보드는 먼저 허브가 그 장면에 필요한 상태인지 본다(`lib/state.mjs`가 `lib/hub_state.py`로 카탈로그의 record와 상태, 도는 심사, 전사 정책의 모드, 커스텀 가드레일, 멈춘 에이전트를 읽는다. 녹화하는 사람의 자격 증명으로 읽기만 한다). 아니면 무엇이 다른지 한 줄로 말하고 아무것도 하지 않는다.
+- 장면이 치거나 기다리는 글은 모두 `lib/texts.mjs`에 언어별로 있다. 스토리보드는 `--lang`을 읽는다. 지금은 한국어만 찍는다.
+- 허브 화면의 버튼은 폼 POST이고 303으로 페이지를 다시 연다. 작업이 끝나면 페이지가 한 번 새로 읽힌다. 카메라는 페이지 안에 있으므로 `lib/hub.mjs`가 새 페이지마다 카메라를 다시 넣는다.
+
+장면과 그 장면이 필요로 하는 허브의 상태다(스토리보드가 맨 먼저 확인한다). 한 장면이 남긴 상태가 다음 장면의 시작이다.
+
+| 장면 | 화면 | 하는 일 | 필요한 상태 | 남기는 상태 |
+|---|---|---|---|---|
+| `00-home` | 허브 화면 | 홈: 수, 두 흐름의 그림, 플랫폼 구성, 카탈로그 | `docs_adk`, `spec_assistant`, `parts-tools` 승인, `quality_agent`와 `release_review` 없음, 전사 정책 꺼짐, 가드레일 떨어짐 | 바꾸지 않는다 |
+| `11-find` | 개발자 PC | 한 Claude Code 세션: 카탈로그의 MCP 검색 도구로 부품 규격 도구를 찾고(`11-find`), 표준 템플릿으로 `quality_agent`의 파일을 만든다(메모 `make_asked`부터 `12-make`). 실행하거나 올리지 않는다 | `parts-tools` 승인, 두 에이전트 없음 | 컨테이너의 `dev_team/quality_agent`(Claude Code가 만든 것). 다음 장면 전에 `run.sh agent quality_agent` |
+| `13-submit` | 개발자 PC | `publish release_review`, `publish quality_agent v1-vulnerable` | 두 에이전트 없음, 작업 폴더에 리포의 `quality_agent` | 두 record 승인 대기, 심사 둘이 돈다. 곧바로 `21-review`를 찍는다 |
+| `21-review` | 허브 화면 | 두 심사를 처음부터 끝까지: `quality_agent`는 Scan에서 실패, `release_review`는 일곱 단계를 지나 `APPROVED` | 두 record 승인 대기, `release_review`의 심사가 돈다 | `release_review` 승인, `quality_agent` 승인 대기(실패한 심사) |
+| `22-works` | 사용자의 셸 | `ask release_review --file demo_scenes/inputs/change-ok.txt` | `release_review` 승인 | 바꾸지 않는다 |
+| `23-reject` | 허브 화면 | 실패한 단계, 스캔이 찾은 줄, 사유를 적고 반려(`REHEARSE=1`이면 누르지 않는다) | `quality_agent` 승인 대기, 도는 심사 없음 | `quality_agent` 반려 |
+| `24-again` | 개발자 PC | 고친 판의 의존성을 보이고 `publish quality_agent` | `quality_agent` 반려 | 승인 대기, 심사가 돈다. 곧바로 `25-approved`를 찍는다 |
+| `25-approved` | 허브 화면 | 고친 판의 심사가 일곱 단계를 지나 `APPROVED` | `quality_agent`의 심사가 돈다 | `quality_agent` 승인 |
+| `26-answers` | 사용자의 셸 | `ask quality_agent "What is the spec of part P-100?"` | `quality_agent` 승인 | 바꾸지 않는다 |
+
+### 사용자의 셸 (`tools/user_shell.sh`)
+
+팀의 사용자가 호스팅된 에이전트를 부르는 터미널이다. `user_shell.sh up`은 ttyd를 `127.0.0.1:7682`에서만(`-i lo`, 다른 출처의 연결은 받지 않는다 `-O`) 띄우고, 페이지를 열 때마다 bash가 새로 뜬다. 프롬프트는 `사용자 $ `, 시작 폴더는 리포의 루트, PATH의 맨 뒤에 `demo_scenes/`가 있어서 `ask …`로 친다. rc 파일을 읽지 않고 기록(history)을 남기지 않는다. 허브에는 사용자 역할이 따로 없다(사용자는 에이전트 게이트웨이를 부를 수 있는 IAM 주체다). 그래서 이 셸은 녹화하는 사람의 자격 증명으로 돈다. 이 PC에서 `127.0.0.1:7682`에 닿는 것은 그 셸을 얻으므로 녹화할 때만 띄우고 끝나면 `user_shell.sh down`으로 멈춘다.
+
+### Claude Code 장면
+
+Claude Code가 화면에 찍는 것은 믿지 않는다. 스토리보드(`lib/claude.mjs`)는 화면을 보고 언제 넘어갈지와 카메라를 어디에 둘지만 정한다. Claude Code가 물으면, 만드는 에이전트의 폴더 안의 파일이거나 코드를 돌리지 않고 다른 곳에 쓰지 않는 셸 명령일 때만 "1. Yes"(그 한 번)를 고르고, 그 밖의 것(코드 실행, 올리기, 다른 곳에 쓰기, 화면에 다 보이지 않는 셸 명령)에는 No를 고른다. "다시 묻지 않기"는 고르지 않는다.
+
+2026-11-23의 녹화(`11-find`, UTC 11:50~12:07, 다섯 번 찍었다)에서 본 것이다. 첫 번째에는 "그 도구의 record를 보여 주세요"라는 요청에 Claude Code가 record의 ARN(계정 ID가 들어 있다)을 표로 보였고, `record.sh`의 글 검사가 그것을 잡아 그 녹화를 버렸다. 그 뒤로 요청은 도구의 이름, 설명, 입력을 묻는다. 그다음 세 번은 스토리보드가 묻는 말에 잘못 No를 고른 것(따옴표 안의 `|aws`를 명령으로 읽은 것, 긴 미리보기로 경로가 화면 밖에 있던 파일, 두 줄로 접힌 `cp` 명령)이어서 고치고 다시 찍었다. 다섯 번째에서 Claude Code는 읽기 넷을 묻고(Yes), 앞의 43줄이 화면에 보이지 않는 긴 명령(`mkdir`, `cp`, here-document로 파일 쓰기)을 물었고(No), 그 뒤 파일 다섯을 `dev_team/quality_agent/`에 묻지 않고 썼다. 아무것도 실행하거나 올리지 않았다.
+
+같은 날 Claude Code가 셸에서 `cd dev_team`을 한 뒤에는 `dev_team/` 아래의 파일을 만들 때도 물었고, 화면의 경로는 `dev_team/`을 기준으로 보였다(`quality_agent/agent.json`). `./`로 시작하는 권한 규칙이 Claude Code의 그때 폴더를 기준으로 읽히는 것으로 보인다. 그렇다면 그렇게 `cd`한 뒤에는 `Edit(./demo_scenes/**)` 같은 거부 규칙도 맞지 않아 거부 대신 묻게 된다(해 보지 않았다). `Read(//run/dev-pc/**)`는 절대 경로라 해당하지 않는다.
+
 ## 개발자 PC (`tools/dev_pc/`)
 
 개발자 장면을 찍는 PC다. Docker 컨테이너 하나이고, 이 안에서 개발자가 Claude Code로 에이전트를 만들고, 카탈로그를 검색하고, 에이전트를 올리고, 로그를 본다. 사용자는 `dev`, 호스트 이름은 `dev-pc`, 작업 폴더는 `/home/dev/work`, 프롬프트는 `개발자 $ `다.

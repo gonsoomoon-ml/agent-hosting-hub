@@ -551,3 +551,177 @@ def test_a_clip_with_no_beats_is_cut_without_captions(tmp_path):
     build = _build()
     cmd = build.clip_command(Path("/plugin"), "00-home", build.SPEC["clips"]["00-home"], "ko", tmp_path)
     assert "--no-captions" in cmd and "--title" not in cmd
+
+
+# ------------------------------------------------------------------ the recording: record.sh, the user's shell, storyboards
+
+SCENES = VIDEO / "scenes"
+TAKES = ["00-home", "11-find", "13-submit", "21-review", "22-works", "23-reject", "24-again", "25-approved",
+         "26-answers"]                                  # 12-make is the second part of the 11-find recording
+NODE = shutil.which("node")
+
+
+def test_the_users_shell_is_on_this_pc_only_with_its_prompt_and_the_scene_commands():
+    sh = VIDEO / "tools" / "user_shell.sh"
+    assert os.access(sh, os.X_OK)
+    code = _code(sh)
+    assert "set -euo pipefail" in code and "set -x" not in code
+    [ttyd] = [line for line in code.splitlines() if "ttyd -i lo" in line]
+    assert re.search(r'\bttyd -i lo -p "\$port" -O -w "\$repo"', ttyd) and "port=7682" in code
+    assert "PS1='사용자 $ '" in code and 'PATH="$PATH:$repo/demo_scenes"' in code         # the scene commands last
+    assert "bash --norc --noprofile -i" in code and "HISTFILE=" in code                 # no rc file, no history
+    assert 'AWS_REGION="$region" AWS_DEFAULT_REGION="$region" DEMO_PREFIX="$prefix"' in code
+    for word in ("--env-file", ".aws", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "0.0.0.0"):
+        assert word not in code, word
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")} | {"PATH": "/usr/bin:/bin"}
+    for args in ([], ["nope"], ["up", "x"]):
+        r = subprocess.run([str(sh), *args], capture_output=True, text=True, env=env, timeout=30)
+        assert (r.returncode, r.stdout) == (2, "usage: demo_video/tools/user_shell.sh up | down\n"), args
+
+
+def test_record_sh_refuses_bad_usage_an_unknown_take_or_a_missing_tool_before_recording(tmp_path):
+    rec = SCENES / "record.sh"
+    assert os.access(rec, os.X_OK)
+    env = {k: v for k, v in os.environ.items() if k not in ("DEMO_VIDEO_PLUGIN", "PLAYWRIGHT_ROOT")}
+    run = lambda *a, **e: subprocess.run([str(rec), *a], capture_output=True, text=True, env=env | e, timeout=30)
+    usage = "usage: demo_video/scenes/record.sh <take> [max seconds] [--lang ko]\n"
+    assert (run().returncode, run().stdout) == (2, usage)
+    assert run("00-home", "120", "x").stdout == usage and run("00-home", "--lang").stdout == usage
+    for take in ("99-nowhere", "../lib", "lib"):
+        r = run(take)
+        assert r.returncode == 2 and r.stdout.startswith(f"no take '{take}'"), take
+    r = run("00-home")
+    assert r.returncode == 2 and "DEMO_VIDEO_PLUGIN" in r.stdout and "plugins/demo-video" in r.stdout
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    (plugin / "record_demo.mjs").write_text("")
+    r = run("00-home", DEMO_VIDEO_PLUGIN=str(plugin), PLAYWRIGHT_ROOT=str(tmp_path))
+    assert r.returncode == 2 and "PLAYWRIGHT_ROOT" in r.stdout
+    assert not (ROOT / "demo_video" / "out" / "raw" / "99-nowhere.webm").exists()
+
+
+def _storyboards():
+    return sorted(SCENES.glob("*/storyboard.mjs"))
+
+
+def test_every_storyboard_names_its_surfaces_checks_the_hubs_state_first_and_reads_the_language():
+    assert [p.parent.name for p in _storyboards()] == TAKES
+    for p in _storyboards():
+        text = p.read_text(encoding="utf-8")
+        [line] = [line for line in text.splitlines() if line.startswith("export const surfaces")]
+        names = re.fullmatch(r"export const surfaces = \[((?:'\w+'(?:, )?)+)\];", line).group(1)
+        assert set(re.findall(r"'(\w+)'", names)) <= {"hub", "dev", "user"}, p
+        body = text.split("export default async function storyboard(", 1)[1]
+        first = re.search(r"\bawait\s+([\w.]+)\(", body).group(1)
+        assert first == "needState", (p, first)                 # the state check comes before anything else
+        assert "texts(option)" in text, p
+        # every text a take types or waits for lives in lib/texts.mjs under its language
+        assert not re.search(r"[가-힣]", text), p
+
+
+def test_the_recording_files_name_no_host_home_folder_person_or_account():
+    files = [*SCENES.rglob("*.mjs"), *SCENES.rglob("*.py"), SCENES / "record.sh", VIDEO / "tools" / "user_shell.sh",
+             VIDEO / "scripts" / "build.py"]
+    assert len(files) > 10
+    for f in files:
+        text = f.read_text(encoding="utf-8")
+        assert not re.search(r"(?<![0-9])[0-9]{12}(?![0-9])", text.replace("123456789012", "")), f
+        assert not re.search(r"[\w.+-]+@[\w-]+\.[A-Za-z]{2,}", text), f
+        assert "/home/ubuntu" not in text and "ip-172-" not in text and "arn:aws" not in text, f
+    # the plugin and Playwright are found through the environment, never a path of this PC
+    assert "process.env.DEMO_VIDEO_PLUGIN" in (SCENES / "lib" / "plugin.mjs").read_text(encoding="utf-8")
+
+
+def _node(script: str, tmp_path: Path) -> str:
+    """Run an ES module snippet in demo_video/scenes/lib/, with a stand-in for the plugin's term.mjs."""
+    plugin = tmp_path / "plugin"
+    plugin.mkdir(exist_ok=True)
+    (plugin / "term.mjs").write_text("export const stand_in = true;\n")
+    r = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30,
+                       cwd=SCENES / "lib", env=os.environ | {"DEMO_VIDEO_PLUGIN": str(plugin)})
+    assert r.returncode == 0, r.stderr
+    return r.stdout
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_state_check_says_what_differs(tmp_path):
+    out = _node("""
+import { differences } from './state.mjs';
+const s = { records: { docs_adk: { type: 'AGENT', status: 'APPROVED' }, quality_agent: { type: 'AGENT', status: 'PENDING_APPROVAL' } },
+            reviewing: ['quality_agent'], mode: null, attached: false, stopped: [] };
+console.log(JSON.stringify([
+  differences(s, { records: { docs_adk: 'APPROVED', quality_agent: ['PENDING_APPROVAL', 'REJECTED'] }, reviewing: ['quality_agent'],
+                   mode: null, attached: false, stopped: [] }),
+  differences(s, { records: { release_review: 'APPROVED', quality_agent: 'absent' }, reviewing: [], mode: 'active',
+                   attached: true, stopped: ['quality_agent'] }),
+]));""", tmp_path)
+    same, other = json.loads(out)
+    assert same == []
+    assert other == ["release_review is absent, not APPROVED", "quality_agent is PENDING_APPROVAL, not absent",
+                     "reviews running: quality_agent (this take needs none)", "guard_prompt is off, not active",
+                     "the custom guardrail is detached", "stopped: none"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_claude_codes_question_is_answered_yes_only_for_the_agents_files_and_commands_that_run_nothing(tmp_path):
+    # what Claude Code prints is untrusted: the storyboard says Yes to a file in the agent's folder, or to a shell
+    # command that runs no code and writes nowhere else; No to everything else
+    cases = [
+        ("Bash command", "cd dev_team && ls -la agent_template; for f in agent_template/*; do cat $f; done", "yes"),
+        ("Bash command", "mkdir quality_agent && cp agent_template/main.py agent_template/hub_tools.py quality_agent/", "yes"),
+        ("Bash command", 'echo "strands-agents==1.65.0" >> quality_agent/requirements.txt && cat quality_agent/x', "yes"),
+        ("Bash command", "find . -name uv.lock -maxdepth 2 2>/dev/null; grep -n strands-agents uv.lock", "yes"),
+        ("Bash command", "cat dev_team/agent_template/publish.sh", "yes"),
+        ("Bash command", "cd /home/dev/work; grep -n -A2 -E '^name = \"(strands-agents|aws-opentelemetry-distro)\"' uv.lock",
+         "yes"),                                                   # a quoted pattern holds no command
+        ("Bash command", 'bash -c "python3 agent.py"', "no"),
+        ("Bash command", 'cd dev_team/quality_agent && python3 -c "import agent"', "no"),
+        ("Bash command", "uv run pytest tests", "no"),
+        ("Bash command", "publish quality_agent", "no"),
+        ("Bash command", "pip index versions strands-agents", "no"),
+        ("Bash command", "cp quality_agent/agent.py ../demo_scenes/search", "no"),
+        ("Bash command", "echo x > ../platform_team/a.py", "no"),
+        ("Bash command", "rm -rf quality_agent", "no"),
+        ("Bash command", "sed -i s/a/b/ ../.mcp.json", "no"),
+        ("Create file", "quality_agent/agent.json", "yes"),
+        ("Create file", "dev_team/quality_agent/agent.py", "yes"),
+        ("Create file", "demo_scenes/search", "no"),
+        ("Create file", "quality_agent/.claude/settings.json", "no"),
+        ("Edit file", "../platform_team/hub_ui/app.py", "no"),
+    ]
+
+    def screen(title, body):
+        if title == "Bash command":
+            return [" Bash command", f"   {body}", " Do you want to proceed?", " ❯ 1. Yes", "   2. No"]
+        return [f" {title}", f" {body}", "  1 {", f" Do you want to create {body.rsplit('/', 1)[-1]}?", " ❯ 1. Yes"]
+    screens = [screen(a, b) for a, b, _ in cases] + [
+        # a long dialog: the shell command's first lines are hidden, so it is never a yes
+        [" Bash command", "   cat agent_template/README.md", " ↑ 43 more lines", " Do you want to proceed?", " ❯ 1. Yes"],
+        ["   cat quality_agent/agent.json", " ↑ 12 more lines", " Do you want to proceed?"],
+        # a long file preview pushed the path off the screen: the file name in the question decides
+        [" │     return _agent", " │", " Do you want to create agent.py?", " ❯ 1. Yes"],
+        [" │ {}", " Do you want to create settings.json?", " ❯ 1. Yes"],
+        [" │ x", " Do you want to create CLAUDE.md?"],
+        # a long command wrapped over two rows of the terminal's width is one command (cp's destination is on row two)
+        [" Bash command", "   mkdir quality_agent && cp agent_template/main.py agent_template/hub_tools.py agent_template/agent.json",
+         "   agent_template/requirements.txt quality_agent/ && ls quality_agent", " Do you want to proceed?"],
+        # a short row is a line of its own: the mv on the next row is a command that writes elsewhere
+        [" Bash command", "   cat quality_agent/agent.json", "   mv quality_agent ../platform_team", " Do you want to proceed?"],
+    ]
+    wants = [want for _, _, want in cases] + ["no", "no", "yes", "no", "no", "yes", "no"]
+    out = _node("import { verdict } from './claude.mjs';\nconst screens = " + json.dumps(screens)
+                + ";\nconsole.log(JSON.stringify(screens.map(r => verdict(r, r.findIndex(l => /Do you want/.test(l))))));",
+                tmp_path)
+    assert json.loads(out) == wants
+
+
+def test_the_hubs_state_names_each_running_review_by_its_agent():
+    import importlib.util
+    from tests.fakes import FakeClients
+    spec = importlib.util.spec_from_file_location("hub_state_take", SCENES / "lib" / "hub_state.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    c = FakeClients(running=[("first", "rid-release"), ("second", "rid-gone")])
+    machine = "arn:aws:states:us-west-2:123456789012:stateMachine:hub-review"
+    assert module.reviewing(c, machine, {"rid-release": "release_review"}) == ["?", "release_review"]
+    assert module.reviewing(FakeClients(), machine, {}) == []
