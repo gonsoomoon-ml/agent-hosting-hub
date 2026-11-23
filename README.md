@@ -49,6 +49,17 @@ agent-hosting-hub/
 | `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트. `e2e_hosting.py`(흐름 1의 끝에서 끝까지), `e2e_operations.py`(흐름 2의 끝에서 끝까지), `check_platform.py`(허브의 틀), `check_cleanup.py`(지운 뒤 남은 것). `spikes/`는 제품의 일부가 아니라 만들면서 가정을 확인한 스크립트다([확인 시험](e2e_checks/spikes/README.md)) |
 | `tests/` | 누구나 | 단위 시험(`make test`). AWS를 부르지 않는다. |
 
+## 코드 따라 읽기
+
+두 흐름이 코드의 어디를 지나가는지 단계마다 적는다. 번호는 각 폴더의 README가 쓰는 개념도의 번호다.
+
+### 흐름 1: 호스팅
+
+| 단계 | 일어나는 일 | 코드 |
+|---|---|---|
+| ① 에이전트와 도구 검색 | 개발자가 카탈로그에서 승인된 record를 찾는다. 승인되지 않은 record는 검색에 나오지 않는다. | `demo_scenes/search` → `platform_team/agent_catalog/search_catalog.py` → `catalog_records.py`의 `search_records()` |
+| ② 에이전트 호스팅 신청 | `publish.sh <에이전트 폴더>`가 네 가지를 차례로 한다. 신청서(`agent.json`)를 검사한다. 폴더의 `.py` 파일과 `requirements.txt`를 zip으로 묶어 제출함(S3 bucket)에 올린다. 신청서를 카탈로그의 record로 쓴다. 승인을 요청한다. record가 `PENDING_APPROVAL`이 되면 그 이벤트가 호스팅 심사를 시작한다. | `dev_team/agent_template/publish.sh` → `platform_team/agent_catalog/publish_agent.py`의 `publish()`. 검사는 `application_form.py`의 `validate()`, record는 `catalog_records.py`의 `put_record()`와 `submit()`, 심사를 시작하는 규칙은 `platform_team/hosting_review/terraform/main.tf`의 `aws_cloudwatch_event_rule.on_submit` |
+
 ## 사전 요건
 
 - Terraform 1.9 이상, Python 3.12 이상과 [uv](https://docs.astral.sh/uv/), bash
