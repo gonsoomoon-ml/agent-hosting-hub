@@ -1,5 +1,8 @@
 # What the dev team may do before any review: call the shared read tool through the tool gateway, search the
-# catalog, and create a record and ask for its approval. The hosting review adds the upload to its inbox.
+# catalog (also through the registry's MCP endpoint), create a record and ask for its approval, and read, not write,
+# the log lines of this hub's Runtimes (<prefix>_<agent>). One dev role serves every team, so a developer reads every
+# hosted agent's lines; a harness agent's Runtime (harness_<prefix>_<agent>) is not in it. The hosting review adds the
+# upload to its inbox.
 
 data "aws_caller_identity" "me" {}
 data "aws_region" "here" {}
@@ -31,6 +34,13 @@ resource "aws_iam_role_policy" "dev" {
         ]
         Resource = [var.registry_arn, "${var.registry_arn}/*"]
       },
+      # the registry's MCP endpoint (a developer's coding assistant searches the catalog with it); each tool call also
+      # needs that tool's own action above (search_discoverable_registry_records: SearchDiscoverableRegistryRecords)
+      { Effect = "Allow", Action = ["agent-registry:InvokeRegistryMcp"], Resource = [var.registry_arn] },
+      # demo_scenes/logs (agent_logs): find a Runtime's log group (DescribeLogGroups has no resource type, so log-group:*)
+      # and read its lines, in this hub's Runtimes' groups only
+      { Effect = "Allow", Action = ["logs:DescribeLogGroups"], Resource = ["arn:aws:logs:${data.aws_region.here.region}:${data.aws_caller_identity.me.account_id}:log-group:*"] },
+      { Effect = "Allow", Action = ["logs:FilterLogEvents"], Resource = ["arn:aws:logs:${data.aws_region.here.region}:${data.aws_caller_identity.me.account_id}:log-group:/aws/bedrock-agentcore/runtimes/${var.prefix}_*"] },
     ]
   })
 }

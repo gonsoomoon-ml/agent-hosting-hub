@@ -74,6 +74,53 @@ def test_the_dev_role_reads_the_hub_values_publish_needs():
     assert len(reads) == 1 and re.search(r'Action\s*=\s*\["ssm:GetParametersByPath"\]', reads[0])
     assert re.search(r'Resource\s*=\s*\["arn:aws:ssm:\$\{[\w.]+\}:\$\{[\w.]+\}:parameter/\$\{var\.prefix\}/platform"\]', reads[0])
 
+# ------------------------------------------------------------------ the dev team role: what it holds, and no more
+
+def dev_statements() -> list[tuple[list[str], list[str]]]:
+    """The dev role's inline policy as (actions, resources), one pair per statement, in the order written."""
+    dev = block("aws_iam_role_policy", "dev")
+    found = re.findall(r"Action\s*=\s*\[(.*?)\]\s*,?\s*Resource\s*=\s*\[(.*?)\]", dev, re.S)
+    assert found and len(found) == dev.count("Effect = \"Allow\"") and "Deny" not in dev
+    return [(re.findall(r'"([^"]+)"', a), [r.strip() for r in res.split(",") if r.strip()]) for a, res in found]
+
+def test_the_dev_role_holds_these_actions_and_no_other():
+    # what dev_access/README.md lists: the shared read tool, the hub's values, the catalog (searched also through its MCP
+    # endpoint), reading the log lines of this hub's Runtimes. The hosting review adds the upload (hosting-inbox).
+    held = sorted(a for actions, _ in dev_statements() for a in actions)
+    assert held == sorted([
+        "bedrock-agentcore:InvokeGateway", "ssm:GetParametersByPath",
+        "agent-registry:SearchDiscoverableRegistryRecords", "agent-registry:ListDiscoverableRegistryRecords",
+        "agent-registry:GetRegistryRecord", "agent-registry:ListRegistryRecords", "agent-registry:CreateRegistryRecord",
+        "agent-registry:UpdateRegistryRecord", "agent-registry:SubmitRegistryRecordForApproval",
+        "agent-registry:InvokeRegistryMcp", "logs:DescribeLogGroups", "logs:FilterLogEvents"])
+    assert [a for a in held if "*" in a] == []
+
+def test_the_dev_role_may_use_the_catalogs_mcp_endpoint_of_this_hubs_registry_only():
+    # the registry's MCP endpoint needs InvokeRegistryMcp on the registry plus the action of the tool it calls
+    # (SearchDiscoverableRegistryRecords, which the role holds on the same registry)
+    [mcp] = [(a, r) for a, r in dev_statements() if "agent-registry:InvokeRegistryMcp" in a]
+    assert mcp == (["agent-registry:InvokeRegistryMcp"], ["var.registry_arn"])
+
+def test_the_dev_role_reads_the_log_lines_of_this_hubs_runtimes_only_and_writes_none():
+    # One dev role serves every team, so it reads the lines of every Runtime of this hub (<prefix>_<agent>), and of no
+    # other: not a harness agent's Runtime (harness_<prefix>_<agent>), not another hub's, not another log group.
+    # DescribeLogGroups has no resource type in the Service Authorization Reference: it keeps log-group:*.
+    from fnmatch import fnmatchcase
+    from platform_team.shared_code.config import Settings
+    logs = [(a, r) for a, r in dev_statements() if any(x.startswith("logs:") for x in a)]
+    assert logs == [(["logs:DescribeLogGroups"], ['"arn:aws:logs:${data.aws_region.here.region}:${data.aws_caller_identity.me.account_id}:log-group:*"']),
+                    (["logs:FilterLogEvents"], ['"arn:aws:logs:${data.aws_region.here.region}:${data.aws_caller_identity.me.account_id}:log-group:/aws/bedrock-agentcore/runtimes/${var.prefix}_*"'])]
+    pattern = logs[1][1][0].strip('"').replace("${data.aws_region.here.region}", "us-west-2").replace(
+        "${data.aws_caller_identity.me.account_id}", "123456789012").replace("${var.prefix}", "hub")
+    group = "arn:aws:logs:us-west-2:123456789012:log-group:/aws/bedrock-agentcore/runtimes/%s-Ab12Cd34Ef-DEFAULT"
+    for agent in ("quality_agent", "release_review", "docs_adk"):
+        for name in (group % Settings().runtime_name(agent), group % Settings().runtime_name(agent) + ":*"):
+            assert fnmatchcase(name, pattern), name
+    for other in (group % Settings().harness_runtime_name("spec_assistant"), group % "hub2_quality_agent",
+                  group % "other_runtime", "arn:aws:logs:us-west-2:123456789012:log-group:/aws/lambda/hub-guardrail",
+                  "arn:aws:logs:us-west-2:234567890123:log-group:/aws/bedrock-agentcore/runtimes/hub_quality_agent-Ab12Cd34Ef-DEFAULT"):
+        assert not fnmatchcase(other, pattern), other
+
 # ------------------------------------------------------------------ the gateway roles
 
 GATEWAYS = {"agents": "agent_gateway", "tools": "tool_gateway"}      # the role's name in Terraform, its module

@@ -14,7 +14,7 @@
 | `demo_scenes/logs <에이전트> [분]` | 개발자 | 에이전트의 Runtime 로그 그룹에서 가장 새 줄 200개까지를 오래된 줄부터 보인다(분은 15가 기본) | 첫 줄 `<에이전트>: the newest <n> log lines of the last <분> minutes`, 그다음 줄부터 로그 | 로그 그룹이 없으면 `no log group for <에이전트> ...` 한 줄과 종료 값 1. 그 시간에 줄이 없으면 한 줄과 종료 값 0 |
 
 - `publish`의 변형은 `dev_team/<에이전트>/variants/` 아래의 폴더다. 지금 있는 것은 `quality_agent`의 `v1-vulnerable`(취약한 라이브러리)과 `v2-loop`(도구를 되풀이해 부르는 판)이다.
-- `logs`는 `runtime-logs-<세션 ID>` 스트림의 줄만 읽는다. `otel-rt-logs`(2026-11-22에 같은 줄의 복사본이 있었다)와 `spans`, `build-logs-*`는 읽지 않는다. 쓰는 호출은 `DescribeLogGroups`와 `FilterLogEvents`뿐이라 SSM을 읽지 않는다. 개발자 역할이 그 로그 그룹을 읽을 수 있어야 돌아간다(지금의 `platform_team/dev_access`의 역할에는 그 권한이 없다).
+- `logs`는 `runtime-logs-<세션 ID>` 스트림의 줄만 읽는다. `otel-rt-logs`(2026-11-22에 같은 줄의 복사본이 있었다)와 `spans`, `build-logs-*`는 읽지 않는다. 쓰는 호출은 `DescribeLogGroups`와 `FilterLogEvents`뿐이라 SSM을 읽지 않는다. 개발팀 역할(`platform_team/dev_access`)은 허브 Runtime(`<prefix>_<에이전트>`)의 로그 그룹을 읽을 수 있다. harness 에이전트 `spec_assistant`의 Runtime(`harness_<prefix>_spec_assistant`)의 로그는 그 역할에 주지 않았으므로, 그 에이전트에는 `logs`가 거부를 한 줄(`logs of spec_assistant did not finish: ...`)로 말하고 종료 값 1로 끝난다(코드가 그렇게 한다).
 - `search`와 `ask`는 허브가 SSM `/<접두어>/platform`에 적어 둔 값(카탈로그 ID, 게이트웨이 ID)을 읽는다. `search`가 record의 도구 입력 필드를 보이는 것은 검색 결과나 `GetRegistryRecord`가 record의 custom descriptor를 주는 경우다. 코드가 그렇게 하고, AWS에서는 돌려 보지 않았다.
 
 ## 입력 파일
