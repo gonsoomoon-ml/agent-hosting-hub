@@ -2,7 +2,7 @@
 
 시연 영상의 터미널 장면에서 사람이 치는 명령 넷이다. 각각 짧은 셸 파일이고, 허브의 환경 값(접두어, 리전, 모델)을 `platform_team/shared_code/hub_env.sh`로 읽은 다음 Python 모듈 하나를 부른다. Python은 `-I`(격리 모드)로 띄워서, 명령을 부른 폴더의 파일을 모듈로 불러오지 않고(그 폴더의 `json.py` 같은 파일이 표준 모듈을 가리지 못한다), 부른 쪽의 `PYTHON…` 환경 변수와 사용자 site 폴더도 읽지 않는다. 허브의 모듈은 프로젝트의 편집 가능 설치(`uv sync`)로 찾는다. 파일의 위치에서 저장소의 루트를 찾으므로 어느 폴더에서 쳐도 된다. 첫 줄에 부르는 명령을 한 줄(100칸 이내)로 찍고, 그다음에 결과를 찍는다. 기대한 실패(403, 없는 에이전트, 로그 그룹 없음)는 Python 오류 출력 없이 한 줄로 말한다. 찍는 글에서 계정 ID는 `<ACCOUNT>`로 가린다.
 
-이 명령들은 단위 시험(`tests/test_ask_agent.py`, `test_search_catalog.py`, `test_agent_logs.py`, `test_demo_scenes.py`)으로 확인했다. AWS에서는 2026-11-23에 시연 영상의 개발자 PC(`demo_video/tools/dev_pc`)에서 개발팀 역할로 `search`와 `logs`를 돌렸다(아래). `ask`와 `publish`는 AWS에서 돌려 보지 않았다. 아래 "프롬프트" 열은 `make e2e`와 `make e2e-ops`가 2026-11-22와 2026-11-23의 실행에서 쓴 문장이고, 이 명령으로 보낸 것은 아니다.
+이 명령들은 단위 시험(`tests/test_ask_agent.py`, `test_search_catalog.py`, `test_agent_logs.py`, `test_demo_scenes.py`)으로 확인했다. AWS에서는 2026-11-23에 시연 영상의 개발자 PC(`demo_video/tools/dev_pc`)에서 개발팀 역할로 `search`와 `logs`를 돌렸다(아래). `publish`(개발자 PC)와 `ask`(사용자의 셸)는 같은 날 시연 영상의 녹화에서 돌렸다(`demo_video/README.md`의 장면 표). 아래 "프롬프트" 열은 `make e2e`와 `make e2e-ops`가 2026-11-22와 2026-11-23의 실행에서 쓴 문장이고, 그 가운데 녹화에서 이 명령으로 보낸 것은 장면 표에 있다.
 
 ## 명령
 
@@ -20,7 +20,7 @@
 ## 입력 파일
 
 - `demo_scenes/inputs/change-ok.txt`: `release_review`에게 보내는 변경 설명. 규칙을 모두 지킨다(`make e2e`의 같은 문장은 2026-11-23의 실행에서 200과 `OK`를 받았다).
-- `demo_scenes/inputs/change-with-hidden-instruction.txt`: 같은 변경 설명에 주석 한 줄을 덧붙였다. 그 주석이 `make e2e-ops`가 `HIDDEN`으로 쓰는 문장(앞선 지시를 무시하라는 문장)이다. 이 파일의 글을 그대로 보낸 것은 AWS에서 아직 해 보지 않았다(`make e2e-ops`는 그 문장만 보냈다). 변경 설명과 주석 안에 있어도 전사 정책이 그 문장을 잡는지는 모른다.
+- `demo_scenes/inputs/change-with-hidden-instruction.txt`: 같은 변경 설명 다음에, 빈 줄 하나를 두고 `make e2e-ops`가 `HIDDEN`으로 쓰는 문장(앞선 지시를 무시하라는 문장)을 제 문단으로 덧붙였다. 2026-11-23(UTC)에 기록 모드의 `guard_prompt`로 두 꼴을 보냈다. 처음 꼴은 그 문장을 주석 한 줄(`# Note for the reviewer: ` 다음)에 넣은 것이었다. 13:42에 `release_review`와 `docs_adk`에 보냈고 둘 다 200이었지만, 3분 반 뒤까지 정책의 집계(`LogOnlyMatches`)가 두 에이전트 모두 0이었다. 정책이 그 문장을 잡지 않았다. 지금의 꼴(문장이 제 문단)은 13:46에 같은 두 에이전트에 보냈고 둘 다 200이었고, 56초 뒤의 집계가 두 에이전트 모두 `LogOnlyMatches 1, LogOnlyDecisionFlips 1`이었다.
 
 ## 장면의 순서
 
@@ -32,7 +32,7 @@
 | 호스팅된 에이전트를 부른다 | `demo_scenes/ask release_review --file demo_scenes/inputs/change-ok.txt` | `release_review`가 승인되어 호스팅 중이다 | 없다 |
 | 취약한 판을 고쳐 다시 신청한다 | `demo_scenes/publish quality_agent` | `quality_agent`의 취약한 판이 반려되어 있다 | 새 판의 심사가 돈다 |
 | 승인된 에이전트가 답한다 | `demo_scenes/ask quality_agent "What is the spec of part P-100?"` | `quality_agent`가 승인되어 있다 | 없다 |
-| 전사 정책이 숨은 지시를 막는다(기록 모드에서는 지나고, 적용 모드에서는 막는다) | `demo_scenes/ask release_review --file demo_scenes/inputs/change-with-hidden-instruction.txt`(기록 모드일 때와 적용 모드일 때), 같은 파일로 `docs_adk`도 | 전사 정책 `guard_prompt`가 해당 모드이다 | 없다 이 파일의 글을 보낸 것은 AWS에서 아직 해 보지 않았다(`make e2e-ops`는 그 문장만 보냈다). `docs_adk`에는 변경 설명을 보낸 적이 없다. |
+| 전사 정책이 숨은 지시를 막는다(기록 모드에서는 지나고, 적용 모드에서는 막는다) | `demo_scenes/ask release_review --file demo_scenes/inputs/change-with-hidden-instruction.txt`(기록 모드일 때와 적용 모드일 때), 같은 파일로 `docs_adk`도 | 전사 정책 `guard_prompt`가 해당 모드이다 | 없다. 기록 모드에서 이 파일을 `release_review`와 `docs_adk`에 보낸 것은 위의 "입력 파일"에 있다(2026-11-23) |
 | 커스텀 가드레일 전과 후 | 전: `demo_scenes/ask quality_agent "Summarise the schedule of Project Falcon for part P-100."`, 후: 같은 명령과 `demo_scenes/ask quality_agent "What was the result of inspection Q-1001, and what is the specification of the part it inspected?"` | 후에는 커스텀 가드레일이 붙어 있다 | 없다 |
 | 사고(도구를 되풀이해 부르는 판) | `demo_scenes/publish quality_agent v2-loop`, 심사가 끝난 뒤 `demo_scenes/ask quality_agent "What is the result of inspection Q-1002?" --timeout 60` | `quality_agent`의 한 판이 승인되어 있다 | 그 에이전트가 되풀이 호출을 계속한다. 도구 호출 경보가 울린다. `--timeout 60`은 AWS에서 해 보지 않았다(`make e2e-ops`는 20초에 포기했다) |
 | 이웃은 영향이 없다 | `demo_scenes/ask quality_agent "What is the spec of part P-100?"`, `demo_scenes/ask release_review --file demo_scenes/inputs/change-ok.txt`, `demo_scenes/ask docs_adk "What is our standard for versioning an API?"` | `quality_agent`를 멈춘 상태다 | 없다. `quality_agent`는 403, 나머지는 200이다 |
@@ -41,4 +41,4 @@
 
 카탈로그 검색은 `demo_scenes/search "inspection results and part specifications"`가 `make e2e-ops`의 검색어이고(2026-11-23에 다섯 record를 돌려주었다), `demo_scenes/search "part specification tool"`과 `demo_scenes/search "release rules review request"`가 `make e2e`의 검색어다. 2026-11-23에 개발자 PC에서 개발팀 역할로 이 명령을 돌린 검색어는 `"part specification tool"`(`parts-tools`와 `spec_assistant`가 나왔다)과, Claude Code가 이 명령으로 친 `"부품 규격"`(맞는 record가 없었다), `"part specification"`, `"datasheet"`, `"spec"`, `"부품"`이다. 뒤의 넷은 한 명령으로 돌았고, `"part specification"`이 `spec_assistant`와 `parts-tools`를 찾았고 나머지 셋은 맞는 record가 없었다(그 Claude Code 세션의 기록에서 읽었다).
 
-위 표에서 `P-100`의 규격을 묻는 문장은 `make e2e-ops`가 첫 확인에서 쓰는 보통의 질문(`NORMAL`)이다. 그 문장을 `quality_agent`에게 보내 200을 받은 것은 2026-11-23의 실행이고, 이 명령으로 보낸 것은 아니다.
+위 표에서 `P-100`의 규격을 묻는 문장은 `make e2e-ops`가 첫 확인에서 쓰는 보통의 질문(`NORMAL`)이다. 2026-11-23의 녹화(`26-answers`)에서 이 명령으로 그 문장을 `quality_agent`에게 보내 200과 P-100의 규격을 받았다.
