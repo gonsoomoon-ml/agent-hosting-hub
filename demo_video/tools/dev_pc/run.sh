@@ -5,9 +5,10 @@
 #   demo_video/tools/dev_pc/run.sh build          the image (no build context: no file of this PC goes into it)
 #   demo_video/tools/dev_pc/run.sh creds          the two temporary credentials (again before a take: replaced in place)
 #   demo_video/tools/dev_pc/run.sh up             the container, with a fresh checkout in /home/dev/work
-#   demo_video/tools/dev_pc/run.sh check          Claude Code answers through Bedrock; the MCP tools; search; who the tools are
+#   demo_video/tools/dev_pc/run.sh check          Claude Code answers through Bedrock; the route; the MCP tools; search;
+#                                                 who the tools are
 #   demo_video/tools/dev_pc/run.sh term           ttyd on 127.0.0.1:7681 into the container
-#   demo_video/tools/dev_pc/run.sh agent <name>   put the repo's prepared agent into dev_team/ (what was there is kept aside)
+#   demo_video/tools/dev_pc/run.sh agent <name>   put the repo's agent into dev_team/ (what was there is kept aside)
 #   demo_video/tools/dev_pc/run.sh stop           stop ttyd and the container (the home stays)
 #   demo_video/tools/dev_pc/run.sh forget         delete the two credential files
 #   demo_video/tools/dev_pc/run.sh down           stop, then forget
@@ -20,6 +21,9 @@
 #                  (bedrock-policy.json.tmpl) allows only invoking the video's two Claude models: Claude Code reads it
 #                  for its own model calls through the settings key awsCredentialExport
 # No credential value is printed or logged: creds prints the two principals (the account masked) and their expiry.
+# The container can write one folder of this PC: its home, demo_video/out/dev-pc/home (/home/dev). So once that folder
+# exists, run.sh makes, changes and deletes things inside it only through docker exec as the user dev, where a link
+# planted in it resolves inside the container; no command of this PC runs on a path under it.
 set -euo pipefail
 
 USAGE="usage: demo_video/tools/dev_pc/run.sh build | creds | up | check | term | agent <name> | stop | forget | down"
@@ -56,7 +60,28 @@ aws_hub() {
   return "$status"
 }
 
+# The folders run.sh writes on this PC: refused when one of them is a symbolic link.
+refuse_links() {
+  local p
+  for p in "$out" "$home" "$creds"; do
+    if [ -L "$p" ]; then
+      echo "${p#"$repo"/} is a symbolic link: run.sh does not follow it"
+      exit 1
+    fi
+  done
+}
+
 running() { docker exec "$name" true >/dev/null 2>&1; }
+
+# A command in the container's working folder, as the user dev.
+box() { docker exec -w /home/dev/work "$@"; }
+
+# The blackhole route for the instance metadata service is in place (read as dev; ip route show needs no right).
+route_ok() { docker exec "$name" /usr/bin/ip route show 169.254.169.254 2>/dev/null | grep -q '^blackhole 169\.254\.169\.254'; }
+
+need_route() {
+  route_ok || { echo "the container has no blackhole route for the instance metadata service: run.sh up again"; exit 1; }
+}
 
 do_stop() {
   if [ -f "$out/ttyd.pid" ]; then
@@ -78,6 +103,7 @@ case "$1" in
     ;;
 
   creds)
+    refuse_links
     git -C "$repo" check-ignore -q demo_video/out/dev-pc/creds/developer.ini ||
       { echo "demo_video/out/ is not git-ignored: no credential file is written"; exit 1; }
     umask 077
@@ -102,60 +128,83 @@ case "$1" in
     ;;
 
   up)
+    refuse_links
     docker image inspect "$image" >/dev/null 2>&1 || { echo "no image $image: run.sh build first"; exit 1; }
     [ -f "$creds/developer.ini" ] && [ -f "$creds/bedrock.json" ] || { echo "no credentials: run.sh creds first"; exit 1; }
     registry="$(aws_hub ssm get-parameter --name "/$prefix/platform/registry_id" --query Parameter.Value --output text)"
     [[ "$registry" =~ ^[A-Za-z0-9-]+$ ]] || { echo "no catalog ID under /$prefix/platform: is the hub deployed?"; exit 1; }
     docker rm -f "$name" >/dev/null 2>&1 || true
-    mkdir -p "$home/work" "$home/prepared"
+    mkdir -p "$home"
     chmod 700 "$out" "$home"
-    work="$home/work"
-    # A fresh checkout: the repo's tracked files of these folders (no state, no build, no .env). The Python
-    # environment (.venv) is kept. In the story the developer makes quality_agent, so it waits outside the checkout
-    # (run.sh agent quality_agent puts it in).
-    find "$work" -mindepth 1 -maxdepth 1 ! -name .venv -exec rm -rf {} +
-    git -C "$repo" ls-files -z -- dev_team platform_team demo_scenes pyproject.toml uv.lock |
-      (cd "$repo" && tar --null -T - -cf -) | tar -C "$work" -xf -
-    rm -rf "$home/prepared/quality_agent"
-    mv "$work/dev_team/quality_agent" "$home/prepared/quality_agent"
-    mkdir -p "$work/.claude"
-    cp "$here/settings.json" "$work/.claude/settings.json"
-    cp "$here/CLAUDE.md" "$work/CLAUDE.md"
-    sed -e "s/<REGION>/$region/g" -e "s/<REGISTRY_ID>/$registry/g" "$here/mcp.json.tmpl" >"$work/.mcp.json"
-    # No port is published. The instance metadata service of this PC is out of reach: the SDKs do not ask it, and its
-    # address is a blackhole route in the container's network (set by root once; the user dev holds no capability
-    # to remove it), so no process in the container gets this PC's instance credentials.
-    docker run -d --name "$name" --hostname dev-pc --init --user dev --workdir /home/dev/work --cap-add NET_ADMIN \
-      --volume "$home:/home/dev" --volume "$creds:/run/dev-pc:ro" \
+    # No port is published, and no process gains a privilege (no-new-privileges). The instance metadata service of
+    # this PC is out of reach: the SDKs do not ask it, and its address is a blackhole route in the container's network,
+    # set once by root (by absolute path, with a fixed PATH); the user dev holds no capability to remove it. Without
+    # the route the container is removed.
+    docker run -d --name "$name" --hostname dev-pc --init --user dev --workdir /home/dev --cap-add NET_ADMIN \
+      --security-opt no-new-privileges --volume "$home:/home/dev" --volume "$creds:/run/dev-pc:ro" \
       --env AWS_SHARED_CREDENTIALS_FILE=/run/dev-pc/developer.ini --env AWS_EC2_METADATA_DISABLED=true \
       --env AWS_REGION="$region" --env AWS_DEFAULT_REGION="$region" --env DEMO_PREFIX="$prefix" \
       "$image" >/dev/null
 
-    docker exec --user root "$name" ip route add blackhole 169.254.169.254/32
+    if ! docker exec --user root --env PATH=/usr/sbin:/usr/bin:/sbin:/bin "$name" /usr/bin/ip route add blackhole 169.254.169.254/32 ||
+      ! route_ok; then
+      docker rm -f "$name" >/dev/null 2>&1 || true
+      echo "the blackhole route for the instance metadata service could not be set: the container is removed"
+      exit 1
+    fi
+    # A fresh checkout, all of it written inside the container: the working folder emptied (the Python environment
+    # .venv is kept), then the repo's tracked files of these folders (no state, no build, no .env) from this PC's
+    # standard input. In the story the developer makes quality_agent, so it is left out (run.sh agent puts it in).
+    docker exec -u dev "$name" sh -c 'cd /home/dev && rm -rf prepared && { [ ! -L work ] || rm -f work; } &&
+      mkdir -p work && find work -mindepth 1 -maxdepth 1 ! -name .venv -exec rm -rf {} +'
+    git -C "$repo" ls-files -z -- dev_team platform_team demo_scenes pyproject.toml uv.lock |
+      grep -z -v '^dev_team/quality_agent/' | (cd "$repo" && tar --null -T - -cf -) |
+      docker exec -i -u dev "$name" tar -x -C /home/dev/work
+    docker exec -i -u dev "$name" sh -c 'mkdir -p /home/dev/work/.claude && cat > /home/dev/work/.claude/settings.json' \
+      <"$here/settings.json"
+    docker exec -i -u dev "$name" sh -c 'cat > /home/dev/work/CLAUDE.md' <"$here/CLAUDE.md"
+    sed -e "s/<REGION>/$region/g" -e "s/<REGISTRY_ID>/$registry/g" "$here/mcp.json.tmpl" |
+      docker exec -i -u dev "$name" sh -c 'cat > /home/dev/work/.mcp.json'
     # once, so that the first command of a take prints only its own lines
-    docker exec "$name" uv sync --quiet
-    echo "up: $name, the checkout in /home/dev/work (dev_team: $(ls "$work/dev_team" | tr '\n' ' ')), quality_agent kept in /home/dev/prepared"
+    docker exec -u dev -w /home/dev/work "$name" uv sync --quiet
+    agents="$(docker exec -u dev "$name" ls /home/dev/work/dev_team | tr '\n' ' ')"
+    echo "up: $name, the checkout in /home/dev/work (dev_team: $agents), quality_agent comes with run.sh agent quality_agent"
     ;;
 
   check)
     running || { echo "the container is not running: run.sh up first"; exit 1; }
+    need_route
     failed=0
     echo "== claude --version"
-    docker exec "$name" claude --version
+    box "$name" claude --version 2>&1 | mask
     echo "== claude -p: Claude Code answers through Amazon Bedrock"
     t0=$SECONDS
-    docker exec "$name" claude -p "Answer with the single word: ready" | mask || failed=1
+    box "$name" claude -p "Answer with the single word: ready" 2>&1 | mask || failed=1
     echo "($((SECONDS - t0)) s)"
     echo "== this PC's instance metadata service is out of reach"
-    if docker exec "$name" curl -s -m 3 -o /dev/null -X PUT http://169.254.169.254/latest/api/token \
-         -H "X-aws-ec2-metadata-token-ttl-seconds: 60"; then
+    if box "$name" curl -s -m 3 -o /dev/null -X PUT http://169.254.169.254/latest/api/token \
+         -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>&1 | mask; then
       echo "it answered"
       failed=1
     else
       echo "no answer"
     fi
+    echo "== the user dev holds no capability and cannot delete the route"
+    cap="$(box "$name" grep CapEff /proc/self/status 2>&1 | mask)" || true
+    if [[ "$cap" =~ ^CapEff:[[:space:]]+0+$ ]]; then
+      echo "$cap (the user dev holds no effective capability)"
+    else
+      echo "$cap (not zero: the user dev holds a capability)"
+      failed=1
+    fi
+    if del="$(docker exec "$name" /usr/bin/ip route del blackhole 169.254.169.254/32 2>&1)"; then
+      docker rm -f "$name" >/dev/null 2>&1 || true
+      echo "the user dev deleted the route: the container is removed"
+      exit 1
+    fi
+    echo "the user dev cannot delete the route: $(printf '%s' "$del" | mask)"
     echo "== the tools of the MCP server hub-catalog (.mcp.json)"
-    docker exec -i "$name" /opt/uv/tools/mcp-proxy-for-aws/bin/python - <<'PY' | mask || failed=1
+    box -i "$name" /opt/uv/tools/mcp-proxy-for-aws/bin/python - <<'PY' 2>&1 | mask || failed=1
 import asyncio, json, os
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -173,13 +222,13 @@ async def main():
 asyncio.run(main())
 PY
     echo '== search "part specification tool" (the developer role)'
-    docker exec "$name" search "part specification tool" | mask || failed=1
+    box "$name" search "part specification tool" 2>&1 | mask || failed=1
     echo "== aws sts get-caller-identity in the container's shell"
-    docker exec "$name" aws sts get-caller-identity --query Arn --output text | mask || failed=1
+    box "$name" aws sts get-caller-identity --query Arn --output text 2>&1 | mask || failed=1
     echo "== aws sts get-caller-identity through Claude Code's shell tool"
     cmd="aws sts get-caller-identity --query Arn --output text"
-    seen="$(docker exec "$name" claude -p "Run this shell command and show its output: $cmd" \
-      --allowedTools "Bash($cmd)" --output-format stream-json --verbose |
+    seen="$(box "$name" claude -p "Run this shell command and show its output: $cmd" \
+      --allowedTools "Bash($cmd)" --output-format stream-json --verbose 2> >(mask >&2) |
       jq -r 'select(.type == "user") | .message.content[]? | select(.type == "tool_result")
              | .content | if type == "array" then map(.text // "") | join("") else . end' | mask)" || failed=1
     echo "$seen"
@@ -193,13 +242,15 @@ PY
     ;;
 
   term)
+    refuse_links
     running || { echo "the container is not running: run.sh up first"; exit 1; }
+    need_route
     if [ -f "$out/ttyd.pid" ] && kill -0 "$(<"$out/ttyd.pid")" 2>/dev/null; then
       echo "ttyd is running: http://127.0.0.1:7681"
       exit 0
     fi
     # loopback only (-i lo), and only pages served by ttyd itself may open the terminal (-O)
-    nohup ttyd -i lo -p 7681 -O docker exec -it -e TERM=xterm-256color "$name" bash >"$out/ttyd.log" 2>&1 &
+    nohup ttyd -i lo -p 7681 -O docker exec -it -w /home/dev/work -e TERM=xterm-256color "$name" bash >"$out/ttyd.log" 2>&1 &
     echo $! >"$out/ttyd.pid"
     for _ in $(seq 1 20); do
       curl -fsS -o /dev/null http://127.0.0.1:7681/ 2>/dev/null && break
@@ -211,21 +262,31 @@ PY
   agent)
     agent="$2"
     [[ "$agent" =~ ^[a-z][a-z0-9]*(_[a-z0-9]+)*$ ]] || { echo "agent name '$agent': not an agent name"; exit 2; }
-    [ -d "$home/prepared/$agent" ] || { echo "no prepared agent '$agent' (run.sh up keeps quality_agent aside)"; exit 2; }
-    dest="$home/work/dev_team/$agent"
-    if [ -e "$dest" ]; then
-      mkdir -p "$home/made-by-claude"
-      kept="$agent-$(date +%Y%m%d-%H%M%S)"
-      mv "$dest" "$home/made-by-claude/$kept"
-      echo "what was in dev_team/$agent is kept in /home/dev/made-by-claude/$kept"
-    fi
-    cp -a "$home/prepared/$agent" "$dest"
+    [ -n "$(git -C "$repo" ls-files -- "dev_team/$agent/agent.json")" ] ||
+      { echo "no agent '$agent' in the repo's dev_team/"; exit 2; }
+    refuse_links
+    running || { echo "the container is not running: run.sh up first"; exit 1; }
+    # Inside the container, as dev: what is in dev_team/<agent> (Claude Code's) moves to /home/dev/made-by-claude;
+    # then the repo's tracked dev_team/<agent> comes in from this PC's standard input.
+    kept="$agent-$(date +%Y%m%d-%H%M%S)"
+    docker exec -u dev "$name" sh -c 'd="/home/dev/work/dev_team/$1"; if [ -e "$d" ] || [ -L "$d" ]; then
+      mkdir -p /home/dev/made-by-claude && mv "$d" "/home/dev/made-by-claude/$2" &&
+      echo "what was in dev_team/$1 is kept in /home/dev/made-by-claude/$2"; fi' sh "$agent" "$kept"
+    git -C "$repo" ls-files -z -- "dev_team/$agent" | (cd "$repo" && tar --null -T - -cf -) |
+      docker exec -i -u dev "$name" tar -x -C /home/dev/work
     echo "dev_team/$agent is now the repo's $agent"
     ;;
 
-  stop) do_stop ;;
-  forget) do_forget ;;
+  stop)
+    refuse_links
+    do_stop
+    ;;
+  forget)
+    refuse_links
+    do_forget
+    ;;
   down)
+    refuse_links
     do_stop
     do_forget
     ;;

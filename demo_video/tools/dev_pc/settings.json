@@ -8,21 +8,25 @@
     "DISABLE_TELEMETRY": "1"
   },
   "awsCredentialExport": "cat /run/dev-pc/bedrock.json",
+  "disableAutoMode": "disable",
   "permissions": {
     "defaultMode": "default",
     "allow": [
       "mcp__hub-catalog__*",
-      "Read(./**)",
-      "Edit(./**)",
+      "Edit(./dev_team/**)",
       "Bash(search:*)",
       "Bash(logs:*)",
-      "Bash(publish:*)",
       "Bash(ls:*)",
-      "Bash(cat:*)",
-      "Bash(uv run pytest:*)"
+      "Bash(cat:*)"
     ],
     "deny": [
-      "Read(//run/dev-pc/**)"
+      "Read(//run/dev-pc/**)",
+      "Edit(./demo_scenes/**)",
+      "Edit(./platform_team/**)",
+      "Edit(./.claude/**)",
+      "Edit(./.mcp.json)",
+      "Edit(./pyproject.toml)",
+      "Edit(./uv.lock)"
     ]
   },
   "enabledMcpjsonServers": ["hub-catalog"]

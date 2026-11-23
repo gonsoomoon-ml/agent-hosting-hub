@@ -35,8 +35,9 @@ RUN userdel -r node \
  && useradd --uid "${DEV_UID}" --create-home --shell /bin/bash dev \
  && printf '%s\n' "PS1='개발자 \$ '" >> /etc/bash.bashrc
 
+# The scene commands are found last: a file in the editable checkout never shadows ls, cat, uv or ip.
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 UV_PYTHON_DOWNLOADS=never AWS_PAGER="" NPM_CONFIG_UPDATE_NOTIFIER=false \
-    PATH=/home/dev/work/demo_scenes:$PATH
+    PATH=$PATH:/home/dev/work/demo_scenes
 USER dev
 WORKDIR /home/dev/work
 CMD ["sleep", "infinity"]
