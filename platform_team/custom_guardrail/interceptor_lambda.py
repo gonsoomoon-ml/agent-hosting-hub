@@ -2,10 +2,12 @@
 on every request and every answer. A blocked text ends the call with the interceptor's own response.
 A masked text goes on in its masked form. To use the company's own guardrail, change guard().
 
-Whether a request is blocked is decided on its whole body: a JSON body as its document written again without
-escapes, so every string in it counts (field names too); any other body as it came. What is masked is the prompt
-when the body is a JSON object with a text "prompt", and only the prompt goes on masked; any other body (not base64,
-not JSON, not an object, no prompt) goes on whole in its masked form. An answer is always checked whole, as the text
+Whether a request is blocked is decided on the text of its whole body: for a JSON body every key and every string
+value of the decoded document, at any depth, one per line; for any other body the body as it came. What is masked is
+the prompt when the body is a JSON object with a text "prompt", and only the prompt goes on masked; any other body
+(not base64, not JSON, not an object, no prompt) goes on whole in its masked form. When the two texts differ, the
+first check masked something and blocked nothing, the text that is masked is checked a second time, and a block from
+that check refuses the request too. An answer is always checked whole, as the text
 the agent sent (a JSON answer with its escapes as they are). A body that is not a string is read as text first
 (unb64), a part of the event that is not an object is taken as one with no body, and a JSON body nested deeper than
 the parser goes is read as text, so none of these makes the handler raise. The log line says only where, whether
@@ -66,16 +68,33 @@ def _object(part):
     return part if isinstance(part, dict) else {}
 
 
+def _texts(doc):
+    """Every key and every string value of a decoded JSON document, at any depth and in the document's order, one per
+    line (numbers, true, false and null hold no text). The walk keeps its own stack: json.loads takes nesting far
+    deeper than Python's recursion limit."""
+    found, stack = [], [doc]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            found.append(item)
+        elif isinstance(item, dict):
+            for key, value in reversed(list(item.items())):
+                stack += [value, key]
+        elif isinstance(item, list):
+            stack += reversed(item)
+    return "\n".join(found)
+
+
 def _read(raw):
-    """(the request's JSON document, its prompt, the whole body), or (None, the body as it came, the whole body) when
-    the body has no text prompt. The block decision reads the whole body: a JSON body as its document written again
-    without escapes (every string in it, field names too, as the text it holds); any other body as it came. Masking
-    reads the prompt, or the body as it came."""
+    """(the request's JSON document, its prompt, the text of the whole body), or (None, the body as it came, the text
+    of the whole body) when the body has no text prompt. The block decision reads the text of the whole body: for a
+    JSON body its decoded keys and strings (_texts), for any other body the body as it came. Masking reads the prompt,
+    or the body as it came."""
     try:
         doc = json.loads(raw)
-        whole = json.dumps(doc, ensure_ascii=False)
     except (ValueError, RecursionError):     # not JSON, or nested deeper than the parser goes: text as it came
         return None, raw, raw
+    whole = _texts(doc)
     if isinstance(doc, dict) and isinstance(doc.get("prompt"), str):
         return doc, doc["prompt"], whole
     return None, raw, whole
