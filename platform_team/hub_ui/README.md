@@ -2,7 +2,7 @@
 
 플랫폼팀이 브라우저에서 허브의 지금 상태를 보는 샘플 화면이다. 이 PC에서만 열리고, 로그인이 없고, 어디에도 올리지 않는다. 화면의 모든 값은 그 순간 AWS에서 읽은 것이고(몇 초 동안 다시 쓴다, 아래 "값은 어디서 오나"), 만들어 넣거나 미리 채운 값은 없다. 운영용 화면이 아니라 허브가 하는 일을 보여 주는 샘플이다. Terraform 모듈은 없다.
 
-메뉴에는 네 페이지가 있다: 홈, 흐름 1의 호스팅 심사, 흐름 2의 전사 정책과 에이전트. 지금 있는 것은 홈과 호스팅 심사이고, 나머지 두 페이지는 아직 없어서 "이 화면에는 그런 페이지가 없습니다"라는 페이지(404)를 보인다. 없는 주소는 모두 이 페이지를 받는다. 버튼이 있는 페이지는 셸 명령이 부르는 것과 같은 Python 함수를 부르게 되어 있고, 셸 명령은 화면 없이도 그대로 쓴다.
+메뉴에는 네 페이지가 있다: 홈, 흐름 1의 호스팅 심사, 흐름 2의 전사 정책과 에이전트. 없는 주소는 "이 화면에는 그런 페이지가 없습니다"라는 페이지(404)를 받는다. 버튼이 있는 페이지는 셸 명령이 부르는 것과 같은 Python 함수를 부르고, 셸 명령은 화면 없이도 그대로 쓴다.
 
 ## 띄우는 법
 
@@ -60,9 +60,51 @@ Step Functions 콘솔 링크는 `/reviews/<에이전트>/console`을 거친다. 
 
 이 페이지는 올라와 있는 허브에서 아직 띄워 보지 않았다(가짜 AWS 값으로만 확인했다). 실행 기록의 사건 모양(`stateEnteredEventDetails.name`, `taskFailedEventDetails`의 `error`와 `cause` 등)은 Step Functions의 서비스 모델(boto3)에서 가져왔다. 그 가운데 state에 들어간 사건과 그 이름은 2026-11-22의 실행에서 e2e가 단계마다 걸린 시간을 낼 때 읽었다(`e2e_checks/last-run.log`의 `steps Read 1s, Reviewable 0s, Scan 41s, ...`). 실패한 Task state에 나온 사건이 없고 다음이 `Notify`라는 것은 코드가 그렇게 가정한다(AWS에서 확인하지 않았다. 나온 사건이 있어도 같은 결과가 되게 썼다). Scan이 실패했을 때 원인이 build 기록(`Build`의 `Id`, `BuildStatus`, `Phases`, `Logs.GroupName`, `Logs.StreamName`)이라는 것과 pip-audit 표의 줄 모양(`jinja2 2.11.2  PYSEC-2021-66   2.11.3`)은 2026-11-22의 실행에서 본 것이다(`e2e_checks/last-run.log`. 그 실행은 알림에 든 오류로 봤다). 읽는 곳은 `reviews.py`의 `steps_of`, `scan_log`, `scan_findings` 셋뿐이다.
 
+## 전사 정책
+
+`/policies`는 두 게이트웨이의 정책, 전사 정책 둘, 커스텀 가드레일을 보이고, 전사 정책 `guard_prompt`의 모드와 커스텀 가드레일을 바꾸는 버튼을 둔다. 한 모드는 글자로도 보인다(꺼짐, 기록 모드, 적용 모드). 정책의 `상태`(정책 엔진이 만들고 있는지, 쓸 수 있는지)와 `적용 모드`(막는지, 기록만 하는지)는 서로 다른 칸이고 섞어 쓰지 않는다.
+
+| 패널(`id`) | 보이는 것 | 읽는 곳 |
+|---|---|---|
+| `panel-company` | `guard_secret`(승인할 때 에이전트마다 걸리고 스위치가 없다. 걸려 있는 에이전트의 수)과 `guard_prompt`(모드와 버튼 셋) | SSM `/<prefix>/policies/`(`policy_rollout.deployed`), Policy in Amazon Bedrock AgentCore `ListPolicies` |
+| `panel-report` | 최근 60분 동안 `guard_prompt`가 에이전트마다 걸린 요청(`LogOnlyMatches`)과 적용 모드였다면 막았을 요청(`LogOnlyDecisionFlips`) | `policy_rollout.report`(Amazon CloudWatch `GetMetricStatistics`) |
+| `panel-guardrail` | 커스텀 가드레일이 붙어 있는지, 붙은 지점, 게이트웨이의 상태, 그리고 해당하는 버튼 하나 | `guardrail_attach.status`(`GetGateway`) |
+| `panel-gateway-agent_gw`, `panel-gateway-tool_gw` | 게이트웨이마다 정책의 이름, 종류, 상태, 적용 모드. 도구 허용(`tool_...`)과 공유 읽기 도구 허용(`shared_tool_read`)은 도구 게이트웨이, 나머지 종류는 에이전트 게이트웨이 | `ListPolicies` |
+| `panel-other` | 어느 종류의 이름도 아닌 정책(있을 때만) | `ListPolicies` |
+
+버튼은 하나씩 작업을 시작한다.
+
+| 버튼 | 요청 | 부르는 함수 |
+|---|---|---|
+| 기록 모드로 걸기, 적용 모드로 올리기, 끄기 | `POST /policies/guard_prompt/mode`, 폼 값 `token`과 `mode`(`log-only`, `active`, `off`) | `policy_rollout.rollout(…, "log-only" 또는 "active")`, `policy_rollout.remove`(`rollout.sh`와 같다) |
+| 커스텀 가드레일 붙이기, 떼기 | `POST /guardrail/attach`, `POST /guardrail/detach`, 폼 값 `token` | `guardrail_attach.attach`, `guardrail_attach.detach`(`guardrail.sh`와 같다) |
+
+지금 모드의 버튼은 눌리지 않는다. 모르는 전사 정책이나 모드, 모르는 동작은 작업을 시작하지 않고 빨간 칸에 문장을 보인다. 모드 작업은 함수가 끝난 뒤에 에이전트마다 정책 엔진에서 다시 읽은 모드를 한 줄씩 작업 칸에 적는다.
+
+## 에이전트
+
+`/agents`는 호스팅된 에이전트의 사용량, 도구 호출 경보, 도구별 호출 수를 보이고, 멈춤과 재개 버튼을 둔다.
+
+| 패널(`id`) | 보이는 것 | 읽는 곳 |
+|---|---|---|
+| `panel-alarm` | 알람 `<prefix>-tool-calls`의 상태(`OK`, `ALARM`, `INSUFFICIENT_DATA`), 임계값, 감시하는 도구, 최근 15분의 1분 합계 막대와 임계값 선. 임계값을 넘은 막대는 다른 색, 굵은 테두리, `▲` 표시로 보인다 | Amazon CloudWatch `DescribeAlarms`, 그 알람의 지표를 알람의 차원 그대로 `GetMetricData` |
+| `panel-agents` | 에이전트마다 팀, 프레임워크, 호스팅 방식(`Runtime` 또는 `harness`), 카탈로그 상태, 멈춤 상태, 최근 60분의 호출, 세션, 오류, vCPU-시간, GB-시간, 멈춤이나 재개 버튼 | `usage_report.hosted_agents`와 `usage_report.usage`(`GetMetricData`), `stop_agent.stopped`(`ListPolicies`), `ListGatewayTargets`, 카탈로그 |
+| `panel-tools` | 도구마다 최근 60분의 호출 수(모든 호출자의 합) | `usage_report.tool_calls` |
+
+harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추는 버튼 대신 그 이유를 보인다. 한 에이전트의 멈춤 상태나 카탈로그 레코드를 읽지 못하면 그 줄에만 이유가 나오고(멈춤 상태를 모르면 그 줄에는 버튼이 없다), 사용량을 읽지 못하면 표 위에 한 줄이 나오고 줄은 사용량 없이 보인다.
+
+| 버튼 | 요청 | 부르는 함수 |
+|---|---|---|
+| 멈추기 | `POST /agents/<에이전트>/stop`, 폼 값 `token` | `stop_agent.stop`(`stop.sh`와 같다) |
+| 재개 | `POST /agents/<에이전트>/resume`, 폼 값 `token` | `stop_agent.resume`(`resume.sh`와 같다) |
+
+에이전트 이름이 신청서의 이름 규칙에 맞지 않으면 작업을 시작하지 않고 빨간 칸에 문장을 보인다.
+
+두 페이지는 가짜 AWS 값으로만 확인했다(1920×1080의 밝은 테마, 한국어). 올라와 있는 허브에서는 아직 띄워 보지 않았다.
+
 ## 작업(버튼)
 
-버튼은 셸 명령과 같은 함수를 이 앱 안의 작업(thread)으로 돌린다. 버튼을 누르면 앱은 언제나 페이지로 돌려보내고(303), 그 페이지가 결과의 문장을 보인다. 받은 것은 초록 칸, 받지 않은 것(빠지거나 맞지 않는 값, 모르는 이름)은 빨간 칸이다. 작업은 한 번에 하나다. 작업이 도는 동안 다른 버튼을 누르면 받지 않고, 누른 페이지로 돌아가 "다른 작업이 진행 중"이라는 문장을 보인다. 작업이 도는 동안 페이지는 2초마다 그 작업이 찍은 줄을 다시 그리고, 작업이 끝나면 한 번 새로 읽는다. 앱을 다시 띄워 그 작업이 없어졌을 때도 한 번 새로 읽는다. 작업이 끝나면 다시 쓰던 값을 버리므로 그 뒤의 페이지는 AWS를 새로 읽는다. 실패한 작업은 이유를 한 줄로 보인다(계정 ID는 `<ACCOUNT>`). 작업은 메모리에만 있어서 앱을 멈추면 사라진다. 작업이 도는 중에 앱을 멈추면 그 함수도 중간에 멈춘다(작업의 thread는 앱과 함께 끝난다. 코드가 그렇게 한다. 해 보지 않았다). 지금 버튼이 있는 페이지는 호스팅 심사(반려)뿐이다.
+버튼은 셸 명령과 같은 함수를 이 앱 안의 작업(thread)으로 돌린다. 버튼을 누르면 앱은 언제나 페이지로 돌려보내고(303), 그 페이지가 결과의 문장을 보인다. 받은 것은 초록 칸, 받지 않은 것(빠지거나 맞지 않는 값, 모르는 이름)은 빨간 칸이다. 작업은 한 번에 하나다. 작업이 도는 동안 다른 버튼을 누르면 받지 않고, 누른 페이지로 돌아가 "다른 작업이 진행 중"이라는 문장을 보인다. 작업이 도는 동안 페이지는 2초마다 그 작업이 찍은 줄을 다시 그리고, 작업이 끝나면 한 번 새로 읽는다. 앱을 다시 띄워 그 작업이 없어졌을 때도 한 번 새로 읽는다. 작업이 끝나면 다시 쓰던 값을 버리므로 그 뒤의 페이지는 AWS를 새로 읽는다. 실패한 작업은 이유를 한 줄로 보인다(계정 ID는 `<ACCOUNT>`). 작업은 메모리에만 있어서 앱을 멈추면 사라진다. 작업이 도는 중에 앱을 멈추면 그 함수도 중간에 멈춘다(작업의 thread는 앱과 함께 끝난다. 코드가 그렇게 한다. 해 보지 않았다). 버튼이 있는 페이지는 호스팅 심사(반려), 전사 정책(모드, 가드레일), 에이전트(멈춤, 재개)다. 작업이 도는 동안에는 그 버튼들이 눌리지 않는다.
 
 ## 안전 규칙
 
@@ -85,6 +127,6 @@ Step Functions 콘솔 링크는 `/reviews/<에이전트>/console`을 거친다. 
 
 ## 시험과 확인
 
-동작은 단위 시험이 정한다(`tests/test_hub_ui_app.py`, `tests/test_hub_ui_jobs.py`, `tests/test_hub_ui_home.py`, `tests/test_hub_ui_reviews.py`). 시험은 `tests/fakes.py`의 가짜 AWS 클라이언트로 돌고 AWS를 부르지 않는다. 2026-11-23에 허브가 올라와 있지 않은 계정(`us-west-2`, 접두어 `hub`)에서 `python -m platform_team.hub_ui`로 띄워 봤다. 첫 페이지가 200으로 "이 계정과 리전에 허브가 배포되어 있지 않습니다"와 읽은 곳(`/hub/platform/`)을 보였고, `Host: evil.example:8300`인 요청은 403이었다. 올라와 있는 허브에서는 아직 띄워 보지 않았다.
+동작은 단위 시험이 정한다(`tests/test_hub_ui_app.py`, `tests/test_hub_ui_jobs.py`, `tests/test_hub_ui_home.py`, `tests/test_hub_ui_reviews.py`, `tests/test_hub_ui_policies.py`, `tests/test_hub_ui_agents.py`). 시험은 `tests/fakes.py`의 가짜 AWS 클라이언트로 돌고 AWS를 부르지 않는다. 2026-11-23에 허브가 올라와 있지 않은 계정(`us-west-2`, 접두어 `hub`)에서 `python -m platform_team.hub_ui`로 띄워 봤다. 첫 페이지가 200으로 "이 계정과 리전에 허브가 배포되어 있지 않습니다"와 읽은 곳(`/hub/platform/`)을 보였고, `Host: evil.example:8300`인 요청은 403이었다. 올라와 있는 허브에서는 아직 띄워 보지 않았다.
 
 화면의 틀(색, 밝은 테마와 어두운 테마, 메뉴, 단계 띠, 폼 스크립트), 글 표, 시각 형식은 [ai-governance-hub](https://github.com/gonsoomoon-ml/ai-governance-hub)(MIT-0)에서 가져와 고쳤다. 리포 루트의 `NOTICE`에 적었다.

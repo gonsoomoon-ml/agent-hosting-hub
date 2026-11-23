@@ -94,7 +94,8 @@ class _Ctl(_Client):
 
 
     def list_policies(self, **kw):
-        return {"policies": [{"policyId": p["id"], "name": n, "status": "ACTIVE", "enforcementMode": p["mode"],
+        return {"policies": [{"policyId": p["id"], "name": n, "status": p.get("status", "ACTIVE"),
+                              "enforcementMode": p["mode"],
                               "definition": {p["kind"]: {"statement": p["statement"]}}}
                              for n, p in self.o.policies.items()]}
 
@@ -554,8 +555,25 @@ class _Cw(_Client):
     """CloudWatch alarms: alarms holds MetricAlarms entries (AlarmName, StateValue, ...)."""
     service = "cw"
 
-    def describe_alarms(self, AlarmNamePrefix="", **kw):
-        return {"MetricAlarms": [a for a in self.o.alarms if a["AlarmName"].startswith(AlarmNamePrefix)]}
+    def describe_alarms(self, AlarmNamePrefix="", AlarmNames=None, **kw):
+        return {"MetricAlarms": [a for a in self.o.alarms if a["AlarmName"].startswith(AlarmNamePrefix)
+                                 and (AlarmNames is None or a["AlarmName"] in AlarmNames)]}
+
+    def get_metric_data(self, MetricDataQueries, **kw):
+        """Each query's points from `metric_data` ((metric name, the value of its Name dimension) -> [(time, value)])."""
+        out = []
+        for q in MetricDataQueries:
+            metric = q["MetricStat"]["Metric"]
+            name = next((d["Value"] for d in metric["Dimensions"] if d["Name"] == "Name"), "")
+            points = self.o.metric_data.get((metric["MetricName"], name), [])
+            out.append({"Id": q["Id"], "Timestamps": [t for t, _ in points], "Values": [v for _, v in points]})
+        return {"MetricDataResults": out}
+
+    def get_metric_statistics(self, MetricName, Dimensions, **kw):
+        """One datapoint with the sum in `statistics` ((metric name, the value of its Policy dimension) -> sum)."""
+        policy = next((d["Value"] for d in Dimensions if d["Name"] == "Policy"), "")
+        found = self.o.statistics.get((MetricName, policy))
+        return {"Datapoints": [] if found is None else [{"Sum": found}]}
 
 
 class FakeClients:
@@ -576,7 +594,8 @@ class FakeClients:
     given in full, with their history), record_errors (record ID -> the exception GetRegistryRecord raises for it),
     harnesses,
     harness_stream (the events InvokeHarness answers), gateways (ID -> name, status, interceptorConfigurations; the
-    two gateways of PLATFORM at the start), alarms (MetricAlarms entries) and errors ((service, method) -> the
+    two gateways of PLATFORM at the start), alarms (MetricAlarms entries), metric_data (GetMetricData's points by
+    (metric name, Name dimension)), statistics (GetMetricStatistics' sum by (metric name, Policy dimension)) and errors ((service, method) -> the
     exception that call raises, after it is recorded)."""
 
     latest = None       # the most recently built fake, for the patched signed_post
@@ -614,7 +633,7 @@ class FakeClients:
         self.harnesses, self.deleted_harnesses, self.harness_calls, self.harness_stream = {}, [], [], []
         self.gateways = {PLATFORM.agent_gw["id"]: {"name": "hub-agents", "status": "READY", "interceptorConfigurations": []},
                          PLATFORM.tool_gw["id"]: {"name": "hub-tools", "status": "READY"}}
-        self.alarms, self.errors = [], {}
+        self.alarms, self.errors, self.metric_data, self.statistics = [], {}, {}, {}
         self.ctl, self.iam, self.ssm, self.reg = _Ctl(self), _Iam(self), _Ssm(self), _Reg(self)
         self.logs, self.sfn, self.s3, self.data = _Logs(self), _Sfn(self), _S3(self), _Data(self)
         self.sns, self.cw = _Sns(self), _Cw(self)

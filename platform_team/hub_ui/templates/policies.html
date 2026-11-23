@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ t("policies.title") }}</h1>
+<p class="intro">{{ t("policies.intro") }} <span class="tech">{{ t("drawn_at") }} {{ ts(now) }}</span></p>
+
+<section id="panel-company">
+  {% if view.company.ok %}
+  {% set secret = view.company.value.guard_secret %}
+  {% set prompt = view.company.value.guard_prompt %}
+  <div class="policy-cards">
+    <article class="card p2 policy">
+      <div class="policy-head">
+        <h2 class="mono">guard_secret</h2>
+        <span class="pill big ok">{{ t("policy.on") }}</span>
+      </div>
+      <p class="says">{{ t("policy.guard_secret.says") }}</p>
+      <p class="policy-count">{% if secret.agents is none %}<span class="muted">—</span>{% else %}{{ t("policy.agents", n=secret.agents) }}{% endif %}</p>
+      <p class="hint">{{ t("policy.guard_secret.fixed") }}</p>
+      <p class="tech">{{ services.engine }}</p>
+    </article>
+    <article class="card p2 policy">
+      <div class="policy-head">
+        <h2 class="mono">guard_prompt</h2>
+        <span class="pill big {{ pill(prompt.mode) }}">{{ t("mode." ~ (prompt.mode or "off")) }}</span>{% if prompt.mode %}<span class="mono">{{ prompt.mode }}</span>{% endif %}
+      </div>
+      <p class="says">{{ t("policy.guard_prompt.says") }}</p>
+      <p class="hint">{{ t("policy.guard_prompt.modes") }}</p>
+      <form method="post" action="/policies/guard_prompt/mode">
+        <input type="hidden" name="token" value="{{ token }}">
+        <div class="actions">
+          {% for word, now_mode in (("log-only", "LOG_ONLY"), ("active", "ACTIVE"), ("off", none)) %}
+          <button class="{{ 'danger' if word == 'off' else 'primary' if word == 'log-only' else 'secondary' }}" type="submit" name="mode" value="{{ word }}"{% if view.busy or prompt.mode == now_mode %} disabled{% endif %}{% if prompt.mode == now_mode %} title="{{ t('policy.is_now') }}"{% endif %} data-busy="{{ t('policy.busy') }}">{{ t("policy.btn." ~ word) }}</button>
+          {% endfor %}
+        </div>
+      </form>
+      {% if view.busy %}<p class="hint">{{ t("policy.job_running") }}</p>{% endif %}
+      <p class="tech">{{ services.parameters }} · {{ parameters_path }} · {{ services.engine }}</p>
+    </article>
+  </div>
+  {% else %}{% with panel = view.company %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+</section>
+
+<div class="grid2 even">
+  <section id="panel-report" class="card p2">
+    <h2>{{ t("report.title") }}</h2>
+    <p class="hint">{{ t("report.hint", n=report_minutes) }} <span class="tech">{{ services.metrics }}</span></p>
+    {% if view.report.ok %}
+    {% if view.report.value %}
+    <table class="big">
+      <thead><tr><th>{{ t("report.agent") }}</th>
+<th>{{ t("col.enforcement") }}</th>
+        <th class="right">{{ t("report.matches") }} <span class="tech">LogOnlyMatches</span></th>
+        <th class="right">{{ t("report.flips") }} <span class="tech">LogOnlyDecisionFlips</span></th></tr></thead>
+      <tbody>
+      {% for agent, r in view.report.value.items() %}
+        <tr><td class="mono name">{{ agent }}</td>
+          <td><span class="pill {{ pill(r.mode) }}">{{ t("mode." ~ r.mode) if t.has("mode." ~ r.mode) else (r.mode or "—") }}</span></td>
+          <td class="right num">{{ r.matches }}</td>
+<td class="right num">{{ r.flips }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="muted">{{ t("report.none") }}</p>{% endif %}
+    {% else %}{% with panel = view.report %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+  </section>
+
+  <section id="panel-guardrail" class="card p2">
+    <h2>{{ t("guardrail.title") }} <span class="tech">{{ services.interceptor }}</span></h2>
+    <p class="hint">{{ t("guardrail.what") }}</p>
+    {% if view.guardrail.ok %}
+    {% set g = view.guardrail.value %}
+    <dl class="facts">
+      <dt>{{ t("col.state") }}</dt>
+      <dd><span class="pill big {{ 'ok' if g.attached }}">{{ t("guardrail.attached") if g.attached else t("guardrail.detached") }}</span></dd>
+      <dt>{{ t("guardrail.points") }}</dt>
+      <dd>{% for point in g.points %}<span class="mono">{{ point }}</span> {% else %}<span class="muted">—</span>{% endfor %}</dd>
+      <dt>{{ t("guardrail.gateway") }}</dt>
+      <dd><span class="pill {{ pill(g.gateway_status) }}">{{ g.gateway_status }}</span> <span class="tech">{{ services.gateway }}</span></dd>
+    </dl>
+    <form method="post" action="/guardrail/{{ 'detach' if g.attached else 'attach' }}">
+      <input type="hidden" name="token" value="{{ token }}">
+      <div class="actions"><button class="{{ 'danger' if g.attached else 'primary' }}" type="submit"{% if view.busy %} disabled{% endif %} data-busy="{{ t('guardrail.busy') }}">{{ t("guardrail.detach") if g.attached else t("guardrail.attach") }}</button></div>
+    </form>
+    {% else %}{% with panel = view.guardrail %}{% include "_panel_error.html" %}{% endwith %}{% endif %}
+  </section>
+</div>
+
+{% macro table(id, title, gateway, service, group) %}
+<section id="{{ id }}" class="card p2">
+  <h2>{{ title }}{% if gateway %} <span class="mono">{{ gateway }}</span>{% endif %} {% if service %}<span class="tech">{{ service }}</span>{% endif %}</h2>
+  {% if group.policies %}
+  <table>
+    <thead><tr><th>{{ t("col.name") }}</th>
+<th>{{ t("col.kind") }}</th>
+<th>{{ t("col.status") }}</th>
+<th>{{ t("col.enforcement") }}</th></tr></thead>
+    <tbody>
+    {% for p in group.policies %}
+      <tr><td class="mono name">{{ p.name }}</td>
+<td>{{ t("kind." ~ p.kind) }}</td>
+        <td><span class="pill {{ pill(p.status) }}">{{ p.status or "—" }}</span></td>
+        <td><span class="pill {{ pill(p.mode) }}">{{ t("mode." ~ p.mode) if t.has("mode." ~ p.mode) else p.mode }}</span> <span class="mono">{{ p.mode }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">{{ t("gateways.none") }}</p>{% endif %}
+</section>
+{% endmacro %}
+
+{% if view.gateways.ok %}
+{% for group in view.gateways.value %}
+{% if group.key == "other" %}
+{% if group.policies %}{{ table("panel-other", t("gateways.other"), "", "", group) }}{% endif %}
+{% else %}
+{{ table("panel-gateway-" ~ group.key, t("gateways." ~ group.key), group.name, services.engine, group) }}
+{% endif %}
+{% endfor %}
+{% else %}
+<section id="panel-gateway-agent_gw" class="card p2">
+  {% with panel = view.gateways %}{% include "_panel_error.html" %}{% endwith %}
+</section>
+<section id="panel-gateway-tool_gw" class="card p2">
+  {% with panel = view.gateways %}{% include "_panel_error.html" %}{% endwith %}
+</section>
+{% endif %}
+{% endblock %}
