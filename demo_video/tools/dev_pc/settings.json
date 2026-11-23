@@ -1,0 +1,28 @@
+{
+  "env": {
+    "CLAUDE_CODE_USE_BEDROCK": "1",
+    "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "DISABLE_AUTOUPDATER": "1",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_TELEMETRY": "1"
+  },
+  "awsCredentialExport": "cat /run/dev-pc/bedrock.json",
+  "permissions": {
+    "allow": [
+      "mcp__hub-catalog__*",
+      "Read(./**)",
+      "Edit(./**)",
+      "Bash(search:*)",
+      "Bash(logs:*)",
+      "Bash(publish:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(uv run pytest:*)"
+    ],
+    "deny": [
+      "Read(//run/dev-pc/**)"
+    ]
+  },
+  "enabledMcpjsonServers": ["hub-catalog"]
+}
