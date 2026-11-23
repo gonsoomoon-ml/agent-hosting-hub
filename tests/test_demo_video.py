@@ -955,7 +955,7 @@ READS = [["cat dev_team/agent_template/README.md"], ["ls -la dev_team/agent_temp
          ["cd /home/dev/work/dev_team; ls agent_template"], ["grep -n -A1 -E '^name = \"strands-agents\"' uv.lock"],
          ["sed -n 1,40p dev_team/agent_template/agent.py | head -20"], ["cd dev_team && cat agent_template/agent.json"],
          ["find dev_team/agent_template -name '*.py'"], ["wc -l uv.lock 2>/dev/null"]]
-# the ways past a check of the command's text that the reviews found, in the layout Claude Code prints
+# ways past a check of the command's text, in the layout Claude Code prints
 BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv run pytest tests"],
             ['bash -c "python3 agent.py"'], ["cp quality_agent/agent.py ../demo_scenes/search"],
             ["echo \"v: $(python3 -c 'print(1)')\""], ["env python3 x.py"], ["timeout 30 python3 x.py"],
@@ -972,7 +972,7 @@ BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv 
             ["sed -i s/a/b/ uv.lock"], ["awk '{print > \"x\"}' uv.lock"], ["ls $(echo /tmp)"], ["cat $HOME/x"],
             ['cat "/run/dev-pc/bedrock.json"'], ["grep --file=/run/dev-pc/bedrock.json x uv.lock"],
             ["sort -uo x uv.lock"], ["cat uv.lock 3>/tmp/y"], ["cat ../../../etc/passwd"], ["FOO=1 cat uv.lock"],
-            # the second review's
+            # further cases
             ["sort --compress-program=sh -S 1 dev_team/quality_agent/notes.txt"],
             ["sort --compress-program sh -S 1 dev_team/quality_agent/notes.txt"],
             ["sort --compress-program=python3 --buffer-size=1 dev_team/quality_agent/notes.txt"],
@@ -991,7 +991,7 @@ FILE_PATHS = ["/home/dev/work/dev_team/quality_agent/agent.py", "~/work/dev_team
 
 
 def _every_dialog_screen() -> list[list[str]]:
-    """The seven real dialogs kept from the takes, and every command and path of both reviews in that layout."""
+    """The seven real dialogs kept from the takes, and every command and path of the lists above in that layout."""
     return ([DIALOGS[k] for k in DIALOGS] + [_shell_screen(c) for c in READS + BYPASSES]
             + [_file_screen(p) for p in FILE_PATHS])
 
@@ -1040,8 +1040,8 @@ def _answered_with_escape_only(g: dict, dialog: list[str], name) -> None:
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_while_a_dialog_is_on_the_screen_the_only_key_is_escape_and_enter_never_meets_an_option_row(tmp_path):
-    # the storyboard never answers Yes: whatever the question (every kept real one, every command and path of both
-    # reviews), it presses Escape, then sends the take's sentence; Enter goes out only after a look that finds no
+    # the storyboard never answers Yes: whatever the question (every kept real one, every command and path of the
+    # lists above), it presses Escape, then sends the take's sentence; Enter goes out only after a look that finds no
     # option row (here the dialog is still there at the look before the sentence: Escape again, look again)
     screens = _every_dialog_screen()
     assert len(screens) == 7 + len(READS) + len(BYPASSES) + len(FILE_PATHS)

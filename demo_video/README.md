@@ -64,7 +64,7 @@ demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record
 | `56-cause` | 개발자 PC | 한 Claude Code 세션: 왜 같은 도구를 계속 불렀는지 로그(`logs`)와 코드를 읽고 찾는다. 고치거나 돌리지 않는다 | `quality_agent` 멈춤 | 바꾸지 않는다 |
 | `57-back` | 개발자 PC, 허브 화면, 사용자의 셸 | 한 녹화: `publish quality_agent`(고친 판), 멈춘 채로 심사가 `APPROVED`까지, 에이전트 페이지에서 재개(버튼 한 번), `ask quality_agent`가 답한다. `REHEARSE=1`이면 에이전트 페이지만 잡는다 | `quality_agent` 승인(되풀이하는 판)이고 멈춤, 작업 폴더에 리포의 `quality_agent`(이 장면 전에 `run.sh agent quality_agent`, 아래) | 고친 판이 승인되어 돈다 |
 
-`57-back`은 컨테이너의 `dev_team/quality_agent`를 그대로 올린다. 바로 앞의 Claude Code 세션(`56-cause`)은 그 폴더에 묻지 않고 쓸 수 있으므로, 리포의 에이전트를 다시 넣는 `run.sh agent quality_agent`를 이 장면 전에 돌린다. 2026-11-23의 기록에 그 명령은 `52-incident` 전(UTC 14:01)의 한 번뿐이고, `56-cause`와 `57-back` 사이에 돌린 기록은 없다. 그날 `56-cause`의 요청은 파일을 고치지 말라고 했고, Claude Code의 답은 요청대로 파일을 고치지 않았다고 했다. 올리기 전에 이 장면이 스스로 확인하는 것은 `dev_team/quality_agent/agent.py`에 `asking again`이 없는지(`grep`)뿐이다.
+`57-back`은 컨테이너의 `dev_team/quality_agent`를 그대로 올린다. 바로 앞의 Claude Code 세션(`56-cause`)은 그 폴더에 묻지 않고 쓸 수 있으므로, 리포의 에이전트를 다시 넣는 `run.sh agent quality_agent`를 이 장면 전에 돌린다. 2026-11-23의 5단계 녹화 기록에서 그 명령은 `52-incident` 전(UTC 14:01)에 한 번 돌렸고, `56-cause`와 `57-back` 사이에 돌린 기록은 없다. 그날 `56-cause`의 요청은 파일을 고치지 말라고 했고, Claude Code의 답은 요청대로 파일을 고치지 않았다고 했다. 올리기 전에 이 장면이 스스로 확인하는 것은 `dev_team/quality_agent/agent.py`에 `asking again`이 없는지(`grep`)뿐이다.
 
 ### 사용자의 셸 (`tools/user_shell.sh`)
 
