@@ -26,7 +26,7 @@ DETACH = uv run python -m platform_team.custom_guardrail.guardrail_attach detach
 # (check scripts, scripted runs): AUTO_APPROVE=1 make deploy
 APPROVE = $(if $(filter 1,$(AUTO_APPROVE)),-auto-approve,)
 
-.PHONY: test package deploy seed preload destroy publish e2e e2e-ops ui
+.PHONY: test package deploy seed preload destroy publish e2e e2e-ops e2e-ui ui
 
 test:
 	uv run pytest tests -q -W error
@@ -89,6 +89,13 @@ e2e:
 # make preload itself. The log goes to e2e_checks/last-run-ops.log (not committed: *.log).
 e2e-ops:
 	bash -o pipefail -c 'uv run python e2e_checks/e2e_operations.py 2>&1 | tee e2e_checks/last-run-ops.log'
+
+# The hub screen (platform_team/hub_ui) from end to end, on the hub make e2e-ops leaves (four agents hosted, guard_prompt
+# off, the custom guardrail detached, nothing stopped): it starts the screen on a free port of this PC, reads its pages
+# and presses its buttons, and leaves the hub as it found it. The log goes to e2e_checks/last-run-ui.log (not
+# committed: *.log).
+e2e-ui:
+	bash -o pipefail -c 'uv run --group ui python e2e_checks/e2e_hub_ui.py 2>&1 | tee e2e_checks/last-run-ui.log'
 
 # The hub screen for the platform team, on this PC only: http://127.0.0.1:8300 (HUB_UI_PORT), no login
 # (platform_team/hub_ui/README.md). It reads the deployed hub with the shell's credentials; Ctrl+C stops it.
