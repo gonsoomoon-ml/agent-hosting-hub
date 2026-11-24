@@ -5,7 +5,7 @@
 This is a short English version of the Korean [README.md](README.md), with the same sections. The detailed pages under `docs/`, the other READMEs, the pictures and the video are in Korean only (the hub screen has an English switch).
 
 This repository builds a hub on Amazon Bedrock AgentCore where the AI agents of several development teams are hosted and managed in one place.
-The platform team builds the hub (gateways, policies, registry); the development teams build agents and put them on the hub.
+The platform team builds the hub (gateways, policies, catalog); the development teams build agents and put them on the hub.
 Policies are written in Cedar, and the hub decides which agent may use which tool.
 
 > The repository holds two flows. Flow 1 is hosting (application, review, approval, rejection and re-application). Flow 2 is operations (the company policy's log-only and enforce modes, the custom guardrail, a new version of an approved agent, the tool-call alarm (CloudWatch alarm), stopping and resuming one agent, the usage report, and two agents that are there from the start). Both flows have a script that checks them from end to end on real AWS (`make e2e`, `make e2e-ops`).
