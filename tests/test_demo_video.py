@@ -793,10 +793,25 @@ def test_a_piece_beyond_its_take_or_a_caption_running_into_the_next_stops_the_bu
 
 # ------------------------------------------------------------------ the voiced build: narrations, boxes, held captions
 
-# sha256 of what `build.py --check` writes (every file under scripts/ko/, cards/ko/cards.json and reels/*.json) as the
-# build stood when the six silent reels of 2026-11-23 were cut; the silent build's files in demo_video/out/, which those
-# reels were cut from, give the same digest
-SILENT_DIGEST = "21e5469e3fee886ddb56a5ebeab6dbe448c3c1a5f53fe19de772652afce31e47"
+# sha256 of what `build.py --check` writes (every file under scripts/ko/, cards/ko/cards.json and reels/*.json).
+# Set anew on 2026-11-24, when the owner changed words in nine captions (판 -> 버전, 저절로 -> 자동으로,
+# 짚습니다 -> 찾습니다); nothing else of the silent build changed. The old value pinned the files the six silent reels of
+# 2026-11-23 were cut from; those reels, with their clips, scripts and cards, are kept at demo_video/out/silent-2026-11-23/.
+SILENT_DIGEST = "3414a11e78fa6eff0f3613db8c439525e084a88c02e36b1a33e480164663d45e"
+SILENT_DIGEST_2026_11_23 = "21e5469e3fee886ddb56a5ebeab6dbe448c3c1a5f53fe19de772652afce31e47"
+# the captions the owner's words changed on 2026-11-24: silent piece -> (caption of 2026-11-23, caption now)
+NEW_WORDS_2026_11_24 = {
+    "13-submit.2": ("quality_agent의 v1-vulnerable 판도 승인 대기가 됩니다", "quality_agent의 v1-vulnerable 버전도 승인 대기가 됩니다"),
+    "21-review.1": ("신청이 들어오자 두 에이전트의 호스팅 심사가 저절로 시작됩니다", "신청이 들어오자 두 에이전트의 호스팅 심사가 자동으로 시작됩니다"),
+    "24-again.1": ("개발자는 jinja2를 뺀 고친 판을 다시 신청합니다", "개발자는 jinja2를 뺀 고친 버전을 다시 신청합니다"),
+    "25-approved.4": ("고친 판도 일곱 단계를 모두 통과해 승인이 됩니다", "고친 버전도 일곱 단계를 모두 통과해 승인이 됩니다"),
+    "52-incident.1": ("개발자가 quality_agent의 새 판 v2-loop를 신청합니다", "개발자가 quality_agent의 새 버전 v2-loop를 신청합니다"),
+    "52-incident.2": ("이 판도 일곱 단계 심사를 모두 통과해 승인이 됩니다", "이 버전도 일곱 단계 심사를 모두 통과해 승인이 됩니다"),
+    "56-cause.3": ("Claude Code는 로그와 코드를 읽고 재시도에 횟수 제한이 없다고 짚습니다",
+                   "Claude Code는 로그와 코드에서 재시도 횟수 제한이 없다는 원인을 찾습니다"),
+    "57-back.1": ("개발자는 원인을 고친 판을 다시 신청합니다", "개발자는 원인을 고친 버전을 다시 신청합니다"),
+    "57-back.2": ("에이전트가 멈춘 동안에도 고친 판의 심사는 끝까지 통과합니다", "에이전트가 멈춘 동안에도 고친 버전의 심사는 끝까지 통과합니다"),
+}
 
 
 def _digest(out: Path) -> str:
@@ -810,10 +825,27 @@ def _digest(out: Path) -> str:
     return h.hexdigest()
 
 
-def test_the_silent_build_writes_what_the_reels_of_2026_11_23_were_cut_from(tmp_path):
+def test_the_silent_build_writes_the_files_pinned_on_2026_11_24(tmp_path):
     build = _build()
     build.run(build.SPEC, out=tmp_path, check_only=True)
     assert _digest(tmp_path) == SILENT_DIGEST
+
+
+def test_the_silent_build_differs_from_the_reels_of_2026_11_23_only_in_the_owners_new_words(tmp_path):
+    # with the nine captions of 2026-11-23 put back, the silent build writes byte for byte the files those reels were cut
+    # from: no time, position, cut, card or other text changed with the words
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    for take, pieces in spec["clips"].items():
+        for name, part in zip(build.piece_names(take, pieces), pieces):
+            if name in NEW_WORDS_2026_11_24:
+                old, now = NEW_WORDS_2026_11_24[name]
+                hits = [b for b in part["beats"]["ko"] if b["text"] == now]
+                assert len(hits) == 1, name
+                hits[0]["text"] = old
+    build.run(spec, out=tmp_path, check_only=True)
+    assert _digest(tmp_path) == SILENT_DIGEST_2026_11_23
 
 
 def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
@@ -978,7 +1010,7 @@ def test_a_narration_that_is_not_hamnida_style_stops_the_build(tmp_path, capsys,
     _voice_refused(build, _narrate(build, say), tmp_path)
     assert found[0] in capsys.readouterr().err
     for ok in ("허브가 심사합니다.", "허브가 심사합니다. 통과한 것만 올립니다", "팀이 신청하면 허브가 일곱 단계로 심사하고, 모든 단계를 "
-               "통과한 판만 승인합니다. 승인된 판은 카탈로그에 오르고 에이전트 게이트웨이로 부를 수 있습니다."):
+               "통과한 버전만 승인합니다. 승인된 버전은 카탈로그에 오르고 에이전트 게이트웨이로 부를 수 있습니다."):
         assert build.narration_problems(_narrate(build, ok), "ko") == [], ok
 
 

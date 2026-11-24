@@ -116,7 +116,7 @@ SPEC = {
                          "도구 권한을 주고 배포합니다."),
                 beat("shot:flow2", "흐름 2는 플랫폼팀이 게이트웨이에서 정책을 걸고 지켜보는 길입니다",
                      say="흐름 이는 운영입니다. 사용자의 요청은 에이전트 게이트웨이를 지나고, 플랫폼팀은 그곳에 전사 정책을 "
-                         "걸어 이상한 에이전트를 막습니다."),
+                         "걸고, 이상한 에이전트를 막습니다."),
                 beat("shot:platform", "게이트웨이 둘과 정책 엔진, 카탈로그, 심사 상태 머신을 한 번 만듭니다",
                      say="게이트웨이 둘과 정책 엔진은 AgentCore의 기능입니다. 카탈로그는 AWS Agent Registry, 심사는 "
                          "AWS Step Functions가 돌립니다."),
@@ -142,7 +142,7 @@ SPEC = {
             # ask5 71.3: a long command with 43 hidden lines; the No closes the dialog between 75.7 and 75.8
             piece("11-find", 71.0, 79.4, ko=[
                 beat("shot:ask5", "Claude Code는 셸 명령을 실행하기 전에 개발자에게 묻습니다", dur=3.5, pos="top",
-                     say="미리 허락되지 않은 셸 명령은 Claude Code가 돌리기 전에 이렇게 묻습니다. 이번 명령은 폴더를 만들고 "
+                     say="이렇게 Claude Code는 미리 허락되지 않은 셸 명령을 돌리기 전에 묻습니다. 이번 명령은 폴더를 만들고 "
                          "템플릿을 복사해 파일을 쓰는 긴 명령입니다.")]),
             # work5 79.6: the No and its sentence; then the files are written
             piece("11-find", 79.4, 107.0, WAIT, ko=[
@@ -162,16 +162,16 @@ SPEC = {
                          "카탈로그에 신청서를 써서, 레코드를 승인 대기로 만듭니다.")]),
             # publish_quality 24.4, both 31.1
             piece("13-submit", 23.8, 37.5, ko=[
-                beat("shot:both", "quality_agent의 v1-vulnerable 판도 승인 대기가 됩니다",
+                beat("shot:both", "quality_agent의 v1-vulnerable 버전도 승인 대기가 됩니다",
                      say="quality_agent는 취약한 라이브러리가 든 변형인 v1-vulnerable로 신청합니다. 이제 두 레코드가 모두 "
                          "승인 대기에 있습니다.")])],
         # 2단계: the reviews on the hub screen, the user's shell, the reject, the second submission
         "21-review": [
             # list 4.9, cards 10.0
             piece("21-review", 4.5, 11.5, ko=[
-                beat("shot:list", "신청이 들어오자 두 에이전트의 호스팅 심사가 저절로 시작됩니다",
-                     say="레코드가 승인 대기가 되자, 두 에이전트의 심사가 AWS Step Functions에서 저절로 돌기 시작합니다. "
-                         "둘 다 첫 단계를 지나 의존성 검사인 Scan을 하고 있습니다.")]),
+                beat("shot:list", "신청이 들어오자 두 에이전트의 호스팅 심사가 자동으로 시작됩니다",
+                     say="두 에이전트의 심사가 자동으로 시작되어, 둘 다 Scan을 하고 있습니다. Scan은 의존성 검사이고, 심사는 "
+                         "AWS Step Functions가 돌립니다.")]),
             # Scan running; release_review's Scan passes at 33.1
             piece("21-review", 30.0, 38.6, WAIT),
             # quality_failed 39.1, quality 40.6, release_card 47.6, steps 54.1
@@ -205,15 +205,15 @@ SPEC = {
                          "알려진 취약점 다섯 건과 각각 고쳐진 버전입니다."),
                 beat("shot:reason", "사유를 적어 반려하면 팀은 레코드에서 그 사유를 읽습니다",
                      say="플랫폼팀이 반려 사유를 적습니다. 이 의존성을 빼거나 고쳐진 버전으로 올린 뒤 다시 신청해 달라는 "
-                         "내용입니다. 그리고 반려하기를 누릅니다."),
+                         "내용입니다."),
                 beat("job_done", "작업이 끝나자 quality_agent의 레코드가 반려로 바뀝니다",
                      say="반려 작업이 끝나 레코드가 반려로 바뀌었습니다. 반려는 심사가 남긴 것을 지우는데, Scan에서 멈춘 이 "
                          "신청은 만든 것이 없어 지울 것도 없다고 나옵니다.")])],
         "24-again": [
             # requirements 12.3, publish_quality 18.7, quality_pending 25.1
             piece("24-again", 11.8, 31.0, ko=[
-                beat("shot:requirements", "개발자는 jinja2를 뺀 고친 판을 다시 신청합니다",
-                     say="개발자는 고친 판의 의존성 목록부터 보여 줍니다. 문제가 된 jinja2는 목록에 없습니다. 이 판을 "
+                beat("shot:requirements", "개발자는 jinja2를 뺀 고친 버전을 다시 신청합니다",
+                     say="개발자는 고친 버전의 의존성 목록부터 보여 줍니다. 문제가 된 jinja2는 목록에 없습니다. 이 버전을 "
                          "publish로 다시 올리자, 같은 레코드가 다시 승인 대기가 됩니다.")])],
         "25-approved": [
             # wide 4.5, steps 9.5
@@ -227,7 +227,7 @@ SPEC = {
             piece("25-approved", 362.0, 385.3, WAIT),
             # record 386.3, steps_done 391.3
             piece("25-approved", 385.3, 397.0, ko=[
-                beat("shot:record", "고친 판도 일곱 단계를 모두 통과해 승인이 됩니다",
+                beat("shot:record", "고친 버전도 일곱 단계를 모두 통과해 승인이 됩니다",
                      say="심사가 성공으로 끝나고, quality_agent의 레코드도 승인이 되었습니다. 같은 레코드가 반려를 거쳐 "
                          "승인까지 온 것입니다.")])],
         "26-answers": [
@@ -329,8 +329,8 @@ SPEC = {
             # answered_code_name 16.4; the next command's typing is cut
             piece("45-after", 12.6, 22.5, ko=[
                 beat("answered_code_name", "이제 코드명이 든 요청은 커스텀 가드레일이 막습니다",
-                     say="같은 코드명 질문을 다시 보내자 이번에는 사공삼입니다. 회사의 가드레일, 곧 인터셉터가 요청을 "
-                         "막았다는 문장이 나옵니다.")]),
+                     say="같은 코드명 질문을 다시 보내자 이번에는 사공삼입니다. 회사 가드레일인 인터셉터가 요청을 막았다는 "
+                         "문장이 나옵니다.")]),
             # answered_inspection 36.4
             piece("45-after", 29.8, 44.0, ko=[
                 beat("answered_inspection", "답의 Inspector ID 줄에서는 사번이 가려집니다",
@@ -349,29 +349,29 @@ SPEC = {
         "52-incident": [
             # publish_loop 11.4, submitted 17.8
             piece("52-incident", 10.8, 24.0, ko=[
-                beat("shot:submitted", "개발자가 quality_agent의 새 판 v2-loop를 신청합니다",
-                     say="이번에는 이미 승인된 quality_agent의 새 판을 올립니다. v2-loop는 도구를 되풀이해 부르는 사고를 "
-                         "일부러 내도록 만든 데모용 판입니다.")]),
+                beat("shot:submitted", "개발자가 quality_agent의 새 버전 v2-loop를 신청합니다",
+                     say="이번에는 이미 승인된 quality_agent의 새 버전을 올립니다. v2-loop는 도구를 반복 호출하는 사고를 "
+                         "일부러 내도록 만든 데모용 버전입니다.")]),
             # its review: only its end. The note approved (376.2) came from the pills; the steps on screen read
             # SUCCEEDED from about 377.8, as the shot approved (377.7) frames the record
             piece("52-incident", 377.6, 382.6, ko=[
-                beat("shot:approved", "이 판도 일곱 단계 심사를 모두 통과해 승인이 됩니다",
-                     say="이 판은 심사의 시험 호출에는 되풀이하지 않아, 일곱 단계를 모두 지나 승인됩니다. 이어서 사용자가 "
-                         "검사 건 하나의 결과를 묻습니다.")]),
+                beat("shot:approved", "이 버전도 일곱 단계 심사를 모두 통과해 승인이 됩니다",
+                     say="이 버전도 일곱 단계를 모두 지나 승인됩니다. 심사의 시험 호출에는 반복하지 않았기 때문입니다. 이어서 "
+                         "사용자가 검사 건 하나의 결과를 묻습니다.")]),
             # incident_asked 393.1; the 60 s without an answer are cut
             piece("52-incident", 392.8, 399.0),
             # no_answer 454.3
             piece("52-incident", 452.8, 461.5, ko=[
                 beat("no_answer", "사용자가 검사 Q-1002를 물었지만 60초가 지나도 답이 없습니다",
                      say="답 대신 시간이 다 됐다는 한 줄만 나옵니다. 그사이 에이전트는 같은 질문을 쉬지 않고 다시 묻고, "
-                         "호출한 쪽이 포기한 뒤에도 그 되풀이는 계속됩니다.")])],
+                         "호출한 쪽이 포기한 뒤에도 그 반복은 계속됩니다.")])],
         "53-alarm": [
             # alarm 5.7 (OK)
             piece("53-alarm", 5.3, 46.2, WAIT),
             # first_bar_over 46.9
             piece("53-alarm", 46.2, 52.0, ko=[
                 beat("first_bar_over", "그 사이 검사 도구의 분당 호출이 임계값 19를 넘습니다",
-                     say="경보의 막대 하나가 임계값 선을 넘었습니다. 한 분 동안 검사 도구가 이십칠 번 불린 것인데, 이때 "
+                     say="경보의 막대 하나가 임계값 선을 넘었습니다. 한 분 동안 검사 도구가 스물일곱 번 불린 것인데, 이때 "
                          "경보 상태는 아직 정상입니다.")]),
             piece("53-alarm", 88.0, 94.5, WAIT),
             # state_ALARM 95.0, bars 97.0, alarm 103.0 (one bar, 27, over the line in this take)
@@ -409,15 +409,15 @@ SPEC = {
             # cause_asked 16.8, ask1 24.9 (answered No), the No sentence
             piece("56-cause", 15.8, 31.6, ko=[
                 beat("cause_asked", "개발자는 Claude Code에게 같은 도구를 계속 부른 이유를 찾게 합니다",
-                     say="개발자가 Claude Code에게, 로그와 올린 v2-loop 판의 코드를 읽고 원인을 찾아 달라고 합니다. 파일을 "
+                     say="개발자가 Claude Code에게 로그와 올린 v2-loop 버전의 코드를 읽고 원인을 찾아 달라고 합니다. 파일을 "
                          "고치거나 다른 명령을 돌리지는 말라고 했고, 묻는 셸 명령은 이번에도 거절합니다.")]),
             # work1 33.2: Claude Code reads with its own tools
             piece("56-cause", 31.6, 42.2, WAIT),
             # the answer's first line stands still at the top only from 42.2 to 43.0 (cause_done 47.7 less 5.45 s):
             # those real frames play slower, so the line can be read
             piece("56-cause", 42.2, 43.0, 0.13, ko=[
-                beat("cause_done", "Claude Code는 로그와 코드를 읽고 재시도에 횟수 제한이 없다고 짚습니다", offset=-5.45,
-                     say="검사 결과가 계속 대기 상태라, v2-loop 판이 횟수 제한 없이 같은 질문을 다시 물었다는 답입니다. "
+                beat("cause_done", "Claude Code는 로그와 코드에서 재시도 횟수 제한이 없다는 원인을 찾습니다", offset=-5.45,
+                     say="검사 결과가 계속 대기 상태라, v2-loop 버전이 횟수 제한 없이 같은 질문을 다시 물었다는 답입니다. "
                          "근거로 로그와 코드, 그 파일의 주석까지 듭니다.")]),
             # cause 47.7: the reasons, the way to fix it
             piece("56-cause", 43.0, 58.0, ko=[
@@ -427,13 +427,13 @@ SPEC = {
         "57-back": [
             # publish_fixed 11.1, submitted 17.8
             piece("57-back", 10.6, 23.0, ko=[
-                beat("shot:submitted", "개발자는 원인을 고친 판을 다시 신청합니다",
-                     say="이번에는 변형 없이 quality_agent를 다시 올립니다. 되풀이하는 v2-loop가 아닌 기본 판이고, "
+                beat("shot:submitted", "개발자는 원인을 고친 버전을 다시 신청합니다",
+                     say="이번에는 변형 없이 quality_agent를 다시 올립니다. 반복 호출하는 v2-loop가 아닌 기본 버전이고, "
                          "레코드는 다시 승인 대기가 됩니다.")]),
             # its review: only its end (approved 357.0, the shot approved 358.5, steps_done 363.5)
             piece("57-back", 356.5, 369.0, ko=[
-                beat("approved", "에이전트가 멈춘 동안에도 고친 판의 심사는 끝까지 통과합니다",
-                     say="새 판의 심사가 일곱 단계를 모두 지나 성공했습니다. 멈춤 정책이 심사의 시험 호출만은 예외로 "
+                beat("approved", "에이전트가 멈춘 동안에도 고친 버전의 심사는 끝까지 통과합니다",
+                     say="새 버전의 심사가 일곱 단계를 모두 지나 성공했습니다. 멈춤 정책이 심사의 시험 호출만은 예외로 "
                          "들여보내기 때문에, 멈춘 동안에도 시험 호출 단계가 지나갑니다.")]),
             # stopped 373.3, row 378.3, resume_pressed 382.3
             piece("57-back", 373.0, 382.5, ko=[
@@ -474,8 +474,8 @@ SPEC = {
                          "say": "삼단계는 전사 정책 시험입니다. 새 정책을 바로 적용하지 않고, 먼저 기록 모드로 시험합니다."},
             "card-ch4": {"seconds": 3, "kicker": "4단계. 전사 정책 적용", "title": "전사 정책 하나가 모든 에이전트에 걸립니다",
                          "where": "AgentCore Gateway와 커스텀 가드레일",
-                         "say": "사단계는 전사 정책 적용입니다. 시험을 마친 정책 하나를 적용 모드로 올리면 모든 에이전트에 "
-                                "걸립니다."},
+                         "say": "사단계는 전사 정책 적용입니다. 시험을 마친 정책 하나를 적용 모드로 올리면 모든 에이전트에서 "
+                                "막습니다."},
             "card-ch5": {"seconds": 3, "kicker": "5단계. 이상 대응", "title": "문제를 일으킨 에이전트 하나만 멈춥니다",
                          "where": "CloudWatch 경보와 AgentCore Runtime",
                          "say": "오단계는 이상 대응입니다. 경보가 울리면 문제를 일으킨 에이전트 하나만 멈추고, 다른 에이전트는 "
@@ -521,7 +521,7 @@ SPEC["reels"] = {"main": ["card-intro", *(n for s in _STAGE_RUNS.values() for n 
 READINGS: dict[str, dict[str, str]] = {"ko": {
     "Amazon Bedrock AgentCore": "아마존 베드록 에이전트코어",
     "Amazon Bedrock": "아마존 베드록",
-    "Amazon Bedrock Guardrails": "아마존 베드록 가드레일즈",
+    "Amazon Bedrock Guardrails": "아마존 베드록 가드레일",
     "AgentCore": "에이전트코어",
     "Gateway": "게이트웨이",
     "AWS Agent Registry": "에이더블유에스 에이전트 레지스트리",
