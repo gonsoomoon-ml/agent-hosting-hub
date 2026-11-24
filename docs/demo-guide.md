@@ -21,8 +21,8 @@
 ```bash
 cp .env.example .env     # 접두어를 바꾸려면 DEMO_PREFIX를 고친다(소문자와 숫자 2~10자)
 make deploy              # 계획을 보여 주고 yes를 묻는다. 빈 계정에서 4분
-make seed                # 공유 도구 record를 카탈로그에 넣는다. 6초
-make preload             # 처음부터 올라와 있는 에이전트 둘을 올린다. 11분
+make seed                # 공유 도구 레코드를 카탈로그에 넣는다. 6초
+make preload             # 에이전트 둘을 미리 올려 둔다. 11분
 make ui                  # 허브 화면. http://127.0.0.1:8300 , Ctrl+C로 멈춘다
 ```
 

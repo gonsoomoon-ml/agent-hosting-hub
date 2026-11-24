@@ -33,10 +33,10 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ```bash
 cp .env.example .env   # 허브의 세 값: 리전, 접두어, 모델
-make deploy            # 허브의 틀을 올린다. 빈 계정에서 4분쯤
-make seed              # 공유 도구 record를 카탈로그에 넣고 승인한다. 6초
-make preload           # 처음부터 올라와 있는 에이전트 둘을 올린다. 11분쯤
-make ui                # 허브 화면(샘플)을 이 PC에서 띄운다. http://127.0.0.1:8300
+make deploy            # 허브의 기반 자원을 배포한다. 빈 계정에서 4분쯤
+make seed              # 공유 도구 레코드를 카탈로그에 넣고 승인한다. 6초
+make preload           # 에이전트 둘을 미리 올려 둔다. 11분쯤
+make ui                # 허브 화면(샘플)을 이 PC에서 실행한다. http://127.0.0.1:8300
 make destroy           # 허브가 만든 것을 모두 지운다. 에이전트 수에 따라 9~18분
 ```
 
@@ -53,9 +53,9 @@ agent-hosting-hub/
 ├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy 등(아래 "일곱 명령")
 ├── .env.example          # 허브의 세 값: 리전, 접두어, 모델
 │
-├── platform_team/        # 플랫폼팀: 허브의 틀과 운영 명령. 기능 하나가 폴더 하나다
+├── platform_team/        # 플랫폼팀: 허브의 기반 자원과 운영 명령. 기능 하나가 폴더 하나다
 │   ├── terraform/        #   루트 모듈. 기능 폴더의 terraform/을 묶어 한 번에 올린다
-│   ├── shared_code/      #   여러 기능이 같이 쓰는 코드(설정, AWS 호출, 코드 묶음)
+│   ├── shared_code/      #   여러 기능이 같이 쓰는 코드(설정, AWS 호출, 코드 패키지)
 │   ├── agent_catalog/    #   카탈로그(AWS Agent Registry): 신청, 검색, 공유 도구 등록
 │   ├── hosting_review/   #   호스팅 심사(Step Functions, Lambda, CodeBuild)와 반려
 │   ├── agent_gateway/    #   에이전트 게이트웨이와 에이전트를 부르는 명령
@@ -63,7 +63,7 @@ agent-hosting-hub/
 │   ├── sample_tools/     #   샘플 사내 도구(합성 데이터)
 │   ├── company_policy/   #   전사 정책: Cedar 템플릿, 정책 엔진, rollout.sh
 │   ├── custom_guardrail/ #   커스텀 가드레일: interceptor Lambda, guardrail.sh
-│   ├── agent_monitoring/ #   알림, 도구 호출 알람, 사용량 보고(usage.sh), 로그 읽기
+│   ├── agent_monitoring/ #   알림, 도구 호출 경보, 사용량 보고(usage.sh), 로그 읽기
 │   ├── agent_stop/       #   에이전트 하나 멈추기와 재개(stop.sh, resume.sh)
 │   ├── dev_access/       #   개발팀 역할
 │   └── hub_ui/           #   허브 화면(샘플, 이 PC에서만)
@@ -72,11 +72,11 @@ agent-hosting-hub/
 │   ├── agent_template/   #   표준 템플릿과 올리는 명령(publish.sh)
 │   ├── release_review/   #   예시 에이전트(LangGraph)
 │   ├── quality_agent/    #   예시 에이전트(Strands). variants/에 데모를 위한 버전 둘
-│   └── preloaded_agents/ #   처음부터 올라와 있는 에이전트 둘(docs_adk, spec_assistant)
+│   └── preloaded_agents/ #   미리 올려 둔 에이전트 둘(docs_adk, spec_assistant)
 │
 ├── docs/                 # 그림 둘과 자세한 문서(아래 "더 읽기")
 ├── e2e_checks/           # 실제 AWS에서 돌리는 확인 스크립트. spikes/는 가정을 확인한 기록
-├── tests/                # 단위 시험. AWS를 부르지 않는다
+├── tests/                # 단위 테스트. AWS를 부르지 않는다
 ├── demo_scenes/          # 시연 영상의 터미널에서 치는 명령 넷(ask, publish, search, logs)
 └── demo_video/           # 시연 영상을 만드는 것: 스토리보드, 녹화 스크립트, 자막과 컷(build.py), 개발자 PC
 ```

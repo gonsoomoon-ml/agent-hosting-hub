@@ -15,7 +15,7 @@ make ui                                   # http://127.0.0.1:8300 , Ctrl+C로 �
 - `HUB_UI_PORT`: 포트(기본 8300). 주소는 언제나 `127.0.0.1`이다. 코드에 고정되어 있어 바꾸는 설정이 없다.
 - `HUB_UI_LANG`: 고르지 않은 페이지의 언어, `ko`(기본) 또는 `en`. 머리줄의 `한 | EN`으로 바꾸면 쿠키 `hub_lang`에 남는다. 밝게, 어둡게, 자동(OS를 따른다)은 쿠키 `hub_theme`에 남는다.
 - `HUB_UI_TZ`: 화면의 시각을 보이는 시간대(기본 `Asia/Seoul`), `MM/DD HH:MM:SS`로 쓴다. 모르는 이름이면 UTC다.
-- 허브의 값(SSM `/<prefix>/platform/`)은 그것이 필요한 첫 페이지에서 한 번 읽는다. 값이 없으면 "배포되어 있지 않다"는 페이지를 보이고, 다음 페이지에서 다시 읽는다. 그래서 화면을 실행한 채 `make deploy`를 돌리면 화면이 자동으로 홈으로 바뀐다(코드가 그렇게 한다. 해 보지 않았다). 반대로 허브를 지우고 다시 올리면 화면은 옛 값을 쥐고 있으므로 화면을 다시 실행한다.
+- 허브의 값(SSM `/<prefix>/platform/`)은 그것이 필요한 첫 페이지에서 한 번 읽는다. 값이 없으면 "배포되어 있지 않다"는 페이지를 보이고, 다음 페이지에서 다시 읽는다. 그래서 화면을 연 채 `make deploy`를 돌리면 화면이 자동으로 홈으로 바뀐다(코드가 그렇게 한다. 해 보지 않았다). 반대로 허브를 지우고 다시 올리면 화면은 옛 값을 쥐고 있으므로 화면을 다시 실행한다.
 - 화면은 5초마다 자기를 다시 그린다. 폼의 칸(입력 칸, 글 칸, 고르는 칸)에 포커스가 있거나 글을 쓰는 칸에 글이 있으면 다시 그리지 않는다. 다시 그려도 스크롤 위치는 그대로다. 링크나 버튼에 있던 포커스는 풀린다. 이 앱 밖에서 가져오는 스크립트, 스타일, 글꼴은 없다.
 
 ## 홈
@@ -58,7 +58,7 @@ Step Functions 콘솔 링크는 `/reviews/<에이전트>/console`을 거친다. 
 
 ### 실행 기록과 로그의 모양을 어디서 가져왔나
 
-실행 기록의 사건 모양(`stateEnteredEventDetails.name`, `taskFailedEventDetails`의 `error`와 `cause` 등)은 Step Functions의 서비스 모델(boto3)에서 가져왔고, 2026-11-23에 올라와 있는 허브에서 이 페이지를 실행해(`make e2e-ui`) 진짜 실행과 맞춰 봤다. 단계마다 보인 시간은 실행 기록의 들어간 사건과 나온 사건 사이의 시간과 같았다(`quality_agent`와 `release_review`의 승인된 심사). Scan에서 실패한 심사에서 AWS는 Scan에 `TaskSubmitted`, `TaskFailed` 다음에 나온 사건(`TaskStateExited`)을 적고 `Notify`로 갔다. 코드는 나온 사건이 없다고 가정하고 쓰였지만 나온 사건이 있어도 같은 결과가 되게 썼으므로, 페이지는 Scan을 실패(32초)로 보였다. `TaskFailed`의 cause는 build 기록이었다(6,419자, 맨 위의 키 `Build`, `SdkHttpMetadata`, `SdkResponseMetadata`. `Build.Logs`에 `GroupName`, `StreamName`, `CloudWatchLogs` 등). build의 마지막 로그 줄은 build가 끝나기 0.1초 전에 CloudWatch Logs에 들어갔고 실행은 build가 끝나고 6.4초 뒤에 멈췄으므로, 실패를 본 뒤 첫 페이지(1초)에 취약점 줄이 나왔다. 그 로그의 pip-audit 표(`jinja2 2.11.2  PYSEC-2021-66   2.11.3` 모양의 줄)는 권고 다섯을 줄마다 두 번 출력했고, 페이지는 같은 줄을 한 번만 보인다. Lambda 단계의 cause(`errorMessage`)는 Lambda 단계가 실패한 심사가 없어 보지 못했다. 읽는 곳은 `reviews.py`의 `steps_of`, `scan_log`, `scan_findings` 셋뿐이다.
+실행 기록의 사건 모양(`stateEnteredEventDetails.name`, `taskFailedEventDetails`의 `error`와 `cause` 등)은 Step Functions의 서비스 모델(boto3)에서 가져왔고, 2026-11-23에 올라와 있는 허브에서 이 페이지를 열어(`make e2e-ui`) 진짜 실행과 맞춰 봤다. 단계마다 보인 시간은 실행 기록의 들어간 사건과 나온 사건 사이의 시간과 같았다(`quality_agent`와 `release_review`의 승인된 심사). Scan에서 실패한 심사에서 AWS는 Scan에 `TaskSubmitted`, `TaskFailed` 다음에 나온 사건(`TaskStateExited`)을 적고 `Notify`로 갔다. 코드는 나온 사건이 없다고 가정하고 쓰였지만 나온 사건이 있어도 같은 결과가 되게 썼으므로, 페이지는 Scan을 실패(32초)로 보였다. `TaskFailed`의 cause는 build 기록이었다(6,419자, 맨 위의 키 `Build`, `SdkHttpMetadata`, `SdkResponseMetadata`. `Build.Logs`에 `GroupName`, `StreamName`, `CloudWatchLogs` 등). build의 마지막 로그 줄은 build가 끝나기 0.1초 전에 CloudWatch Logs에 들어갔고 실행은 build가 끝나고 6.4초 뒤에 멈췄으므로, 실패를 본 뒤 첫 페이지(1초)에 취약점 줄이 나왔다. 그 로그의 pip-audit 표(`jinja2 2.11.2  PYSEC-2021-66   2.11.3` 모양의 줄)는 권고 다섯을 줄마다 두 번 출력했고, 페이지는 같은 줄을 한 번만 보인다. Lambda 단계의 cause(`errorMessage`)는 Lambda 단계가 실패한 심사가 없어 보지 못했다. 읽는 곳은 `reviews.py`의 `steps_of`, `scan_log`, `scan_findings` 셋뿐이다.
 
 ## 전사 정책
 
@@ -100,7 +100,7 @@ harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추�
 
 멈추기는 끝내지 못한 세션이 있으면 명령처럼 실패로 끝난다. 에이전트 이름이 신청서의 이름 규칙에 맞지 않거나 호스팅된 에이전트가 아니면 작업을 시작하지 않고 빨간 칸에 문장을 보인다. 누른 때 호스팅된 에이전트의 목록을 읽지 못해도 작업을 시작하지 않고 빨간 칸에 그 문장(AWS에서 값을 읽지 못했다)을 보인다.
 
-두 페이지는 2026-11-23에 가짜 AWS 값으로 확인했고, 같은 날 올라와 있는 허브에서 `make e2e-ui`가 버튼을 눌러 확인했다(아래 "시험과 확인").
+두 페이지는 2026-11-23에 가짜 AWS 값으로 확인했고, 같은 날 올라와 있는 허브에서 `make e2e-ui`가 버튼을 눌러 확인했다(아래 "테스트와 확인").
 
 ## 작업(버튼)
 
@@ -125,9 +125,9 @@ harness 에이전트는 에이전트 게이트웨이에 진입이 없어 멈추�
 - 자격 증명의 범위. 화면은 실행한 셸의 자격 증명이 허락하는 만큼 할 수 있다.
 - 통신은 HTTP다. 이 PC 안의 통신(loopback)이라 암호화하지 않는다.
 
-## 시험과 확인
+## 테스트와 확인
 
-동작은 단위 테스트가 정한다(`tests/test_hub_ui_app.py`, `tests/test_hub_ui_jobs.py`, `tests/test_hub_ui_home.py`, `tests/test_hub_ui_reviews.py`, `tests/test_hub_ui_policies.py`, `tests/test_hub_ui_agents.py`). 시험은 `tests/fakes.py`의 가짜 AWS 클라이언트로 돌고 AWS를 부르지 않는다. 2026-11-23에 허브가 올라와 있지 않은 계정(`us-west-2`, 접두어 `hub`)에서 `python -m platform_team.hub_ui`로 실행해 봤다. 첫 페이지가 200으로 "이 계정과 리전에 허브가 배포되어 있지 않습니다"와 읽은 곳(`/hub/platform/`)을 보였고, `Host: evil.example:8300`인 요청은 403이었다.
+동작은 단위 테스트가 정한다(`tests/test_hub_ui_app.py`, `tests/test_hub_ui_jobs.py`, `tests/test_hub_ui_home.py`, `tests/test_hub_ui_reviews.py`, `tests/test_hub_ui_policies.py`, `tests/test_hub_ui_agents.py`). 테스트는 `tests/fakes.py`의 가짜 AWS 클라이언트로 돌고 AWS를 부르지 않는다. 2026-11-23에 허브가 올라와 있지 않은 계정(`us-west-2`, 접두어 `hub`)에서 `python -m platform_team.hub_ui`로 실행해 봤다. 첫 페이지가 200으로 "이 계정과 리전에 허브가 배포되어 있지 않습니다"와 읽은 곳(`/hub/platform/`)을 보였고, `Host: evil.example:8300`인 요청은 403이었다.
 
 `make e2e-ui`(`e2e_checks/e2e_hub_ui.py`)는 올라와 있는 허브에서 화면을 확인한다. `make e2e-ops`가 끝난 허브(에이전트 넷이 호스팅되고 `APPROVED`, `guard_prompt` 꺼짐, 커스텀 가드레일 떨어짐, 멈춘 에이전트 없음, 도는 심사 없음)에서만 시작하고, 아니면 0번 줄에 무엇이 다른지 출력하고 멈춘다. 화면을 이 PC의 빈 포트에서 자식 프로세스(`python -m platform_team.hub_ui`)로 실행하고, 페이지를 읽고 브라우저처럼 버튼을 누른다(페이지에서 읽은 토큰과 화면의 `Origin`). 끝나면 실패했을 때도 자식을 멈춘다. 페이지에서 읽은 값은 스크립트가 boto3로 읽은 값과 맞춰 본다. 확인 여덟을 한 줄씩 출력하고(`[PASS]`, `[FAIL]`, 관찰은 `[INFO]`), 끝 줄은 `== N checks passed, M failed, K observations (…s)`다.
 

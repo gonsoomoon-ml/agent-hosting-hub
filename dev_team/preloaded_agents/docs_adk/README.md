@@ -23,12 +23,12 @@ ADK는 Gemini 밖의 모델을 LiteLLM으로 부른다(ADK 2.14.1의 `google.adk
 
 ## 버전과 크기
 
-`google-adk`는 2.14.1로 고정했다. 2026-11-22의 최신은 2.15.0이었다. 2.15.0도 이 에이전트의 다섯 줄로는 검사를 통과하고 패키지도 한도 안이었지만(압축 46,329,030바이트), `watchdog>=7`을 요구한다. `quality_agent`의 시험이 쓰는 `strands-agents==1.65.0`은 `watchdog<7`을 요구하므로, 이 리포의 시험 환경 하나에 둘을 함께 둘 수 없었다. 2.14.1은 둘 다와 맞고, 모든 Runtime이 쓰는 `aws-opentelemetry-distro==0.24.0`과도 맞는다(둘이 받는 OpenTelemetry가 1.45.2로 같다). 시험 환경도 같은 버전을 쓴다(`pyproject.toml`).
+`google-adk`는 2.14.1로 고정했다. 2026-11-22의 최신은 2.15.0이었다. 2.15.0도 이 에이전트의 다섯 줄로는 검사를 통과하고 코드 패키지도 한도 안이었지만(압축 46,329,030바이트), `watchdog>=7`을 요구한다. `quality_agent`의 테스트가 쓰는 `strands-agents==1.65.0`은 `watchdog<7`을 요구하므로, 이 리포의 테스트 환경 하나에 둘을 함께 둘 수 없었다. 2.14.1은 둘 다와 맞고, 모든 Runtime이 쓰는 `aws-opentelemetry-distro==0.24.0`과도 맞는다(둘이 받는 OpenTelemetry가 1.45.2로 같다). 테스트 환경도 같은 버전을 쓴다(`pyproject.toml`).
 
 2026-11-22에 이 리포의 `requirements.txt` 그대로 심사의 규칙대로 확인한 값이다.
 
 - 검사: `pip-audit` 2.10.1(`PIP_ONLY_BINARY=:all:`)이 `No known vulnerabilities found`.
-- 패키지: `uv` 0.10.8로 Runtime의 플랫폼용 wheel을 받아 배포 build와 같은 방식(`deploy_build.package`)으로 묶으면 압축 46,291,484바이트, 풀면 113,794,908바이트(파일 7,260개)다. AgentCore 개발자 안내서("Quotas for Amazon Bedrock AgentCore"의 Runtime 표, 2026-11-22에 읽었다)는 직접 코드 배포의 패키지 한도를 압축 250 MB, 풀어서 750 MB로 적는다. 이 한도는 여기서는 확인하지 않았다.
+- 코드 패키지: `uv` 0.10.8로 Runtime의 플랫폼용 wheel을 받아 배포 build와 같은 방식(`deploy_build.package`)으로 묶으면 압축 46,291,484바이트, 풀면 113,794,908바이트(파일 7,260개)다. AgentCore 개발자 안내서("Quotas for Amazon Bedrock AgentCore"의 Runtime 표, 2026-11-22에 읽었다)는 직접 코드 배포의 코드 패키지 한도를 압축 250 MB, 풀어서 750 MB로 적는다. 이 한도는 여기서는 확인하지 않았다.
 
 ## 허브에서 받는 통제
 
@@ -44,7 +44,7 @@ ADK는 Gemini 밖의 모델을 LiteLLM으로 부른다(ADK 2.14.1의 `google.adk
 - 승인된 뒤 에이전트 게이트웨이로 `What is our standard for versioning an API?`를 묻자 4.2초 만에 200이 왔다. 답은 API 버전 표준의 ID와 세 규칙(경로의 주 버전 `/v1/...`, 깨지는 변경에는 새 주 버전, 앞 버전을 6개월 더 제공)이었고 `tools_used`는 `["find_standard"]`였다. 표준의 ID는 그 실행 뒤에 이름만 바꿨다(지금은 `STD-01`부터).
 - Runtime의 로그 그룹에 오류 줄이나 traceback은 없었다. 경고 줄은 넷이었다. 둘은 OpenTelemetry의 로그 계측이 LoggingHandler를 붙이지 않았다는 줄(`Skipping installation of LoggingHandler ...`)이고, 둘은 `Invalid HTTP request received.`다. 이 줄들이 무엇 때문인지는 알아보지 않았다.
 
-## 로컬에서 시험하기
+## 로컬에서 테스트하기
 
 ```bash
 uv run pytest tests/test_docs_adk.py -q
