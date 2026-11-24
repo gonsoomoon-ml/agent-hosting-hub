@@ -208,6 +208,7 @@ SPEC = {
                 beat("shot:record", "일곱 단계를 모두 통과한 release_review는 승인이 됩니다",
                      say="심사가 성공으로 끝나고 release_review의 레코드는 승인으로 바뀌었습니다. 마지막 단계가 사용자의 "
                          "요청을 허용하고 승인으로 표시한 것입니다.",
+                     # until the camera moves on to the passed steps (shot steps_done 387.77)
                      box=[7, 268, 279, 54], what=["레코드 상태 승인"], box_dur=2.65)])],
         "22-works": [
             # change 11.5; the command's typing is cut
@@ -257,6 +258,7 @@ SPEC = {
                 beat("shot:record", "고친 버전도 일곱 단계를 모두 통과해 승인이 됩니다",
                      say="심사가 성공으로 끝나고, quality_agent의 레코드도 승인이 되었습니다. 같은 레코드가 반려를 거쳐 "
                          "승인까지 온 것입니다.",
+                     # until the camera moves on to the passed steps (shot steps_done 391.34)
                      box=[7, 459, 279, 51], what=["레코드 상태 승인"], box_dur=2.65)])],
         "26-answers": [
             # asked 11.9, answer 20.1
@@ -319,6 +321,7 @@ SPEC = {
                 beat("shot:rows_before", "기록 모드로 시험한 정책을 버튼 하나로 적용 모드로 올립니다",
                      say="기록 모드에서 막았을 요청을 확인했으니, 이제 같은 정책을 적용 모드로 올립니다. 정책을 새로 만들지 "
                          "않고, 모드만 바꾸는 작업이 시작됩니다.",
+                     # until the camera moves on to the policy's buttons (shot buttons 15.17)
                      box=[16, 456, 1888, 168], what=["기록 모드인 정책 세 줄"], box_dur=2.65)]),
             # the job's first lines (it ends at 88.5)
             piece("41-enforce", 19.2, 50.0, WAIT),
@@ -382,6 +385,7 @@ SPEC = {
                 beat("shot:agents", "플랫폼팀은 에이전트마다 호출과 세션 수를 한 화면에서 봅니다", dur=6.0,
                      say="에이전트 페이지는 호스팅된 에이전트마다 최근 육십 분의 호출과 세션 수를 Amazon CloudWatch에서 "
                          "읽어 보여 줍니다. 그 아래에는 도구 게이트웨이를 지난 도구별 호출 수가 있습니다.",
+                     # until the camera moves on to the calls of each tool (shot tools 18.83)
                      box=[945, 370, 135, 356], what=["에이전트마다의 호출과 세션 수"], box_dur=5.0),
                 beat("shot:alarm", "도구 호출 경보는 한 도구의 분당 호출이 19를 넘는지 지켜봅니다",
                      say="지켜보는 것은 검사 건을 읽는 도구이고, 지금은 정상입니다. 같은 질문을 쉬지 않고 되묻는 에이전트가 "
@@ -488,6 +492,7 @@ SPEC = {
                 beat("shot:stopped", "승인이 끝나도 멈춤은 그대로이고, 재개 버튼으로 다시 엽니다",
                      say="심사는 멈춤 정책을 지우지 않으므로, 승인된 뒤에도 quality_agent는 멈춤입니다. 플랫폼팀이 재개를 "
                          "누르면 그 정책 하나만 지워지고, 경보도 정상으로 돌아와 있습니다.",
+                     # until the camera moves on to quality_agent's row and its resume button (shot row 378.29)
                      box=[38, 502, 1467, 89], what=["멈춤인 quality_agent 줄"], box_dur=2.65)]),
             # the resume job
             piece("57-back", 382.5, 394.0, WAIT),
