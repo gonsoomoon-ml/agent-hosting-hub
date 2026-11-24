@@ -663,10 +663,12 @@ def test_the_cards_of_the_script_pass_the_rules(tmp_path):
     manifest = json.loads((tmp_path / "out" / "reels" / "hosting-hub-main-ko.json").read_text(encoding="utf-8"))
     assert manifest["segments"][0]["file"] == "cards/ko/card-intro.mp4"
     assert {"file": "clips/ko/00-home.1.mp4"} in [{"file": s["file"]} for s in manifest["segments"]]
-    # each piece's script for the plugin: its window, its speed, its captions, and no title (the cards carry it)
+    # each piece's script for the plugin: its window, its speed, its captions (the fields of a silent caption: a
+    # narration and its boxes stay out), and no title (the cards carry it)
     script = json.loads((tmp_path / "out" / "scripts" / "ko" / "00-home.1.json").read_text(encoding="utf-8"))
     home = build.SPEC["clips"]["00-home"][0]
-    assert script == {"start": home["start"], "end": home["end"], "speed": 1.25, "beats": home["beats"]["ko"]}
+    silent = [{k: v for k, v in b.items() if k in ("at", "text", "offset", "dur", "pos")} for b in home["beats"]["ko"]]
+    assert script == {"start": home["start"], "end": home["end"], "speed": 1.25, "beats": silent}
     assert script["beats"] and all(isinstance(b["at"], str) for b in script["beats"])
 
 
@@ -787,6 +789,447 @@ def test_a_piece_beyond_its_take_or_a_caption_running_into_the_next_stops_the_bu
         return
     err = capsys.readouterr().err
     assert code == 2 and not cut and says in err and "00-home.1" in err
+
+
+# ------------------------------------------------------------------ the voiced build: narrations, boxes, held captions
+
+# sha256 of what `build.py --check` writes (every file under scripts/ko/, cards/ko/cards.json and reels/*.json) as the
+# build stood when the six silent reels of 2026-11-23 were cut; the silent build's files in demo_video/out/, which those
+# reels were cut from, give the same digest
+SILENT_DIGEST = "21e5469e3fee886ddb56a5ebeab6dbe448c3c1a5f53fe19de772652afce31e47"
+
+
+def _digest(out: Path) -> str:
+    """sha256 over the silent build's script files, cards.json and reel manifests, in sorted order of their paths
+    relative to out: per file the path, a NUL byte, the file's bytes, a NUL byte."""
+    import hashlib
+    files = [*(out / "scripts" / "ko").rglob("*"), out / "cards" / "ko" / "cards.json", *(out / "reels").glob("*.json")]
+    h = hashlib.sha256()
+    for f in sorted((f for f in files if f.is_file()), key=lambda f: f.relative_to(out).as_posix()):
+        h.update(f.relative_to(out).as_posix().encode() + b"\0" + f.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def test_the_silent_build_writes_what_the_reels_of_2026_11_23_were_cut_from(tmp_path):
+    build = _build()
+    build.run(build.SPEC, out=tmp_path, check_only=True)
+    assert _digest(tmp_path) == SILENT_DIGEST
+
+
+def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
+    # a narration, a box, what it points at, a box delay and a voice start on every caption, a narration on every card:
+    # the silent build still writes exactly what it wrote before
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    for pieces in spec["clips"].values():
+        for p in pieces:
+            for b in p["beats"]["ko"]:
+                b.update(say="허브가 신청을 심사합니다.", box=[100, 200, 300, 120], what=["심사 표"], box_delay=0.5,
+                         voice_at=1.0)
+    for card in spec["cards"]["ko"].values():
+        card["say"] = "허브를 소개합니다."
+    build.run(spec, out=tmp_path, check_only=True)
+    assert _digest(tmp_path) == SILENT_DIGEST
+    # a beat with every field: the silent script keeps the five of a silent caption
+    part = build.piece("00-home", 3.5, 20.0, ko=[build.beat("shot:wide", "허브 화면을 봅니다", offset=0.5, dur=4.0, pos="top",
+                                                             say="허브 화면입니다.", box=[100, 200, 300, 120],
+                                                             what=["허브 화면"], box_delay=0.5, voice_at=1.0)])
+    assert build.clip_script(part, "ko")["beats"] == [{"at": "shot:wide", "text": "허브 화면을 봅니다", "offset": 0.5,
+                                                       "dur": 4.0, "pos": "top"}]
+
+
+def test_a_piece_with_three_captions_becomes_three_pieces_cut_before_each_anchor():
+    import copy
+    build = _build()
+    log = CAMLOG["log"]                                            # wide 3.9, flow1 14.91, asked 20.0
+    beats = [build.beat("asked", "셋째 자막입니다", offset=0.5),     # written out of order: the pieces follow the anchors
+             build.beat("shot:wide", "첫째 자막입니다"), build.beat("shot:flow1", "둘째 자막입니다", say="둘째 자막입니다.")]
+    part = build.piece("11-find", 3.5, 41.5, ko=beats)
+    pieces = build.split_piece(part, "ko", log)
+    assert [p["beats"]["ko"] for p in pieces] == [[beats[1]], [beats[2]], [beats[0]]]          # one caption each
+    assert pieces[0]["start"] == 3.5 and pieces[-1]["end"] == 41.5                           # the piece's two ends
+    assert [p["end"] for p in pieces[:-1]] == [p["start"] for p in pieces[1:]]               # no gap, no overlap
+    assert pieces[1]["start"] == pytest.approx(14.91 - 0.2)                                  # 0.2 s before its anchor
+    assert pieces[2]["start"] == pytest.approx(20.0 + 0.5 - 0.2)                             # the anchor with its offset
+    assert all(p["raw"] == "11-find" and p["speed"] == 1.25 for p in pieces)
+    one, none = build.piece("11-find", 3.5, 12.0, ko=[beats[1]]), build.piece("11-find", 3.5, 9.0)
+    assert build.split_piece(one, "ko", log) == [one] and build.split_piece(none, "ko", []) == [none]   # as they are
+    # the whole spec: the pieces of a take are numbered anew, the camlogs are those of the raw takes (12-make is cut
+    # from the 11-find recording), and nothing else changes
+    wait = build.piece("11-find", 41.5, 44.0, speed=4)
+    spec = {"clips": {"12-make": [one, part, wait]}, "cards": {"ko": {"card-ch1": {"seconds": 3, "say": "일단계입니다."}}},
+            "reels": {"r": ["card-ch1", "12-make"]}}
+    before = copy.deepcopy(spec)
+    v = build.voiced(spec, "ko", {"11-find": log})
+    assert spec == before
+    assert v["clips"]["12-make"] == [one, *pieces, wait]
+    assert build.piece_names("12-make", v["clips"]["12-make"]) == [f"12-make.{n}" for n in range(1, 6)]
+    assert v["cards"] == spec["cards"] and v["reels"] == spec["reels"]
+
+
+def test_a_voiced_caption_is_held_and_its_voice_starts_0_3_s_after_it():
+    build = _build()
+    said = build.beat("shot:flow1", "흐름 1은 허브가 심사하는 길입니다", offset=0.4, say="흐름 일은 허브가 심사하는 길입니다.",
+                      box=[100, 200, 300, 120], what=["흐름 1의 설명"], box_delay=0.8)
+    plain = build.beat("shot:wide", "허브 화면을 봅니다", dur=3.0)
+    part_said, part_plain = build.piece("00-home", 14.0, 30.0, ko=[said]), build.piece("00-home", 3.5, 14.0, ko=[plain])
+    assert build.voiced_script(part_said, "ko") == {"start": 14.0, "end": 30.0, "speed": 1.25, "beats": [
+        {"at": "shot:flow1", "text": "흐름 1은 허브가 심사하는 길입니다", "offset": 0.4, "box": [100, 200, 300, 120],
+         "box_delay": 0.8, "hold": True}]}
+    assert build.voiced_script(part_plain, "ko") == build.clip_script(part_plain, "ko")     # no narration: as today
+    spec = {"clips": {"00-home": [part_plain, part_said]},
+            "cards": {"ko": {"card-ch0": {"seconds": 3, "say": "준비입니다."}, "card-intro": {"seconds": 4}}},
+            "reels": {"r": ["card-intro", "card-ch0", "00-home"]}}
+    logs = {"00-home": CAMLOG["log"]}
+    assert build.voice_starts(spec, "ko", logs) == pytest.approx({"card-ch0": 0.3,
+                                                                  "00-home.2": (14.91 + 0.4 - 14.0) / 1.25 + 0.3})
+    said["voice_at"] = 2.5                                         # given on the beat, it replaces the computed start
+    assert build.voice_starts(spec, "ko", logs)["00-home.2"] == 2.5
+
+
+def test_cards_are_picture_segments_and_pieces_of_a_take_share_a_group():
+    build = _build()
+    spec = {"clips": {"21-review": [build.piece("21-review", 4.5, 11.5), build.piece("21-review", 30.0, 38.6, speed=4),
+                                    build.piece("21-review", 38.6, 60.0)],
+                      "22-works": [build.piece("22-works", 11.0, 36.5)]},
+            "cards": {"ko": {"card-ch2": {"seconds": 3}}}, "reels": {"r": ["card-ch2", "21-review", "22-works"]}}
+    at = {"card-ch2": 0.3, "21-review.1": 0.62, "22-works.1": 1.1}
+    assert build.voiced_manifest(spec, "r", "ko", at) == {"fade": 0.4, "segments": [
+        {"image": "cards/ko/card-ch2.png", "seconds": 3, "voice": "voice/ko/card-ch2.mp3", "voice_at": 0.3},
+        {"file": "clips/ko-voice/21-review.1.mp4", "group": "21-review", "fade_out": 0,
+         "voice": "voice/ko/21-review.1.mp3", "voice_at": 0.62},
+        {"file": "clips/ko-voice/21-review.2.mp4", "group": "21-review", "fade_in": 0, "fade_out": 0},
+        {"file": "clips/ko-voice/21-review.3.mp4", "group": "21-review", "fade_in": 0},
+        {"file": "clips/ko-voice/22-works.1.mp4", "group": "22-works", "voice": "voice/ko/22-works.1.mp3",
+         "voice_at": 1.1}]}
+
+
+def _narrate(build, say, **opts):
+    """The build's SPEC with a narration (and other beat fields) on the first caption of 00-home."""
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"]["00-home"][0]["beats"]["ko"][0].update(say=say, **opts)
+    return spec
+
+
+def _voice_refused(build, spec, tmp_path):
+    """The voiced build stops before it writes anything (exit 2)."""
+    with pytest.raises(SystemExit) as stop:
+        build.run_voice(spec, "ko", tmp_path / "out", check_only=True)
+    assert stop.value.code == 2 and not (tmp_path / "out").exists()
+
+
+CAPTION = "00-home.1: '허브 화면 한 곳에서 호스팅된 에이전트와 공유 도구를 봅니다'"     # how a problem names the first caption
+
+
+def test_a_narration_with_a_latin_letter_or_digit_after_the_readings_stops_the_build(tmp_path, capsys, monkeypatch):
+    build = _build()
+    monkeypatch.setitem(build.READINGS, "ko", {"Step": "스텝", "Step Functions": "스텝 펑션스", "403": "사공삼",
+                                               "release_review": "릴리스 리뷰"})
+    # the longest name is read first, as the plugin's voice step reads it ("스텝 Functions" would be left otherwise)
+    assert build.narration_problems(_narrate(build, "release_review는 Step Functions로 심사해 403을 받습니다."), "ko") == []
+    bad = "release_review는 v2-loop로 403을 받습니다."
+    found = build.narration_problems(_narrate(build, bad), "ko")
+    assert len(found) == 1 and found[0].startswith(CAPTION)
+    assert repr(bad) in found[0] and "'v', '2', 'loop'" in found[0] and "릴리스 리뷰는 v2-loop로 사공삼을 받습니다." in found[0]
+    _voice_refused(build, _narrate(build, bad), tmp_path)
+    err = capsys.readouterr().err
+    assert repr(bad) in err and "'loop'" in err
+    # a card's narration: the problem names the card
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    spec["cards"]["ko"]["card-closing"]["say"] = "AgentCore가 런타임을 줍니다."
+    assert build.narration_problems(spec, "ko") == [
+        "card-closing: the narration 'AgentCore가 런타임을 줍니다.' still holds 'AgentCore' after the readings "
+        "(spoken: 'AgentCore가 런타임을 줍니다.'): give it a reading in READINGS['ko'] or write it in Hangul"]
+
+
+@pytest.mark.parametrize("say", ["", "  ", "허브가 신청을 심사한다.", "허브가 심사합니다. 그리고 올린다", "허브가 심사할까요?",
+                                 "허브가 심사합니다!", "허브가 심사합니다.그리고 올린다."])
+def test_a_narration_that_is_not_hamnida_style_stops_the_build(tmp_path, capsys, say):
+    # sentences that end in 니다. (the last may leave out its full stop); the 45 characters of a caption do not apply
+    build = _build()
+    found = build.narration_problems(_narrate(build, say), "ko")
+    assert len(found) == 1 and found[0].startswith(CAPTION), found
+    assert ("empty" in found[0]) if not say.strip() else ("니다." in found[0] and repr(say) in found[0])
+    _voice_refused(build, _narrate(build, say), tmp_path)
+    assert found[0] in capsys.readouterr().err
+    for ok in ("허브가 심사합니다.", "허브가 심사합니다. 통과한 것만 올립니다", "팀이 신청하면 허브가 일곱 단계로 심사하고, 모든 단계를 "
+               "통과한 판만 승인합니다. 승인된 판은 카탈로그에 오르고 에이전트 게이트웨이로 부를 수 있습니다."):
+        assert build.narration_problems(_narrate(build, ok), "ko") == [], ok
+
+
+@pytest.mark.parametrize("bad", ["—", "·", "→"])
+def test_a_narration_with_a_dash_dot_or_arrow_stops_the_build(bad):
+    build = _build()
+    say = f"팀이 신청하면 {bad} 허브가 심사합니다."
+    found = build.narration_problems(_narrate(build, say), "ko")
+    assert len(found) == 1 and found[0].startswith(CAPTION) and repr(say) in found[0] and "holds a" in found[0]
+
+
+@pytest.mark.parametrize("box, what, says", [
+    ([100, 200, 300, 120], None, 'a box without "what"'),
+    ("shot:wide", [], 'a box without "what"'),
+    ([[100, 200, 300, 120], [500, 200, 300, 120]], ["심사 표"], '2 box(es) but 1 phrase(s) in "what"'),
+    (None, ["심사 표"], '0 box(es) but 1 phrase(s) in "what"'),
+    ([100, 200, 300, 120], "심사 표", '"what" must be a list of short phrases'),
+    ([100, 200, 300, 120], [""], '"what" must be a list of short phrases'),
+    ([100, 200, 300, 120], ["심사 표"], None),
+    ([[100, 200, 300, 120], [500, 200, 300, 120]], ["심사 표", "승인 줄"], None),
+    ("mark:row", ["승인 줄"], None)])
+def test_a_box_without_what_stops_the_build(tmp_path, capsys, box, what, says):
+    # each box says in a short phrase what it points at, for the review page; a caption may have a box and no narration
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    beat = spec["clips"]["00-home"][0]["beats"]["ko"][0]
+    beat.update({k: v for k, v in (("box", box), ("what", what)) if v is not None})
+    found = build.narration_problems(spec, "ko")
+    if says is None:
+        assert found == []
+        return
+    assert len(found) == 1 and found[0].startswith(CAPTION) and says in found[0], found
+    _voice_refused(build, spec, tmp_path)
+    assert says in capsys.readouterr().err
+
+
+def test_a_narration_no_reel_plays_stops_the_build(tmp_path):
+    build = _build()
+    spec = _narrate(build, "허브 화면의 홈입니다.")
+    spec["cards"]["ko"]["card-ch0"]["say"] = "준비입니다."
+    assert build.narration_problems(spec, "ko") == []
+    for segments in spec["reels"].values():
+        segments[:] = [s for s in segments if s not in ("00-home", "card-ch0")]
+    assert build.narration_problems(spec, "ko") == ["card-ch0: a narration on a card that no reel uses",
+                                                    f"{CAPTION}: a narration on a piece that no reel uses"]
+    _voice_refused(build, spec, tmp_path)
+
+
+# A stand-in for the plugin's scripts (edit_demo.py, make_cards.py, check_demo.py): each call is noted in calls.jsonl
+# beside it, and it writes small files at the paths it is given, of the shapes the build and its next step read.
+STAND_IN_PLUGIN = r'''
+import json, os, pathlib, sys
+me, args = pathlib.Path(sys.argv[0]), sys.argv[1:]
+with (me.parent / "calls.jsonl").open("a") as f:
+    f.write(json.dumps([me.name, *args]) + "\n")
+def opt(name):
+    return pathlib.Path(args[args.index(name) + 1])
+def put(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+if me.name == "make_cards.py":
+    for name in json.loads(pathlib.Path(args[0]).read_text()):
+        put(opt("--out") / f"{name}.png", "card\n")
+        put(opt("--out") / f"{name}.mp4", "card\n")
+elif args[0] == "voice":
+    lines = json.loads(pathlib.Path(args[1]).read_text())
+    for name in lines:
+        put(opt("--out") / f"{name}.mp3", "voice\n")
+    put(opt("--out") / "voice.json", json.dumps({n: {"file": f"{n}.mp3", "seconds": 5.0, "spoken": t, "key": "k"}
+                                                 for n, t in lines.items()}))
+elif args[0] in ("clip", "reel"):
+    put(opt("--out"), args[0] + "\n")
+    if args[0] == "reel":
+        put(opt("--out").with_suffix(".voice.json"), json.dumps({"segments": [], "voices": [], "warnings": []}))
+elif args[0] == "audit":
+    problem = os.environ.get("STAND_IN_AUDIT_PROBLEM")
+    put(opt("--out"), json.dumps({"ok": not problem, "problems": [problem] if problem else [], "warnings": []}))
+    if problem:
+        print(f"audit: {pathlib.Path(args[1]).name}: 1 problem(s)", file=sys.stderr)
+        raise SystemExit(1)
+elif args[0] == "boxes":
+    put(opt("--out"), json.dumps({"name": pathlib.Path(args[1]).stem, "boxes": []}))
+elif args[0] == "sheet":
+    put(opt("--out") / "index.json", "{}\n")
+    put(opt("--out") / "review.html", "<html></html>\n")
+'''
+
+
+def _voiced_spec(build):
+    """One take (00-home: CAMLOG, the 45 s take) whose first piece has three captions, two of them narrated and one
+    of those with a box, then a wait; a narrated card; two reels."""
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"] = {"00-home": [
+        build.piece("00-home", 3.5, 41.5, ko=[
+            build.beat("shot:wide", "허브 화면 한 곳에서 허브를 봅니다", say="허브 화면의 홈입니다. 여기서 모두 봅니다."),
+            build.beat("shot:flow1", "흐름 1은 허브가 심사하는 길입니다", say="흐름 일은 허브가 심사하는 길입니다",
+                       box=[100, 200, 300, 120], what=["흐름 1의 설명"]),
+            build.beat("asked", "개발자가 허브에 묻습니다")]),
+        build.piece("00-home", 41.5, 44.0, speed=4)]}
+    spec["cards"]["ko"]["card-intro"]["say"] = "팀은 스스로 올리고 플랫폼팀은 한 곳에서 관리합니다."
+    spec["reels"] = {"main": ["card-intro", "00-home", "card-summary"], "stage-1": ["card-ch0", "00-home"]}
+    return spec
+
+
+VOICED_PIECES = ["00-home.1", "00-home.2", "00-home.3", "00-home.4"]
+
+
+def _voiced_setup(tmp_path, monkeypatch, take):
+    """The build module, the spec of _voiced_spec, an out folder with the raw take, its camlog and the card pictures
+    the silent build left, the stand-in plugin, and a function that returns the plugin calls so far."""
+    build = _build()
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+    shutil.copy(take, out / "raw" / "00-home.webm")
+    (out / "raw" / "00-home.camlog.json").write_text(json.dumps(CAMLOG))
+    (out / "cards" / "ko").mkdir(parents=True)
+    for card in ("card-intro", "card-summary", "card-ch0"):
+        for ext in (".png", ".mp4"):
+            (out / "cards" / "ko" / f"{card}{ext}").write_text("silent card\n")
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    for f in ("edit_demo.py", "make_cards.py", "check_demo.py"):
+        (plugin / f).write_text(STAND_IN_PLUGIN)
+    monkeypatch.setenv("DEMO_VIDEO_PLUGIN", str(plugin))
+    monkeypatch.delenv("STAND_IN_AUDIT_PROBLEM", raising=False)
+    log = plugin / "calls.jsonl"
+
+    def calls():
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return build, _voiced_spec(build), out, calls
+
+
+def _files(out: Path) -> dict:
+    return {f.relative_to(out).as_posix(): (f.stat().st_mtime_ns, f.read_bytes()) for f in out.rglob("*") if f.is_file()}
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+def test_voice_outputs_never_overwrite_the_silent_ones(tmp_path, monkeypatch, take_45s):
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    build.run(spec, out=out, check_only=True)                      # the silent build's scripts and manifests
+    for rel in ("clips/ko/00-home.1.mp4", "clips/ko/00-home.2.mp4", "reels/hosting-hub-main-ko.mp4",
+                "reels/hosting-hub-stage-1-ko.mp4"):                # and its clips and reels
+        (out / rel).parent.mkdir(parents=True, exist_ok=True)
+        (out / rel).write_text("silent\n")
+    for f in out.rglob("*"):
+        if f.is_file():
+            os.utime(f, ns=(10**18, 10**18))                       # an old time, so that a rewrite shows too
+    before = _files(out)
+    build.run_voice(spec, "ko", out, check_only=False)
+    after = _files(out)
+    written = {p for p in after if before.get(p) != after[p]}
+    assert set(before) <= set(after)
+    assert sorted(p for p in written if not ("-voice" in p or p.startswith(("voice/", "reports/")))) == []
+    assert written == {*(f"scripts/ko-voice/{n}.json" for n in VOICED_PIECES),
+                       *(f"clips/ko-voice/{n}.mp4" for n in VOICED_PIECES),
+                       "voice/ko/lines.json", "voice/ko/readings.json", "voice/ko/voice.json",
+                       *(f"voice/ko/{n}.mp3" for n in ("card-intro", "00-home.1", "00-home.2")),
+                       *(f"reels/hosting-hub-{r}-ko-voice{ext}" for r in ("main", "stage-1")
+                         for ext in (".json", ".mp4", ".voice.json")),
+                       *(f"reports/{r}-ko-voice/{f}" for r in ("main", "stage-1")
+                         for f in ("texts.json", "audit.json", "boxes/00-home.2.json", "index.json", "review.html"))}
+    # a card picture that is missing is made where the silent build makes it, from texts the voiced build writes
+    # under voice/; the silent build's cards.json and its other cards stay as they are
+    for f in ("card-intro.png", "card-intro.mp4"):
+        (out / "cards" / "ko" / f).unlink()
+    before = _files(out)
+    build.run_voice(spec, "ko", out, check_only=False)
+    after = _files(out)
+    outside = sorted(p for p in after if before.get(p) != after[p]
+                     and not ("-voice" in p or p.startswith(("voice/", "reports/"))))
+    assert outside == ["cards/ko/card-intro.mp4", "cards/ko/card-intro.png"]
+    made = json.loads((out / "voice" / "ko" / "cards.json").read_text(encoding="utf-8"))
+    assert made == {"card-intro": {"seconds": 4, "lines": build.card_lines(spec["cards"]["ko"]["card-intro"])}}
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+def test_voice_check_writes_scripts_lines_and_manifests_and_cuts_nothing(tmp_path, monkeypatch, capsys, take_45s):
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    monkeypatch.delenv("DEMO_VIDEO_PLUGIN")                        # a check needs no plugin
+    monkeypatch.setattr(build, "SPEC", spec)
+    build.main(["--voice", "--check", "--out", str(out)])
+    assert calls() == []
+    written = sorted(p for p in _files(out) if not p.startswith(("raw/", "cards/")))
+    assert written == ["reels/hosting-hub-main-ko-voice.json", "reels/hosting-hub-stage-1-ko-voice.json",
+                       "reports/main-ko-voice/texts.json", "reports/stage-1-ko-voice/texts.json",
+                       *(f"scripts/ko-voice/{n}.json" for n in VOICED_PIECES), "voice/ko/lines.json",
+                       "voice/ko/readings.json"]
+    def read(rel):
+        return json.loads((out / rel).read_text(encoding="utf-8"))
+    first, second, third = spec["clips"]["00-home"][0]["beats"]["ko"]
+    assert read("voice/ko/lines.json") == {"card-intro": spec["cards"]["ko"]["card-intro"]["say"],
+                                           "00-home.1": first["say"], "00-home.2": second["say"]}
+    assert read("voice/ko/readings.json") == build.READINGS["ko"]
+    assert [(s["start"], s["end"], s["speed"]) for s in (read(f"scripts/ko-voice/{n}.json") for n in VOICED_PIECES)] == [
+        (3.5, 14.71, 1.25), (14.71, 19.8, 1.25), (19.8, 41.5, 1.25), (41.5, 44.0, 4)]
+    assert read("scripts/ko-voice/00-home.2.json")["beats"] == [
+        {"at": "shot:flow1", "text": second["text"], "box": [100, 200, 300, 120], "hold": True}]
+    assert read("scripts/ko-voice/00-home.3.json")["beats"] == [{"at": "asked", "text": third["text"]}]
+    assert read("scripts/ko-voice/00-home.4.json")["beats"] == []
+    assert read("reels/hosting-hub-stage-1-ko-voice.json") == {"fade": 0.4, "segments": [
+        {"image": "cards/ko/card-ch0.png", "seconds": 3},
+        {"file": "clips/ko-voice/00-home.1.mp4", "group": "00-home", "fade_out": 0, "voice": "voice/ko/00-home.1.mp3",
+         "voice_at": 0.62},                                         # (3.9 - 3.5) / 1.25 + 0.3
+        {"file": "clips/ko-voice/00-home.2.mp4", "group": "00-home", "fade_in": 0, "fade_out": 0,
+         "voice": "voice/ko/00-home.2.mp3", "voice_at": 0.46},     # (14.91 - 14.71) / 1.25 + 0.3
+        {"file": "clips/ko-voice/00-home.3.mp4", "group": "00-home", "fade_in": 0, "fade_out": 0},
+        {"file": "clips/ko-voice/00-home.4.mp4", "group": "00-home", "fade_in": 0}]}
+    main = read("reels/hosting-hub-main-ko-voice.json")["segments"]
+    assert main[0] == {"image": "cards/ko/card-intro.png", "seconds": 4, "voice": "voice/ko/card-intro.mp3",
+                       "voice_at": 0.3} and main[-1] == {"image": "cards/ko/card-summary.png", "seconds": 9}
+    assert read("reports/main-ko-voice/texts.json") == {
+        "card-intro": {"caption": spec["cards"]["ko"]["card-intro"]["title"],
+                       "say": spec["cards"]["ko"]["card-intro"]["say"], "what": []},
+        "00-home.1": {"caption": first["text"], "say": first["say"], "what": []},
+        "00-home.2": {"caption": second["text"], "say": second["say"], "what": ["흐름 1의 설명"]}}
+    assert set(read("reports/stage-1-ko-voice/texts.json")) == {"00-home.1", "00-home.2"}
+    assert "3 narrations" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+def test_a_caption_without_room_in_its_own_piece_stops_the_voiced_build(tmp_path, monkeypatch, capsys, take_45s):
+    # two captions 1 s apart fit one silent piece; split, the first has 0.64 s of its own piece, less than ROOM
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    spec["clips"]["00-home"][0]["beats"]["ko"][1:] = [build.beat("shot:wide", "흐름 1은 허브가 심사하는 길입니다", offset=1.0)]
+    with pytest.raises(SystemExit) as stop:
+        build.run_voice(spec, "ko", out, check_only=True)
+    err = capsys.readouterr().err
+    assert stop.value.code == 2 and "00-home.1: '허브 화면 한 곳에서 허브를 봅니다' falls at 3.90 s" in err
+    assert not (out / "scripts").exists() and calls() == []
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+def test_the_voiced_build_calls_voice_clips_reels_audit_boxes_and_sheet_in_that_order(tmp_path, monkeypatch, capsys,
+                                                                                      take_45s):
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    (out / "cards" / "ko" / "card-intro.png").unlink()            # a missing card picture is made after the clips
+    build.run_voice(spec, "ko", out, check_only=False)
+    done = calls()
+
+    def step(call):                                                # the plugin's command: a script and its first word
+        return call[0] if call[0] == "make_cards.py" else call[1]
+    per_reel = ["reel", "audit", "boxes", "sheet"]                 # 00-home.2 is the reel's one piece with a box
+    assert [step(c) for c in done] == ["voice", "clip", "clip", "clip", "clip", "make_cards.py", *per_reel, *per_reel]
+    o = str(out)
+    assert done[0][1:] == ["voice", f"{o}/voice/ko/lines.json", "--out", f"{o}/voice/ko", "--readings",
+                           f"{o}/voice/ko/readings.json", "--hangul-only", "--voice", "Seoyeon", "--engine", "generative",
+                           "--language", "ko-KR"]
+    assert done[2][1:] == ["clip", f"{o}/raw/00-home.webm", "--script", f"{o}/scripts/ko-voice/00-home.2.json", "--out",
+                           f"{o}/clips/ko-voice/00-home.2.mp4"]
+    assert done[4][-1] == "--no-captions"                          # 00-home.4, the wait, has no caption
+    assert done[5][1:] == [f"{o}/voice/ko/cards.json", "--out", f"{o}/cards/ko"]
+    reel, report = f"{o}/reels/hosting-hub-main-ko-voice", f"{o}/reports/main-ko-voice"
+    assert [c[1:] for c in done[6:10]] == [
+        ["reel", f"{reel}.json", "--out", f"{reel}.mp4"],
+        ["audit", f"{reel}.mp4", "--plan", f"{reel}.voice.json", "--out", f"{report}/audit.json"],
+        ["boxes", f"{o}/scripts/ko-voice/00-home.2.json", "--raw", f"{o}/raw/00-home.webm", "--out",
+         f"{report}/boxes/00-home.2.json"],
+        ["sheet", f"{reel}.mp4", "--plan", f"{reel}.voice.json", "--texts", f"{report}/texts.json", "--boxes",
+         f"{report}/boxes/00-home.2.json", "--out", report]]
+    assert done[10][1:4] == ["reel", f"{o}/reels/hosting-hub-stage-1-ko-voice.json", "--out"]
+    # a failed audit stops the build with the report's lines: nothing more is checked or built
+    (Path(os.environ["DEMO_VIDEO_PLUGIN"]) / "calls.jsonl").unlink()
+    problem = "voice 2 (00-home.1): sound expected at 4.92-9.00 s, no sound there"
+    monkeypatch.setenv("STAND_IN_AUDIT_PROBLEM", problem)
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as stop:
+        build.run_voice(spec, "ko", out, check_only=False)
+    assert stop.value.code == 2 and [step(c) for c in calls()] == ["voice", "clip", "clip", "clip", "clip", "reel",
+                                                                   "audit"]
+    err = capsys.readouterr().err
+    assert problem in err and "hosting-hub-main-ko-voice.mp4" in err
 
 
 # ------------------------------------------------------------------ the recording: record.sh, the user's shell, storyboards

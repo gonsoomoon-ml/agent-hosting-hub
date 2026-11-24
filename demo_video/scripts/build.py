@@ -4,6 +4,8 @@ cards; the six reels.
 
   python3 demo_video/scripts/build.py --check [--lang ko]    write the plugin's script files and check every text
   python3 demo_video/scripts/build.py [--lang ko]            the same, then cut the clips, the cards and the reels
+  python3 demo_video/scripts/build.py --voice --check        the narrated reels' script files, lines and manifests
+  python3 demo_video/scripts/build.py --voice                the same, then the voices, clips, reels and their checks
 
 Every caption and card text lives here under a language key. Before anything is written, each text is checked against
 the video plugin's rules for captions (references/script.md of the plugin):
@@ -22,10 +24,28 @@ edit_demo.py (clip, reel) and make_cards.py, found through DEMO_VIDEO_PLUGIN (th
 Python that runs this file (make_cards.py needs Pillow). In a reel the pieces of one take are joined with hard cuts;
 the edges between takes and cards fade (0.4 s). Everything is written under demo_video/out/ (git-ignored):
 scripts/<lang>/ and clips/<lang>/ (<take>.<n>, one per piece), cards/<lang>/, reels/ (the manifests next to the reels).
+
+--voice builds the same reels with a spoken narration, beside the silent ones; the silent build never reads the
+narration's fields. A caption may carry "say" (its narration), "box" (highlight boxes, as edit_demo.py takes them) with
+"what" (one short phrase per box: what it points at), "box_delay" and "voice_at"; a card may carry "say". READINGS gives
+the spoken form of an on-screen name, so that the synthesizer gets Hangul only. Before anything is written, each
+narration is checked: sentences in the 합니다 style (each ends in 니다.), none of the three characters a caption may not
+hold, no Latin letter or digit left once READINGS is applied, a "what" for each box, and a piece or card that a reel
+uses. Then every piece with several captions is split, one caption per piece (a later caption's piece starts SPLIT_LEAD
+seconds of the take before its anchor), and each caption must still sit in its own piece. A narrated caption is held to
+its piece's last frame; its voice starts VOICE_DELAY seconds after the caption, a card's VOICE_DELAY seconds into the
+card; the reel holds a frame until the voice has ended. Written under demo_video/out/: scripts/<lang>-voice/ and
+clips/<lang>-voice/ (<take>.<n>, numbered anew after the split), voice/<lang>/ (lines.json, readings.json, the plugin's
+<name>.mp3 and voice.json), reels/hosting-hub-<reel>-<lang>-voice.json and .mp4 (and the plugin's .voice.json),
+reports/<reel>-<lang>-voice/ (texts.json, and the plugin's audit.json, boxes/ and review page). The cards are the silent
+build's pictures (cards/<lang>/<name>.png), made only when one is missing (from voice/<lang>/cards.json). The plugin's
+voice step calls Amazon Polly through the AWS CLI, in the region of the environment; edit_demo.py voice, clip and reel,
+make_cards.py and check_demo.py (audit, boxes, sheet) are run in that order, and a failed audit stops the build.
 """
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import subprocess
@@ -46,6 +66,11 @@ BUDGET = {0: 5, 1: 11, 2: 12, 3: 8, 4: 10, 5: 18}     # captions per stage, all 
 DEFAULT_SPEED = 1.25                                    # interactions
 WAIT = 4                                                # a wait (a review, a job, the alarm, Claude Code at work)
 ROOM = 2.0                                              # seconds of the finished piece a caption needs at least
+VOICE_DELAY = 0.3                                       # seconds a narration starts after its caption (or into its card)
+SPLIT_LEAD = 0.2                                        # seconds of the take a split piece starts before its caption
+SILENT_FIELDS = ("at", "text", "offset", "dur", "pos")  # what a caption passes on to the silent build
+VOICED_FIELDS = SILENT_FIELDS + ("box", "box_delay")    # and to the voiced build, which holds a narrated caption
+VOICES = {"ko": ["--voice", "Seoyeon", "--engine", "generative", "--language", "ko-KR"]}     # Amazon Polly
 
 
 def piece(raw: str, start: float, end: float, speed: float = DEFAULT_SPEED, ko: list | tuple = ()) -> dict:
@@ -56,7 +81,10 @@ def piece(raw: str, start: float, end: float, speed: float = DEFAULT_SPEED, ko: 
 
 def beat(at: str, text: str, **opts) -> dict:
     """A caption (the plugin's beat): anchored to a camlog event, 'shot:<key>[#n]' or '<note kind>[#n]', plus an
-    optional "offset" (seconds), "dur" (seconds of the finished piece) and "pos": "top" (edit_demo.py)."""
+    optional "offset" (seconds), "dur" (seconds of the finished piece) and "pos": "top" (edit_demo.py). For the voiced
+    build only: "say" (the narration), "box" and "what" (the highlight boxes and, per box, what it points at),
+    "box_delay" (seconds after the caption starts), "voice_at" (seconds into the finished piece; replaces the start
+    computed from the anchor)."""
     return {"at": at, "text": text, **opts}
 
 
@@ -293,7 +321,7 @@ SPEC = {
                 beat("answered", "재개한 quality_agent가 다시 답하고, 사번은 여전히 가려집니다")])],
     },
     # a card: kicker, title, and either rows (sentences; "accent" = the index of the accented row) or, for a chapter
-    # card, "where" (the place the chapter happens, a name rather than a sentence)
+    # card, "where" (the place the chapter happens, a name rather than a sentence); "say" is its narration
     "cards": {
         "ko": {
             "card-intro": {"seconds": 4, "kicker": "AI 에이전트 호스팅 허브 on Amazon Bedrock AgentCore",
@@ -340,6 +368,10 @@ SPEC["reels"] = {"main": ["card-intro", *(n for s in _STAGE_RUNS.values() for n 
                  "stage-1": _STAGE_RUNS[0] + _STAGE_RUNS[1],
                  **{f"stage-{s}": _STAGE_RUNS[s] for s in range(2, 6)}}
 
+# how a narration speaks an on-screen name or a number, per language: the plugin's voice step replaces each name by its
+# reading (the longest name first) before the text goes to the synthesizer, which then gets Hangul only
+READINGS: dict[str, dict[str, str]] = {"ko": {}}
+
 
 # ---------------------------------------------------------------------------------------------------- the rules
 
@@ -351,6 +383,12 @@ def stage(take: str) -> int:
 def piece_names(take: str, pieces: list[dict]) -> list[str]:
     """The pieces' file names, <take>.<n> from 1."""
     return [f"{take}.{n}" for n in range(1, len(pieces) + 1)]
+
+
+def _pieces(spec: dict) -> list[tuple[str, dict]]:
+    """(<take>.<n>, piece) for every piece of a spec, take by take."""
+    return [(name, part) for take, pieces in spec["clips"].items()
+            for name, part in zip(piece_names(take, pieces), pieces)]
 
 
 def text_problems(text: str, sentence: bool) -> list[str]:
@@ -403,6 +441,79 @@ def problems(spec: dict, lang: str) -> list[str]:
     known = set(spec["clips"]) | set(cards)
     for reel, segments in spec["reels"].items():
         found += [f"reel {reel}: {s!r} is neither a take nor a card of this file" for s in segments if s not in known]
+    return found
+
+
+def used_names(spec: dict) -> set[str]:
+    """The takes and cards that at least one reel names."""
+    return {s for segments in spec["reels"].values() for s in segments}
+
+
+def spoken(text: str, readings: dict[str, str]) -> str:
+    """A narration as the synthesizer gets it: the plugin's rule for readings (edit_demo.py voice --readings), plain
+    substrings, the longest first, each place replaced once."""
+    keys = sorted((k for k in readings if k), key=len, reverse=True)
+    return re.sub("|".join(map(re.escape, keys)), lambda m: readings[m.group(0)], text) if keys else text
+
+
+def box_count(box) -> int:
+    """How many rectangles a beat's "box" draws: [x, y, w, h], a list of them, or one 'shot:<key>' / 'mark:<key>'."""
+    if not isinstance(box, (list, tuple)):
+        return 0 if box is None else 1
+    return 0 if not box else len(box) if isinstance(box[0], (list, tuple)) else 1
+
+
+def say_problems(say, lang: str) -> list[str]:
+    """What is wrong with one narration: it is sentences in the 합니다 style (each ends in 니다., the last may leave out
+    its full stop), holds none of the three characters a caption may not hold, and is Hangul only once READINGS is
+    applied. A narration has no length limit."""
+    if not isinstance(say, str) or not say.strip():
+        return ["the narration is empty"]
+    found = []
+    sentences = re.split(r"(?<=[.?!])\s+", say.strip())
+    for i, s in enumerate(sentences):
+        if not (s.endswith("니다.") or (i == len(sentences) - 1 and s.endswith("니다"))):
+            found.append(f"the narration {say!r}: the sentence {s!r} does not end in 니다. (the 합니다 style)")
+    found += [f"the narration {say!r} holds {what}" for ch, what in BANNED.items() if ch in say]
+    heard = spoken(say, READINGS.get(lang, {}))
+    left = re.findall(r"[A-Za-z]+|[0-9]+", heard)                  # what the plugin's --hangul-only refuses
+    if left:
+        found.append(f"the narration {say!r} still holds {', '.join(map(repr, left))} after the readings (spoken: "
+                     f"{heard!r}): give it a reading in READINGS[{lang!r}] or write it in Hangul")
+    return found
+
+
+def what_problems(b: dict) -> list[str]:
+    """A caption's boxes each have a short phrase in "what" that says what the box points at (the review page shows it
+    beside the box)."""
+    n, what = box_count(b.get("box")), b.get("what")
+    if n and not what:
+        return ['a box without "what" (one short phrase per box saying what it points at)']
+    if what is None:
+        return []
+    if not isinstance(what, list) or not all(isinstance(w, str) and w.strip() for w in what):
+        return ['"what" must be a list of short phrases, one per box']
+    return [f'{n} box(es) but {len(what)} phrase(s) in "what" (one per box)'] if len(what) != n else []
+
+
+def narration_problems(spec: dict, lang: str) -> list[str]:
+    """Every narration and box of the spec against the rules of the voiced build, one line each, naming the card or
+    the caption (its piece as the silent build names it, and its text)."""
+    found, used = [], used_names(spec)
+    for name, card in spec["cards"].get(lang, {}).items():
+        if "say" in card:
+            found += [f"{name}: {p}" for p in say_problems(card["say"], lang)]
+            if name not in used:
+                found.append(f"{name}: a narration on a card that no reel uses")
+    for take, pieces in spec["clips"].items():
+        for name, part in zip(piece_names(take, pieces), pieces):
+            for b in part["beats"].get(lang, []):
+                who = f"{name}: {b['text']!r}"
+                found += [f"{who}: {p}" for p in what_problems(b)]
+                if "say" in b:
+                    found += [f"{who}: {p}" for p in say_problems(b["say"], lang)]
+                    if take not in used:
+                        found.append(f"{who}: a narration on a piece that no reel uses")
     return found
 
 
@@ -467,8 +578,10 @@ def window_problems(spec: dict, lang: str, raw: Path, takes: set[str]) -> list[s
 # ---------------------------------------------------------------------------------------- the plugin's script files
 
 def clip_script(part: dict, lang: str) -> dict:
-    """edit_demo.py's script for a piece: no title (the chapter cards carry it), the window, the speed, the beats."""
-    return {"start": part["start"], "end": part["end"], "speed": part["speed"], "beats": part["beats"].get(lang, [])}
+    """edit_demo.py's script for a piece: no title (the chapter cards carry it), the window, the speed, the beats (with
+    the fields of a silent caption only: a narration and its boxes stay out of the silent build)."""
+    return {"start": part["start"], "end": part["end"], "speed": part["speed"],
+            "beats": [{k: v for k, v in b.items() if k in SILENT_FIELDS} for b in part["beats"].get(lang, [])]}
 
 
 def card_lines(card: dict) -> list[list]:
@@ -517,12 +630,120 @@ def reel_file(reel: str, lang: str) -> str:
     return f"hosting-hub-{reel}-{lang}"
 
 
-def clip_command(plugin: Path, name: str, part: dict, lang: str, out: Path) -> list[str]:
-    """edit_demo.py clip for one piece. A piece with no beats is cut without captions: the plugin would otherwise burn
-    the camera's shot labels, which are notes for the person who records."""
+def clip_command(plugin: Path, name: str, part: dict, lang: str, out: Path, folder: str | None = None) -> list[str]:
+    """edit_demo.py clip for one piece, its script and clip in scripts/<folder>/ and clips/<folder>/ (the language's
+    folder unless given). A piece with no beats is cut without captions: the plugin would otherwise burn the camera's
+    shot labels, which are notes for the person who records."""
+    folder = folder or lang
     cmd = [sys.executable, str(plugin / "edit_demo.py"), "clip", str(out / "raw" / f"{part['raw']}.webm"),
-           "--script", str(out / "scripts" / lang / f"{name}.json"), "--out", str(out / "clips" / lang / f"{name}.mp4")]
+           "--script", str(out / "scripts" / folder / f"{name}.json"),
+           "--out", str(out / "clips" / folder / f"{name}.mp4")]
     return cmd + ([] if part["beats"].get(lang) else ["--no-captions"])
+
+
+# ------------------------------------------------------------------------------- the voiced build's script files
+
+def voiced_script(part: dict, lang: str) -> dict:
+    """edit_demo.py's script for a piece of the voiced build: as the silent one, plus each caption's boxes and their
+    delay; a narrated caption is held to the clip's last frame, so that a frame the reel holds for its voice still
+    shows the caption and its boxes (the piece holds one caption, see split_piece)."""
+    beats = [{k: v for k, v in b.items() if k in VOICED_FIELDS} | ({"hold": True} if "say" in b else {})
+             for b in part["beats"].get(lang, [])]
+    return {"start": part["start"], "end": part["end"], "speed": part["speed"], "beats": beats}
+
+
+def split_piece(part: dict, lang: str, log: list[dict]) -> list[dict]:
+    """A piece as the voiced build cuts it, one caption per piece: a piece with several captions is cut before each
+    later caption, SPLIT_LEAD seconds of the take before its anchor (with its offset); the first keeps the piece's
+    start, the last its end, all its take and speed. `log` is the camlog of the piece's raw take."""
+    beats = part["beats"].get(lang, [])
+    if len(beats) < 2:
+        return [copy.deepcopy(part)]
+    timed = []
+    for b in beats:
+        t = anchor_seconds(b["at"], log)
+        if t is None:
+            raise SystemExit(f"{b['text']!r} is anchored to {b['at']!r}, which the camlog of {part['raw']} "
+                             "does not hold")
+        timed.append((t + float(b.get("offset", 0)), b))
+    timed.sort(key=lambda x: x[0])
+    cuts = [part["start"], *(round(t - SPLIT_LEAD, 3) for t, _ in timed[1:]), part["end"]]
+    return [{**copy.deepcopy(part), "start": cuts[i], "end": cuts[i + 1], "beats": {lang: [copy.deepcopy(b)]}}
+            for i, (_, b) in enumerate(timed)]
+
+
+def voiced(spec: dict, lang: str, logs: dict[str, list]) -> dict:
+    """The spec as the voiced build cuts it: every piece with several captions split (split_piece), so that the pieces
+    of a take are numbered anew; the cards and reels as they are. `logs`: the camlog of each raw take, by its name."""
+    out = copy.deepcopy(spec)
+    out["clips"] = {take: [p for part in pieces for p in split_piece(part, lang, logs.get(part["raw"], []))]
+                    for take, pieces in spec["clips"].items()}
+    return out
+
+
+def _narrated(spec: dict, lang: str):
+    """(name, card or caption, piece or None) for every narration of a voiced spec: cards by their name, pieces by
+    <take>.<n>."""
+    for name, card in spec["cards"][lang].items():
+        if "say" in card:
+            yield name, card, None
+    for name, part in _pieces(spec):
+        said = [b for b in part["beats"].get(lang, []) if "say" in b]
+        if len(said) > 1:
+            raise ValueError(f"{name} holds {len(said)} narrations: split its captions first (voiced)")
+        if said:
+            yield name, said[0], part
+
+
+def voice_lines(spec: dict, lang: str) -> dict[str, str]:
+    """The plugin's lines.json for a voiced spec: each narration's name and its text as written (the voice step applies
+    READINGS)."""
+    return {name: item["say"] for name, item, _ in _narrated(spec, lang)}
+
+
+def voice_starts(spec: dict, lang: str, logs: dict[str, list]) -> dict[str, float]:
+    """Seconds into its segment that each narration of a voiced spec starts: a card's VOICE_DELAY; a caption's start in
+    the finished piece, max(0, (anchor + offset - start) / speed), plus VOICE_DELAY, unless the beat gives "voice_at"."""
+    def start(item: dict, part: dict | None) -> float:
+        if part is None:
+            return VOICE_DELAY
+        if "voice_at" in item:
+            return float(item["voice_at"])
+        t = anchor_seconds(item["at"], logs[part["raw"]]) + float(item.get("offset", 0))
+        return round(max(0.0, (t - part["start"]) / part["speed"]) + VOICE_DELAY, 3)
+    return {name: start(item, part) for name, item, part in _narrated(spec, lang)}
+
+
+def reel_texts(spec: dict, reel: str, lang: str) -> dict:
+    """The review page's texts for the narrations of one reel of a voiced spec: the caption (a card's title), the
+    narration as written, and what each box points at."""
+    names = {n for s in spec["reels"][reel]
+             for n in (piece_names(s, spec["clips"][s]) if s in spec["clips"] else [s])}
+    return {name: {"caption": item["title"] if part is None else item["text"], "say": item["say"],
+                   "what": list(item.get("what") or [])} for name, item, part in _narrated(spec, lang) if name in names}
+
+
+def voiced_manifest(spec: dict, reel: str, lang: str, at: dict[str, float]) -> dict:
+    """edit_demo.py's reel for a voiced spec: a card is its picture for its seconds; the pieces of a take share a group
+    (a voice may run on over its take's later pieces, never into another take or a card) and meet in hard cuts; a
+    segment whose name is in `at` carries its voice, starting that many seconds into the segment."""
+    def narrated(entry: dict, name: str) -> dict:
+        return entry | ({"voice": f"voice/{lang}/{name}.mp3", "voice_at": at[name]} if name in at else {})
+    segments = []
+    for name in spec["reels"][reel]:
+        if name not in spec["clips"]:
+            segments.append(narrated({"image": f"cards/{lang}/{name}.png",
+                                      "seconds": spec["cards"][lang][name]["seconds"]}, name))
+            continue
+        names = piece_names(name, spec["clips"][name])
+        for i, file in enumerate(names):
+            entry = {"file": f"clips/{lang}-voice/{file}.mp4", "group": name}
+            if i > 0:
+                entry["fade_in"] = 0
+            if i < len(names) - 1:
+                entry["fade_out"] = 0
+            segments.append(narrated(entry, file))
+    return {"fade": 0.4, "segments": segments}
 
 
 # ---------------------------------------------------------------------------------------------------------- run
@@ -547,13 +768,8 @@ def run(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = False)
     if check_only:
         return
     plugin = _plugin()
-    used = {s for segs in spec["reels"].values() for s in segs} & set(spec["clips"])
-    missing = sorted({f"raw/{p['raw']}{ext}" for t in used for p in spec["clips"][t] for ext in (".webm", ".camlog.json")
-                      if not (out / "raw" / f"{p['raw']}{ext}").exists()})
-    if missing:
-        print(f"no raw take for {', '.join(missing)} (under {out}): record it with demo_video/scenes/record.sh",
-              file=sys.stderr)
-        raise SystemExit(1)
+    used = used_names(spec) & set(spec["clips"])
+    _need_raws(spec, used, out)
     found = window_problems(spec, lang, out / "raw", used)
     if found:
         _stop(found, "caption(s) do not sit in their pieces; nothing was cut")
@@ -567,6 +783,135 @@ def run(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = False)
                         "--out", str(out / "reels" / f"{reel_file(reel, lang)}.mp4")], check=True, cwd=out)
 
 
+def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = False) -> None:
+    """The narrated reels beside the silent ones. Every check comes before anything is written: the texts, the
+    narrations and boxes, the raw takes, each caption in its piece and, once split, in its own piece. Then the script
+    files, the lines, the readings and the review page's texts; without check_only the voices, the clips and any
+    missing card; the manifests; without check_only, per reel: the reel, its audit (a failed one stops the build),
+    the boxes of its pieces, its review page."""
+    found = problems(spec, lang)
+    if found:
+        _stop(found, "text(s) break the rules; nothing was written")
+    if lang not in VOICES:
+        _stop([f"no voice for the language {lang!r} (there are: {', '.join(sorted(VOICES))})"],
+              "language without a voice; nothing was written")
+    found = narration_problems(spec, lang)
+    if found:
+        _stop(found, "narration(s) or box(es) break the rules; nothing was written")
+    plugin = None if check_only else _plugin(("edit_demo.py", "make_cards.py", "check_demo.py"))
+    used = used_names(spec) & set(spec["clips"])
+    _need_raws(spec, used, out)
+    found = window_problems(spec, lang, out / "raw", used)
+    if found:
+        _stop(found, "caption(s) do not sit in their pieces; nothing was written")
+    logs = {r: json.loads((out / "raw" / f"{r}.camlog.json").read_text())["log"]
+            for r in sorted({p["raw"] for t in used for p in spec["clips"][t]})}
+    v = voiced({**spec, "clips": {t: pieces for t, pieces in spec["clips"].items() if t in used}}, lang, logs)
+    found = window_problems(v, lang, out / "raw", used)
+    if found:
+        _stop(found, "caption(s) do not sit in their own pieces once split (one caption per piece); nothing was written")
+
+    scripts, voice = out / "scripts" / f"{lang}-voice", out / "voice" / lang
+    for name, part in _pieces(v):
+        write(scripts / f"{name}.json", voiced_script(part, lang))
+    lines = voice_lines(v, lang)
+    write(voice / "lines.json", lines)
+    write(voice / "readings.json", READINGS.get(lang, {}))
+    for reel in v["reels"]:
+        write(_report(out, reel, lang) / "texts.json", reel_texts(v, reel, lang))
+    if plugin:
+        _voices_clips_and_cards(plugin, v, lang, out)
+    at = voice_starts(v, lang, logs)
+    for reel in v["reels"]:
+        write(out / "reels" / f"{reel_file(reel, lang)}-voice.json", voiced_manifest(v, reel, lang, at))
+    on_cards = sum(1 for n in lines if n in v["cards"][lang])
+    print(f"checked (voice): {len(v['clips'])} takes in {len(_pieces(v))} pieces, one caption at most each "
+          f"({sum(len(spec['clips'][t]) for t in v['clips'])} before the split), {len(lines)} narrations ({on_cards} on "
+          f"cards, {len(lines) - on_cards} on captions), {len(v['reels'])} reels; files in {out}")
+    for take in v["clips"]:
+        for line in _renamed(spec["clips"][take], take, lang):
+            print(f"  {line}")
+    if plugin:
+        for reel in v["reels"]:
+            _reel_and_checks(plugin, v, reel, lang, out)
+
+
+def _voices_clips_and_cards(plugin: Path, v: dict, lang: str, out: Path) -> None:
+    """The plugin's voice step (only what changed is synthesized), the clips of a voiced spec, and the card pictures
+    the silent build has not made yet."""
+    voice, py = out / "voice" / lang, sys.executable
+    subprocess.run([py, str(plugin / "edit_demo.py"), "voice", str(voice / "lines.json"), "--out", str(voice),
+                    "--readings", str(voice / "readings.json"), "--hangul-only", *VOICES[lang]], check=True)
+    for name, part in _pieces(v):
+        subprocess.run(clip_command(plugin, name, part, lang, out, folder=f"{lang}-voice"), check=True)
+    cards, used = v["cards"][lang], used_names(v)
+    missing = [n for n in cards if n in used and not (out / "cards" / lang / f"{n}.png").exists()]
+    if missing:
+        write(voice / "cards.json", {n: {"seconds": cards[n]["seconds"], "lines": card_lines(cards[n])}
+                                     for n in missing})
+        subprocess.run([py, str(plugin / "make_cards.py"), str(voice / "cards.json"),
+                        "--out", str(out / "cards" / lang)], check=True)
+
+
+def _reel_and_checks(plugin: Path, v: dict, reel: str, lang: str, out: Path) -> None:
+    """One narrated reel: the plugin's reel, its audit (a failed one stops the build with the report's lines), the
+    boxes of each of its pieces that has one, and its review page."""
+    py, check, report = sys.executable, str(plugin / "check_demo.py"), _report(out, reel, lang)
+    manifest, mp4, plan = (out / "reels" / f"{reel_file(reel, lang)}-voice{ext}" for ext in (".json", ".mp4", ".voice.json"))
+    subprocess.run([py, str(plugin / "edit_demo.py"), "reel", str(manifest), "--out", str(mp4)], check=True, cwd=out)
+    done = subprocess.run([py, check, "audit", str(mp4), "--plan", str(plan), "--out", str(report / "audit.json")])
+    if done.returncode != 0:
+        _stop(_audit_lines(report / "audit.json", done.returncode),
+              f"problem(s) in the audit of {mp4.name} (report: {report / 'audit.json'}); the build stopped there")
+    boxed = [(name, part) for take in v["reels"][reel] if take in v["clips"]
+             for name, part in zip(piece_names(take, v["clips"][take]), v["clips"][take])
+             if any(box_count(b.get("box")) for b in part["beats"].get(lang, []))]
+    for name, part in boxed:
+        subprocess.run([py, check, "boxes", str(out / "scripts" / f"{lang}-voice" / f"{name}.json"), "--raw",
+                        str(out / "raw" / f"{part['raw']}.webm"), "--out", str(report / "boxes" / f"{name}.json")],
+                       check=True)
+    boxes = [str(report / "boxes" / f"{name}.json") for name, _ in boxed]
+    subprocess.run([py, check, "sheet", str(mp4), "--plan", str(plan), "--texts", str(report / "texts.json"),
+                    *(["--boxes", *boxes] if boxes else []), "--out", str(report)], check=True)
+    print(f"reel {reel}: {mp4}, audit passed, review page {report / 'review.html'}")
+
+
+def _report(out: Path, reel: str, lang: str) -> Path:
+    """The folder of a narrated reel's checks and review page."""
+    return out / "reports" / f"{reel}-{lang}-voice"
+
+
+def _renamed(pieces: list[dict], take: str, lang: str) -> list[str]:
+    """How the split renames a take's pieces: one line per silent piece whose voiced name or names differ."""
+    lines, n = [], 1
+    for name, part in zip(piece_names(take, pieces), pieces):
+        k = max(1, len(part["beats"].get(lang, [])))
+        now = [f"{take}.{i}" for i in range(n, n + k)]
+        if now != [name]:
+            lines.append(f"{name} -> {', '.join(now)}" + (f" (split: {k} captions)" if k > 1 else ""))
+        n += k
+    return lines
+
+
+def _audit_lines(report: Path, code: int) -> list[str]:
+    """The problems a failed audit wrote into its report (or why there is none)."""
+    try:
+        return [str(p) for p in json.loads(report.read_text(encoding="utf-8"))["problems"]] or \
+            [f"the audit exited {code} and its report names no problem"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return [f"the audit exited {code} and wrote no readable report at {report}"]
+
+
+def _need_raws(spec: dict, used: set[str], out: Path) -> None:
+    """Every raw take and camlog the used takes are cut from is under out/raw/, or the build stops (exit 1)."""
+    missing = sorted({f"raw/{p['raw']}{ext}" for t in used for p in spec["clips"][t] for ext in (".webm", ".camlog.json")
+                      if not (out / "raw" / f"{p['raw']}{ext}").exists()})
+    if missing:
+        print(f"no raw take for {', '.join(missing)} (under {out}): record it with demo_video/scenes/record.sh",
+              file=sys.stderr)
+        raise SystemExit(1)
+
+
 def _stop(found: list[str], what: str) -> None:
     for line in found:
         print(line, file=sys.stderr)
@@ -574,11 +919,11 @@ def _stop(found: list[str], what: str) -> None:
     raise SystemExit(2)
 
 
-def _plugin() -> Path:
+def _plugin(needs: tuple[str, ...] = ("edit_demo.py", "make_cards.py")) -> Path:
     import os
     folder = os.environ.get("DEMO_VIDEO_PLUGIN")
-    if not folder or not (Path(folder) / "edit_demo.py").is_file() or not (Path(folder) / "make_cards.py").is_file():
-        print("DEMO_VIDEO_PLUGIN must name the scripts folder of the demo-video plugin (edit_demo.py, make_cards.py): "
+    if not folder or not all((Path(folder) / f).is_file() for f in needs):
+        print(f"DEMO_VIDEO_PLUGIN must name the scripts folder of the demo-video plugin ({', '.join(needs)}): "
               f"{PLUGIN_URL}", file=sys.stderr)
         raise SystemExit(2)
     return Path(folder)
@@ -587,10 +932,14 @@ def _plugin() -> Path:
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--check", action="store_true", help="write the script files and check every text; cut nothing")
+    ap.add_argument("--voice", action="store_true", help="the narrated reels, beside the silent ones")
     ap.add_argument("--lang", default="ko")
     ap.add_argument("--out", type=Path, default=OUT, help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
-    run(SPEC, lang=a.lang, out=a.out.resolve(), check_only=a.check)
+    if a.voice:
+        run_voice(SPEC, lang=a.lang, out=a.out.resolve(), check_only=a.check)
+    else:
+        run(SPEC, lang=a.lang, out=a.out.resolve(), check_only=a.check)
 
 
 if __name__ == "__main__":
