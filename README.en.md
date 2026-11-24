@@ -173,6 +173,8 @@ A video that demonstrates the hub was recorded on 2026-11-23. There is a full re
 
 The video file is not in this repository. The sources of the video are in `demo_video/`: the storyboard of each scene, the editing script that holds every caption (`demo_video/scripts/build.py`), and the developer PC (`demo_video/tools/dev_pc`). Which stage was recorded how many times and what was cut is in [`demo_video/README.md`](demo_video/README.md). The hub the video was recorded on was deleted afterwards. Putting the hub up and checking it (`make deploy`, `make e2e`, `make e2e-ops`) needs neither this folder nor `demo_scenes/`.
 
+On 2026-11-24 the same six reels were made a second time with a Korean narration (an Amazon Polly voice) and red highlight boxes (the full reel is 15 minutes 16 seconds). The narration says only what the screen shows or what a README of this repository states, and where it points at one part of the screen a red box surrounds it. These reels are not in the repository either. How they are built, their checks and the limits of those checks are in [`demo_video/README.md`](demo_video/README.md) (in Korean). The person who built them did not listen to the sound.
+
 ## Commands typed in the video
 
 Four short commands that a person types in the video's terminal scenes are in `demo_scenes/`: `ask` (call an agent), `publish` (put an agent up), `search` (search the catalog), `logs` (an agent's recent logs). Each command, prompt and the order of the scenes are in [`demo_scenes/README.md`](demo_scenes/README.md). `search` and `logs` were run on 2026-11-23 on the developer PC (below) with the development team's role, and on the same day, in the recordings of the demo video, `publish` was run on the developer PC and `ask` in the user's shell.

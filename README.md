@@ -171,6 +171,8 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 영상 파일은 이 저장소에 들어 있지 않다. 영상의 원본은 `demo_video/`에 있다. 장면마다의 스토리보드, 모든 자막이 든 편집 스크립트(`demo_video/scripts/build.py`), 개발자 PC(`demo_video/tools/dev_pc`)다. 어느 단계를 몇 번 찍었고 무엇을 잘라 냈는지는 [`demo_video/README.md`](demo_video/README.md)에 있다. 영상을 찍은 허브는 그 뒤에 지웠다. 허브를 올리고 확인하는 데(`make deploy`, `make e2e`, `make e2e-ops`)는 이 폴더도 `demo_scenes/`도 필요하지 않다.
 
+2026-11-24에 같은 여섯 릴에 한국어 해설(Amazon Polly의 음성)과 빨간 강조 상자를 넣은 릴을 따로 만들었다(전체 릴 15분 16초). 해설은 화면에 보이는 것이나 이 저장소의 README에 적힌 것만 말하고, 화면의 한 곳을 가리킬 때는 빨간 상자가 그곳을 둘러싼다. 이 릴도 저장소에 들어 있지 않다. 만든 법과 검사, 그 한계는 [`demo_video/README.md`](demo_video/README.md)에 있다. 만든 사람은 그 소리를 듣지 않았다.
+
 ## 영상에서 치는 명령
 
 시연 영상의 터미널 장면에서 사람이 치는 짧은 명령 넷이 `demo_scenes/`에 있다. `ask`(에이전트 부르기), `publish`(에이전트 올리기), `search`(카탈로그 검색), `logs`(에이전트의 최근 로그). 각 명령, 프롬프트, 장면의 순서는 [`demo_scenes/README.md`](demo_scenes/README.md)에 있다. `search`와 `logs`는 2026-11-23에 개발자 PC(아래)에서 개발팀 역할로 돌렸고, 같은 날 시연 영상의 녹화에서 `publish`는 개발자 PC에서, `ask`는 사용자의 셸에서 돌렸다.

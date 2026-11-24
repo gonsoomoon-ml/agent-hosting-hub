@@ -198,8 +198,8 @@ SPEC = {
                          "멈췄고, 뒤의 단계는 돌지 않습니다. 그동안 release_review는 배포 단계로 넘어갑니다.",
                      box=[21, 524, 1878, 117], what=["Scan 단계 실패 메시지"]),
                 beat("shot:steps", "심사 단계마다 AWS Lambda나 AWS CodeBuild가 일을 맡습니다", pos="top",
-                     say="일곱 단계 가운데 제출된 코드를 다루는 Scan과 Deploy는 AWS CodeBuild가, 나머지는 AWS Lambda가 "
-                         "맡습니다. Deploy는 에이전트를 AgentCore Runtime에 올리는 단계입니다.",
+                     say="제출된 코드를 다루는 Scan과 Deploy는 AWS CodeBuild가, 나머지 단계는 AWS Lambda가 맡습니다. "
+                         "Deploy는 에이전트를 AgentCore Runtime에 올리는 단계입니다.",
                      box=[1259, 501, 204, 512], what=["단계마다 일을 맡는 AWS 서비스 열"])]),
             # the end of Deploy (passed 321.0), Entry 354.1, TestCall 365.2
             piece("21-review", 345.0, 381.2, WAIT),
@@ -546,8 +546,8 @@ SPEC = {
                              "rows": ["AgentCore는 Runtime, Gateway, Policy를 줍니다",
                                       "AgentCore는 Registry와 관측도 줍니다",
                                       "플랫폼팀은 심사 파이프라인과 운영 명령, 허브 화면을 만듭니다"],
-                             "say": "누가 무엇을 맡는지 정리합니다. AgentCore는 Runtime과 Gateway, Policy, 그리고 Registry와 "
-                                    "관측을 줍니다. 플랫폼팀은 그 위에 심사 파이프라인과 운영 명령, 허브 화면을 만듭니다."},
+                             "say": "AgentCore는 Runtime과 Gateway, Policy, 그리고 Registry와 관측을 줍니다. 플랫폼팀은 그 위에 "
+                                    "심사 파이프라인과 운영 명령, 허브 화면을 만듭니다."},
         },
     },
     # a reel names takes and cards; a stage reel is the main reel's run of that stage (stage 1 opens with 준비)
