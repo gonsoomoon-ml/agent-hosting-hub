@@ -110,7 +110,10 @@ SPEC = {
             piece("00-home", 3.5, 41.5, ko=[
                 beat("shot:wide", "허브 화면 한 곳에서 호스팅된 에이전트와 공유 도구를 봅니다",
                      say="플랫폼팀이 허브의 지금 상태를 보는 샘플 화면입니다. 홈에는 호스팅된 에이전트 두 개와 승인된 도구 하나가 "
-                         "보입니다. 값은 모두 그 순간 AWS에서 읽은 것입니다."),
+                         "보입니다. 값은 모두 그 순간 AWS에서 읽은 것입니다.",
+                     # on the counts once the camera has arrived there (counts 9.9 + 1.4)
+                     box=[[23, 224, 375, 166], [1290, 224, 356, 166]], what=["호스팅된 에이전트 수 2", "승인된 도구 수 1"],
+                     box_delay=6.0),
                 beat("shot:flow1", "흐름 1은 팀이 에이전트를 올리면 허브가 자동으로 심사하는 길입니다",
                      say="흐름 일은 호스팅입니다. 개발팀이 에이전트를 신청하면 호스팅 심사가 자동으로 점검하고, 통과한 에이전트에만 "
                          "도구 권한을 주고 배포합니다."),
@@ -122,7 +125,8 @@ SPEC = {
                          "AWS Step Functions가 돌립니다."),
                 beat("shot:catalog", "카탈로그에는 승인된 에이전트와 공유 도구가 올라 있습니다", pos="top",
                      say="카탈로그에는 docs_adk와 spec_assistant, 공유 도구 parts-tools가 승인되어 있습니다. 전사 정책과 "
-                         "커스텀 가드레일은 아직 걸려 있지 않습니다.")])],
+                         "커스텀 가드레일은 아직 걸려 있지 않습니다.",
+                     box=[35, 812, 1271, 173], what=["승인된 카탈로그 레코드 세 줄"])])],
         # 1단계: one Claude Code session (11-find, then 12-make from the note make_asked), then the developer's shell
         "11-find": [
             # find_asked 16.1, record 27.3 (zoomed on the answer)
@@ -132,7 +136,8 @@ SPEC = {
                          "번호로 규격을 돌려주는 사내 도구를 찾아 달라는 요청입니다."),
                 beat("shot:record", "카탈로그의 MCP 서버에서 공유 도구의 이름과 설명, 입력을 찾아 줍니다",
                      say="찾은 것은 승인된 공유 도구 parts-tools에 든 부품 규격 도구입니다. 이름과 설명, 입력인 부품 번호까지 "
-                         "알려 줍니다. 카탈로그 검색에는 승인된 것만 나옵니다.")])],
+                         "알려 줍니다. 카탈로그 검색에는 승인된 것만 나옵니다.",
+                     box=[22, 223, 1564, 440], what=["도구 이름과 설명, 입력"])])],
         "12-make": [
             # make_asked 38.3, ask1 41.6, the second question from 46.2 (questions 3 and 4 are left out)
             piece("11-find", 37.9, 47.0, ko=[
@@ -143,7 +148,9 @@ SPEC = {
             piece("11-find", 71.0, 79.4, ko=[
                 beat("shot:ask5", "Claude Code는 셸 명령을 실행하기 전에 개발자에게 묻습니다", dur=3.5, pos="top",
                      say="이렇게 Claude Code는 미리 허락되지 않은 셸 명령을 돌리기 전에 묻습니다. 이번 명령은 폴더를 만들고 "
-                         "템플릿을 복사해 파일을 쓰는 긴 명령입니다.")]),
+                         "템플릿을 복사해 파일을 쓰는 긴 명령입니다.",
+                     # the dialog stands still from 72.56 (the camera) until the No closes it after 75.76
+                     box=[7, 834, 553, 224], what=["실행해도 되는지 묻는 창"], box_delay=1.04, box_dur=2.5)]),
             # work5 79.6: the No and its sentence; then the files are written
             piece("11-find", 79.4, 107.0, WAIT, ko=[
                 beat("shot:work5", "개발자는 No로 답하고 실행 없이 파일만 만들게 합니다",
@@ -153,7 +160,8 @@ SPEC = {
             piece("11-find", 107.0, 115.0, ko=[
                 beat("shot:made", "Claude Code가 파일 다섯 개를 만들고 올리지는 않았습니다",
                      say="만든 것은 신청서와 에이전트 코드를 포함한 파일 다섯 개이고, 실행도 업로드도 하지 않았습니다. 실제로 "
-                         "신청하는 것은 저장소에 미리 준비된 quality_agent입니다.")])],
+                         "신청하는 것은 저장소에 미리 준비된 quality_agent입니다.",
+                     box=[0, 398, 1373, 68], what=["파일 다섯 개를 만들었다는 줄"])])],
         "13-submit": [
             # publish_release 10.9, release 17.3; the next command's typing is cut
             piece("13-submit", 10.2, 21.5, ko=[
@@ -178,17 +186,20 @@ SPEC = {
             piece("21-review", 38.6, 60.0, ko=[
                 beat("shot:quality", "quality_agent의 심사는 의존성 검사 Scan에서 실패해 멈춥니다", dur=5.0,
                      say="quality_agent는 두 번째 단계인 Scan에서 떨어졌습니다. 의존성 검사가 취약한 패키지를 찾아 심사가 "
-                         "멈췄고, 뒤의 단계는 돌지 않습니다. 그동안 release_review는 배포 단계로 넘어갑니다."),
+                         "멈췄고, 뒤의 단계는 돌지 않습니다. 그동안 release_review는 배포 단계로 넘어갑니다.",
+                     box=[21, 524, 1878, 117], what=["Scan 단계 실패 메시지"], box_dur=4.25),
                 beat("shot:steps", "심사 단계마다 AWS Lambda나 AWS CodeBuild가 일을 맡습니다", pos="top",
                      say="일곱 단계 가운데 제출된 코드를 다루는 Scan과 Deploy는 AWS CodeBuild가, 나머지는 AWS Lambda가 "
-                         "맡습니다. Deploy는 에이전트를 AgentCore Runtime에 올리는 단계입니다.")]),
+                         "맡습니다. Deploy는 에이전트를 AgentCore Runtime에 올리는 단계입니다.",
+                     box=[1259, 501, 204, 512], what=["단계마다 일을 맡는 AWS 서비스 열"])]),
             # the end of Deploy (passed 321.0), Entry 354.1, TestCall 365.2
             piece("21-review", 345.0, 381.2, WAIT),
             # approved 381.3, record 382.8, steps_done 387.8 (the shot list_end cuts a card: left out)
             piece("21-review", 381.2, 392.5, ko=[
                 beat("shot:record", "일곱 단계를 모두 통과한 release_review는 승인이 됩니다",
                      say="심사가 성공으로 끝나고 release_review의 레코드는 승인으로 바뀌었습니다. 마지막 단계가 사용자의 "
-                         "요청을 허용하고 승인으로 표시한 것입니다.")])],
+                         "요청을 허용하고 승인으로 표시한 것입니다.",
+                     box=[7, 268, 279, 54], what=["레코드 상태 승인"], box_dur=2.65)])],
         "22-works": [
             # change 11.5; the command's typing is cut
             piece("22-works", 11.0, 15.0),
@@ -202,13 +213,18 @@ SPEC = {
             piece("23-reject", 8.7, 43.5, ko=[
                 beat("shot:findings", "플랫폼팀은 스캔이 찾은 취약한 패키지와 고쳐진 버전을 봅니다",
                      say="심사 페이지에 스캔이 실패한 이유가 나옵니다. Scan의 빌드 로그에서 고른 줄로, jinja2의 이 버전에 "
-                         "알려진 취약점 다섯 건과 각각 고쳐진 버전입니다."),
+                         "알려진 취약점 다섯 건과 각각 고쳐진 버전입니다.",
+                     box=[870, 373, 630, 221], what=["jinja2 취약점 다섯 줄"]),
                 beat("shot:reason", "사유를 적어 반려하면 팀은 레코드에서 그 사유를 읽습니다",
                      say="플랫폼팀이 반려 사유를 적습니다. 이 의존성을 빼거나 고쳐진 버전으로 올린 뒤 다시 신청해 달라는 "
-                         "내용입니다."),
+                         "내용입니다.",
+                     # until the press changes the page at 29.56 (the camlog's reject_pressed 30.5 comes later)
+                     box=[844, 534, 920, 173], what=["반려 사유 입력란"], box_dur=3.7),
                 beat("job_done", "작업이 끝나자 quality_agent의 레코드가 반려로 바뀝니다",
                      say="반려 작업이 끝나 레코드가 반려로 바뀌었습니다. 반려는 심사가 남긴 것을 지우는데, Scan에서 멈춘 이 "
-                         "신청은 만든 것이 없어 지울 것도 없다고 나옵니다.")])],
+                         "신청은 만든 것이 없어 지울 것도 없다고 나옵니다.",
+                     # the camera moves to the job (shot job_done) as the job ends
+                     box=[47, 170, 344, 73], what=["레코드 반려와 지울 것 없음 두 줄"], box_delay=1.32, box_dur=4.25)])],
         "24-again": [
             # requirements 12.3, publish_quality 18.7, quality_pending 25.1
             piece("24-again", 11.8, 31.0, ko=[
@@ -222,14 +238,17 @@ SPEC = {
             piece("25-approved", 40.0, 47.5, ko=[
                 beat("quality_agent_Scan_passed", "이번에는 Scan이 취약점을 찾지 않고 통과합니다", pos="top",
                      say="다시 신청하자 심사도 새로 돌았습니다. 이번에는 Scan이 통과해 실행 역할과 도구 권한을 만드는 "
-                         "단계로 넘어가고, 이어서 AgentCore Runtime에 배포하고 시험 호출까지 지납니다.")]),
+                         "단계로 넘어가고, 이어서 AgentCore Runtime에 배포하고 시험 호출까지 지납니다.",
+                     # the camera moves to the steps (shot steps) at the note
+                     box=[118, 572, 1693, 64], what=["Scan 통과 줄"], box_delay=1.32)]),
             # Entry passed 362.8, TestCall 367.8, approved 384.8
             piece("25-approved", 362.0, 385.3, WAIT),
             # record 386.3, steps_done 391.3
             piece("25-approved", 385.3, 397.0, ko=[
                 beat("shot:record", "고친 버전도 일곱 단계를 모두 통과해 승인이 됩니다",
                      say="심사가 성공으로 끝나고, quality_agent의 레코드도 승인이 되었습니다. 같은 레코드가 반려를 거쳐 "
-                         "승인까지 온 것입니다.")])],
+                         "승인까지 온 것입니다.",
+                     box=[7, 459, 279, 51], what=["레코드 상태 승인"], box_dur=2.65)])],
         "26-answers": [
             # asked 11.9, answer 20.1
             piece("26-answers", 11.0, 28.5, ko=[
@@ -242,19 +261,23 @@ SPEC = {
             piece("31-logonly", 9.0, 17.6, ko=[
                 beat("shot:off", "새 전사 정책 guard_prompt를 막지 않는 기록 모드로 겁니다",
                      say="플랫폼팀이 새 전사 정책을 준비했습니다. 프롬프트에 숨은 공격을 잡아내는 guard_prompt 정책입니다. "
-                         "처음에는 요청을 막지 않는 기록 모드로 겁니다.")]),
+                         "처음에는 요청을 막지 않는 기록 모드로 겁니다.",
+                     # until the press redraws the page at 15.48 (the camlog's logonly_pressed 16.37 comes later)
+                     box=[366, 330, 740, 144], what=["guard_prompt 정책과 설명"], box_dur=3.35)]),
             # the job's first lines (it ends at 61.6)
             piece("31-logonly", 17.6, 36.0, WAIT),
             # job_done 61.6 (the shot logonly 68.6 is left out)
             piece("31-logonly", 61.6, 67.6, ko=[
                 beat("shot:job_done", "작업이 호스팅된 에이전트마다 정책을 하나씩 붙입니다",
                      say="버튼 한 번으로, 호스팅된 에이전트마다 같은 정책이 하나씩 붙었습니다. 정책은 게이트웨이가 따르는 "
-                         "정책 엔진에 들어갑니다.")]),
+                         "정책 엔진에 들어갑니다.",
+                     box=[47, 171, 345, 179], what=["에이전트마다 정책을 붙인 작업 줄"])]),
             # rows 74.7
             piece("31-logonly", 74.2, 80.5, ko=[
                 beat("shot:rows", "에이전트 게이트웨이의 세 정책이 기록 모드로 걸려 있습니다",
                      say="에이전트 게이트웨이에 정책 세 개가 기록 모드로 걸려 있습니다. 이제 들어오는 요청은 이 정책의 "
-                         "검사를 받습니다.")])],
+                         "검사를 받습니다.",
+                     box=[16, 456, 1888, 168], what=["기록 모드로 걸린 정책 세 줄"])])],
         "32-passes": [
             # change 12.5; the command's typing is cut
             piece("32-passes", 12.0, 19.5, ko=[
@@ -277,14 +300,17 @@ SPEC = {
             piece("33-record", 22.0, 31.0, ko=[
                 beat("match_counted", "release_review에 간 그 요청이 막았을 요청 1건으로 잡힙니다",
                      say="방금 그 요청이 release_review 에이전트에서 한 건으로 잡혔습니다. 적용 모드였다면 막혔을 "
-                         "요청입니다. 이렇게 먼저 확인한 뒤에 정책을 적용합니다.")])],
+                         "요청입니다. 이렇게 먼저 확인한 뒤에 정책을 적용합니다.",
+                     # after the camlog's second shot report (23.71), which frames the same view
+                     box=[281, 726, 1356, 75], what=["release_review의 1건"], box_delay=1.24)])],
         # 4단계: enforce, the refusals, the custom guardrail before and after
         "41-enforce": [
             # rows_before 10.2, buttons 15.2, enforce_pressed 19.0
             piece("41-enforce", 9.7, 19.2, ko=[
                 beat("shot:rows_before", "기록 모드로 시험한 정책을 버튼 하나로 적용 모드로 올립니다",
                      say="기록 모드에서 막았을 요청을 확인했으니, 이제 같은 정책을 적용 모드로 올립니다. 정책을 새로 만들지 "
-                         "않고, 모드만 바꾸는 작업이 시작됩니다.")]),
+                         "않고, 모드만 바꾸는 작업이 시작됩니다.",
+                     box=[16, 456, 1888, 168], what=["기록 모드인 정책 세 줄"], box_dur=2.65)]),
             # the job's first lines (it ends at 88.5)
             piece("41-enforce", 19.2, 50.0, WAIT),
             # job_done 88.5 (the shot enforced 95.5 is left out)
@@ -293,7 +319,8 @@ SPEC = {
             piece("41-enforce", 100.9, 107.0, ko=[
                 beat("shot:rows", "이제 세 에이전트의 정책이 모두 적용 모드로 막습니다",
                      say="프롬프트 공격 차단 정책 세 줄이 모두 적용 모드입니다. 이제 이 정책에 걸린 요청은 게이트웨이에서 "
-                         "거부되어 에이전트에 닿지 않습니다.")])],
+                         "거부되어 에이전트에 닿지 않습니다.",
+                     box=[16, 456, 1888, 168], what=["적용 모드로 바뀐 정책 세 줄"])])],
         "42-blocked": [
             # refused_release_review 15.0; the next command's typing is cut
             piece("42-blocked", 12.8, 20.0, ko=[
@@ -321,10 +348,13 @@ SPEC = {
             piece("44-attach", 8.7, 35.5, ko=[
                 beat("shot:detached", "커스텀 가드레일을 버튼 하나로 에이전트 게이트웨이에 붙입니다",
                      say="이번에는 회사만의 규칙을 거는 커스텀 가드레일입니다. 에이전트 게이트웨이에 붙는 AWS Lambda "
-                         "인터셉터로, 요청과 응답을 Amazon Bedrock Guardrails로 검사합니다."),
+                         "인터셉터로, 요청과 응답을 Amazon Bedrock Guardrails로 검사합니다.",
+                     # until the press redraws the page at 15.78 (the camlog's attach_pressed 16.8 comes later)
+                     box=[366, 300, 1399, 129], what=["커스텀 가드레일과 설명"], box_dur=3.95),
                 beat("shot:attached", "커스텀 가드레일이 게이트웨이의 요청과 응답을 모두 검사합니다",
                      say="상태가 붙어 있음으로 바뀌었고, 붙은 지점은 요청과 응답 두 곳입니다. 이제 에이전트 게이트웨이 "
-                         "뒤의 모든 에이전트가 이 검사를 받습니다.")])],
+                         "뒤의 모든 에이전트가 이 검사를 받습니다.",
+                     box=[366, 432, 526, 143], what=["붙어 있음과 붙은 지점"])])],
         "45-after": [
             # answered_code_name 16.4; the next command's typing is cut
             piece("45-after", 12.6, 22.5, ko=[
@@ -342,10 +372,12 @@ SPEC = {
             piece("51-usage", 10.4, 31.0, ko=[
                 beat("shot:agents", "플랫폼팀은 에이전트마다 호출과 세션 수를 한 화면에서 봅니다", dur=6.0,
                      say="에이전트 페이지는 호스팅된 에이전트마다 최근 육십 분의 호출과 세션 수를 Amazon CloudWatch에서 "
-                         "읽어 보여 줍니다. 그 아래에는 도구 게이트웨이를 지난 도구별 호출 수가 있습니다."),
+                         "읽어 보여 줍니다. 그 아래에는 도구 게이트웨이를 지난 도구별 호출 수가 있습니다.",
+                     box=[945, 370, 135, 356], what=["에이전트마다의 호출과 세션 수"], box_dur=5.0),
                 beat("shot:alarm", "도구 호출 경보는 한 도구의 분당 호출이 19를 넘는지 지켜봅니다",
                      say="지켜보는 것은 검사 건을 읽는 도구이고, 지금은 정상입니다. 같은 질문을 쉬지 않고 되묻는 에이전트가 "
-                         "있으면 호출이 크게 늘어 경보가 울립니다.")])],
+                         "있으면 호출이 크게 늘어 경보가 울립니다.",
+                     box=[23, 339, 476, 170], what=["정상 상태와 감시하는 도구"])])],
         "52-incident": [
             # publish_loop 11.4, submitted 17.8
             piece("52-incident", 10.8, 24.0, ko=[
@@ -357,7 +389,8 @@ SPEC = {
             piece("52-incident", 377.6, 382.6, ko=[
                 beat("shot:approved", "이 버전도 일곱 단계 심사를 모두 통과해 승인이 됩니다",
                      say="이 버전도 일곱 단계를 모두 지나 승인됩니다. 심사의 시험 호출에는 반복하지 않았기 때문입니다. 이어서 "
-                         "사용자가 검사 건 하나의 결과를 묻습니다.")]),
+                         "사용자가 검사 건 하나의 결과를 묻습니다.",
+                     box=[7, 432, 279, 50], what=["레코드 상태 승인"])]),
             # incident_asked 393.1; the 60 s without an answer are cut
             piece("52-incident", 392.8, 399.0),
             # no_answer 454.3
@@ -372,7 +405,9 @@ SPEC = {
             piece("53-alarm", 46.2, 52.0, ko=[
                 beat("first_bar_over", "그 사이 검사 도구의 분당 호출이 임계값 19를 넘습니다",
                      say="경보의 막대 하나가 임계값 선을 넘었습니다. 한 분 동안 검사 도구가 스물일곱 번 불린 것인데, 이때 "
-                         "경보 상태는 아직 정상입니다.")]),
+                         "경보 상태는 아직 정상입니다.",
+                     # the camera moves to the alarm (shot alarm) at the note
+                     box=[1698, 427, 89, 350], what=["임계값을 넘은 막대 27"], box_delay=1.32)]),
             piece("53-alarm", 88.0, 94.5, WAIT),
             # state_ALARM 95.0, bars 97.0, alarm 103.0 (one bar, 27, over the line in this take)
             piece("53-alarm", 94.5, 106.5, ko=[
@@ -391,7 +426,9 @@ SPEC = {
             piece("54-stop", 41.6, 55.5, ko=[
                 beat("shot:job_done", "멈추기는 그 에이전트의 진입을 정책으로 막고 세션을 끝냅니다", dur=6.0,
                      say="진입을 막는 정책이 켜진 뒤, 작업은 최근 삼십 분 동안 로그가 남은 세션을 찾아 하나씩 끝냅니다. "
-                         "이제 quality_agent만 멈춤이고, 나머지 에이전트는 그대로 동작 중입니다.")])],
+                         "이제 quality_agent만 멈춤이고, 나머지 에이전트는 그대로 동작 중입니다.",
+                     # on the last shot (stopped 49.6 + 1.4)
+                     box=[792, 424, 127, 223], what=["멈춤과 동작 중 상태"], box_delay=7.75)])],
         "55-neighbours": [
             # quality_agent_HTTP_403 14.0; each next command's typing is cut
             piece("55-neighbours", 11.4, 19.0, ko=[
@@ -423,7 +460,9 @@ SPEC = {
             piece("56-cause", 43.0, 58.0, ko=[
                 beat("shot:cause", "근거와 함께 고칠 방향을 알려 주고 파일은 고치지 않습니다",
                      say="답은 한계도 밝힙니다. 결과가 대기 상태였다는 것은 로그가 아니라 코드에서 추정했다는 것입니다. "
-                         "고칠 방향으로는 재시도 횟수의 상한과 대기를 제안하고, 파일은 고치지 않았습니다.")])],
+                         "고칠 방향으로는 재시도 횟수의 상한과 대기를 제안하고, 파일은 고치지 않았습니다.",
+                     # while its second sentence speaks of it; the third is about the way to fix it, below
+                     box=[20, 569, 1580, 202], what=["답의 한계 부분"], box_dur=5.65)])],
         "57-back": [
             # publish_fixed 11.1, submitted 17.8
             piece("57-back", 10.6, 23.0, ko=[
@@ -439,7 +478,8 @@ SPEC = {
             piece("57-back", 373.0, 382.5, ko=[
                 beat("shot:stopped", "승인이 끝나도 멈춤은 그대로이고, 재개 버튼으로 다시 엽니다",
                      say="심사는 멈춤 정책을 지우지 않으므로, 승인된 뒤에도 quality_agent는 멈춤입니다. 플랫폼팀이 재개를 "
-                         "누르면 그 정책 하나만 지워지고, 경보도 정상으로 돌아와 있습니다.")]),
+                         "누르면 그 정책 하나만 지워지고, 경보도 정상으로 돌아와 있습니다.",
+                     box=[38, 502, 1467, 89], what=["멈춤인 quality_agent 줄"], box_dur=2.65)]),
             # the resume job
             piece("57-back", 382.5, 394.0, WAIT),
             # job_done 394.1, running 400.1

@@ -976,6 +976,18 @@ def _voice_refused(build, spec, tmp_path):
 
 
 CAPTION = "00-home.1: '허브 화면 한 곳에서 호스팅된 에이전트와 공유 도구를 봅니다'"     # how a problem names the first caption
+BOX_FIELDS = ("box", "what", "box_delay", "box_dur")
+
+
+def _first_caption_unboxed(build):
+    """The build's SPEC, and its first caption (00-home) with its own box and what it points at taken away, so that a
+    test gives that caption only the box fields it checks."""
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    beat = spec["clips"]["00-home"][0]["beats"]["ko"][0]
+    for field in BOX_FIELDS:
+        beat.pop(field, None)
+    return spec, beat
 
 
 def test_a_narration_with_a_latin_letter_or_digit_after_the_readings_stops_the_build(tmp_path, capsys, monkeypatch):
@@ -1034,10 +1046,8 @@ def test_a_narration_with_a_dash_dot_or_arrow_stops_the_build(bad):
     ("mark:row", ["승인 줄"], None)])
 def test_a_box_without_what_stops_the_build(tmp_path, capsys, box, what, says):
     # each box says in a short phrase what it points at, for the review page; a caption may have a box and no narration
-    import copy
     build = _build()
-    spec = copy.deepcopy(build.SPEC)
-    beat = spec["clips"]["00-home"][0]["beats"]["ko"][0]
+    spec, beat = _first_caption_unboxed(build)
     beat.update({k: v for k, v in (("box", box), ("what", what)) if v is not None})
     found = build.narration_problems(spec, "ko")
     if says is None:
@@ -1071,6 +1081,45 @@ def test_every_card_and_caption_of_the_reels_has_a_narration():
                for b in part["beats"]["ko"] if not str(b.get("say") or "").strip()]
     assert unsaid == []
     assert build.narration_problems(build.SPEC, "ko") == []
+
+
+# The plugin's caption box (edit_demo.py: one line of 34 px text at y 930, or at y 120 with "pos": "top", inside an
+# 18 px border): a highlight box, with its 2 px dark line outside the 8 px red border, stays out of it.
+CAPTION_BAND = {"bottom": (912, 992), "top": (102, 182)}
+BORDER, OUTLINE, AIR = 8, 2, 6          # the red border, the dark line outside it, the least air around the thing
+
+
+def _boxes(build):
+    """(silent piece, caption) for every caption of the build's SPEC that has a box."""
+    return [(name, b) for take, pieces in build.SPEC["clips"].items()
+            for name, part in zip(build.piece_names(take, pieces), pieces) for b in part["beats"]["ko"] if "box" in b]
+
+
+def test_the_narrations_that_point_at_one_part_of_the_screen_carry_25_to_40_boxes():
+    # a box goes where a narration points at one part of the screen, on a narrated caption (it is held with it); each
+    # box names what it points at in one short phrase (not a sentence) for the review page
+    build = _build()
+    boxed = _boxes(build)
+    assert 25 <= sum(build.box_count(b["box"]) for _, b in boxed) <= 40
+    assert [f"{name}: {b['text']}" for name, b in boxed if not b.get("say")] == []
+    phrases = [w for _, b in boxed for w in b["what"]]
+    assert [w for w in phrases if len(w) > 20 or w.rstrip(".").endswith("니다")] == []
+    assert build.narration_problems(build.SPEC, "ko") == []
+
+
+def test_every_box_lies_in_the_frame_clear_of_its_caption_and_shows_long_enough_to_be_found():
+    build = _build()
+    for name, b in _boxes(build):
+        rects = b["box"] if isinstance(b["box"][0], list) else [b["box"]]
+        top, bottom = CAPTION_BAND[b.get("pos", "bottom")]
+        for rect in rects:
+            x, y, w, h = rect
+            assert all(type(v) is int for v in rect), (name, rect)                 # frame pixels, as placed
+            assert x >= 0 and y >= 0 and x + w <= 1920 and y + h <= 1080, (name, rect)
+            assert min(w, h) > 2 * (BORDER + AIR), (name, rect)                    # room for the thing inside
+            assert y + h + OUTLINE <= top or y - OUTLINE >= bottom, (name, rect, b.get("pos", "bottom"))
+        # a box ended before a camera move shows at least 2.5 s, or a viewer cannot find it
+        assert b.get("box_dur", 2.5) >= 2.5, (name, b["box_dur"])
 
 
 # A stand-in for the plugin's scripts (edit_demo.py, make_cards.py, check_demo.py): each call is noted in calls.jsonl
@@ -1330,10 +1379,9 @@ def test_an_audit_that_writes_no_report_never_shows_an_older_one(tmp_path, monke
     ({"box": [100, 200, 300, 120], "what": ["표"], "box_delay": 0, "box_dur": 2.5}, None),
     ({"say": "허브 화면의 홈입니다.", "voice_at": 1}, None)])
 def test_a_value_on_a_caption_that_cannot_be_used_stops_the_build(tmp_path, capsys, opts, says):
-    import copy
     build = _build()
-    spec = copy.deepcopy(build.SPEC)
-    spec["clips"]["00-home"][0]["beats"]["ko"][0].update(opts)
+    spec, beat = _first_caption_unboxed(build)
+    beat.update(opts)
     found = build.narration_problems(spec, "ko")
     if says is None:
         assert found == []
