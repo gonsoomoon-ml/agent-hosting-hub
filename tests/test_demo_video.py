@@ -859,7 +859,7 @@ def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
         for p in pieces:
             for b in p["beats"]["ko"]:
                 b.update(say="허브가 신청을 심사합니다.", box=[100, 200, 300, 120], what=["심사 표"], box_delay=0.5,
-                         box_dur=2.0, voice_at=1.0)
+                         box_dur=2.0, voice_at=1.0, ends_early=True)
     for card in spec["cards"]["ko"].values():
         card["say"] = "허브를 소개합니다."
     build.run(spec, out=tmp_path, check_only=True)
@@ -868,7 +868,7 @@ def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
     part = build.piece("00-home", 3.5, 20.0, ko=[build.beat("shot:wide", "허브 화면을 봅니다", offset=0.5, dur=4.0, pos="top",
                                                              say="허브 화면입니다.", box=[100, 200, 300, 120],
                                                              what=["허브 화면"], box_delay=0.5, box_dur=2.0,
-                                                             voice_at=1.0)])
+                                                             voice_at=1.0, ends_early=True)])
     assert build.clip_script(part, "ko")["beats"] == [{"at": "shot:wide", "text": "허브 화면을 봅니다", "offset": 0.5,
                                                        "dur": 4.0, "pos": "top"}]
 
@@ -900,6 +900,52 @@ def test_a_piece_with_three_captions_becomes_three_pieces_cut_before_each_anchor
     assert v["clips"]["12-make"] == [one, *pieces, wait]
     assert build.piece_names("12-make", v["clips"]["12-make"]) == [f"12-make.{n}" for n in range(1, 6)]
     assert v["cards"] == spec["cards"] and v["reels"] == spec["reels"]
+
+
+def test_a_caption_that_ends_early_has_its_piece_cut_where_it_ended_in_the_silent_video():
+    # a narrated caption is held to its piece's end; with "ends_early" its piece ends where the caption ended in the
+    # silent video, and the rest of the take's window plays on as a piece without a caption, the voice running on
+    build = _build()
+    log = CAMLOG["log"]                                            # wide 3.9, flow1 14.91
+    early = build.beat("shot:wide", "허브 화면을 봅니다", dur=4.0, ends_early=True, say="허브 화면입니다.",
+                       box=[100, 200, 300, 120], what=["허브 화면"])
+    later = build.beat("shot:flow1", "흐름 1은 허브가 심사하는 길입니다", say="흐름 일입니다.")
+    spec = {"clips": {"00-home": [build.piece("00-home", 3.5, 41.5, ko=[early, later])]}, "cards": {"ko": {}},
+            "reels": {"r": ["00-home"]}}
+    v = build.voiced(spec, "ko", {"00-home": log})
+    pieces = v["clips"]["00-home"]
+    # the caption ended at its start plus dur in the finished piece: 3.9 + 4.0 * 1.25 = 8.9 s of the take
+    assert [(p["start"], p["end"]) for p in pieces] == [(3.5, 8.9), (8.9, 14.71), (14.71, 41.5)]
+    assert [p["beats"]["ko"] for p in pieces] == [[early], [], [later]]
+    assert all(p["raw"] == "00-home" and p["speed"] == 1.25 for p in pieces)
+    assert build.voiced_script(pieces[0], "ko")["beats"][0]["hold"] is True              # held to its earlier end
+    assert build.voiced_script(pieces[1], "ko")["beats"] == []
+    # the three pieces meet in hard cuts and share the take's group: the voice runs on over the captionless rest
+    m = build.voiced_manifest(v, "r", "ko", build.voice_starts(v, "ko", {"00-home": log}))
+    assert [(s["file"], s["group"], s.get("fade_in"), s.get("fade_out"), s.get("voice_at")) for s in m["segments"]] == [
+        ("clips/ko-voice/00-home.1.mp4", "00-home", None, 0, 0.62), ("clips/ko-voice/00-home.2.mp4", "00-home", 0, 0, None),
+        ("clips/ko-voice/00-home.3.mp4", "00-home", 0, None, 0.46)]
+    # the plugin shows a caption 1.5 s at least, so a shorter dur ends it there
+    assert build.early_end({**early, "dur": 1.0}, pieces[0], log) == pytest.approx(3.9 + 1.5 * 1.25)
+    # without the switch, or with it false, the piece is as before
+    for off in ({k: x for k, x in early.items() if k != "ends_early"}, {**early, "ends_early": False}):
+        plain = {**spec, "clips": {"00-home": [build.piece("00-home", 3.5, 41.5, ko=[off, later])]}}
+        assert [(p["start"], p["end"]) for p in build.voiced(plain, "ko", {"00-home": log})["clips"]["00-home"]] == [
+            (3.5, 14.71), (14.71, 41.5)]
+
+
+def test_of_the_captions_with_dur_only_21_review_3_ends_early():
+    # 21-review.3's caption (the failed Scan) would stay over release_review's page once the camera moves on at
+    # release_card; the other three captions with "dur" read true to their pieces' ends and stay held
+    build = _build()
+    with_dur = {f"{name}: {b['text']}": b.get("ends_early", False) for take, pieces in build.SPEC["clips"].items()
+                for name, part in zip(build.piece_names(take, pieces), pieces) for b in part["beats"]["ko"] if "dur" in b}
+    assert with_dur == {"12-make.2: Claude Code는 셸 명령을 실행하기 전에 개발자에게 묻습니다": False,
+                        "21-review.3: quality_agent의 심사는 의존성 검사 Scan에서 실패해 멈춥니다": True,
+                        "51-usage.1: 플랫폼팀은 에이전트마다 호출과 세션 수를 한 화면에서 봅니다": False,
+                        "54-stop.3: 멈추기는 그 에이전트의 진입을 정책으로 막고 세션을 끝냅니다": False}
+    assert [b for pieces in build.SPEC["clips"].values() for part in pieces for b in part["beats"]["ko"]
+            if "ends_early" in b and "dur" not in b] == []
 
 
 def test_a_voiced_caption_is_held_and_its_voice_starts_0_3_s_after_it():
@@ -948,7 +994,7 @@ def test_cards_are_picture_segments_and_pieces_of_a_take_share_a_group():
 
 def _unsaid(build):
     """The build's SPEC with every narration taken out, so that a test speaks only the narrations it writes (with the
-    readings it gives) on the reels it builds."""
+    readings it gives) on the reels it builds; an early end goes with its narration (only a narrated caption has one)."""
     import copy
     spec = copy.deepcopy(build.SPEC)
     for card in spec["cards"]["ko"].values():
@@ -957,6 +1003,7 @@ def _unsaid(build):
         for part in pieces:
             for b in part["beats"]["ko"]:
                 b.pop("say", None)
+                b.pop("ends_early", None)
     return spec
 
 
@@ -1410,6 +1457,54 @@ def test_a_voice_start_outside_its_piece_or_before_its_caption_stops_the_build(t
         build.run_voice(spec, "ko", out, check_only=True)
     err = capsys.readouterr().err
     assert stop.value.code == 2 and "00-home.2: '흐름 1은 허브가 심사하는 길입니다': \"voice_at\"" in err and says in err
+    assert not (out / "scripts").exists() and calls() == []
+
+
+@pytest.mark.parametrize("opts, says", [
+    ({"ends_early": True}, '"ends_early" on a caption without "dur"'),
+    ({"dur": 4.0, "ends_early": "yes"}, '"ends_early" must be true or false'),
+    ({"dur": 4.0, "ends_early": True, "say": None}, '"ends_early" on a caption without a narration')])
+def test_a_caption_that_cannot_end_early_without_dur_or_narration_stops_the_build(tmp_path, capsys, opts, says):
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    beat = spec["clips"]["00-home"][0]["beats"]["ko"][0]
+    beat.update({k: v for k, v in opts.items() if v is not None})
+    if opts.get("say", "") is None:
+        beat.pop("say")
+    found = build.narration_problems(spec, "ko")
+    assert len(found) == 1 and found[0].startswith(CAPTION) and says in found[0], found
+    _voice_refused(build, spec, tmp_path)
+    assert says in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+@pytest.mark.parametrize("opts, says", [
+    # 00-home.1 of the test spec: its caption (shot:wide) starts 0.32 s into its piece 3.5..14.71
+    ({"dur": 7.5}, "leaves 1.15 s of its piece after the caption, less than 2.0 s"),       # cut at 13.275
+    ({"dur": 1.5}, "shows the caption 1.50 s, less than 2.0 s"),
+    ({"dur": 4.0, "box": [100, 200, 300, 120], "what": ["표"], "box_dur": 3.0},
+     'before its box ends at 4.64 s: shorten "box_dur" to 2.68 s or less'),                # the box waits 1.32 s
+    ({"dur": 4.0, "box": [100, 200, 300, 120], "what": ["표"], "box_delay": 4.5}, "before its box would show (from 4.82 s)"),
+    ({"dur": 4.0}, None),
+    ({"dur": 4.0, "box": [100, 200, 300, 120], "what": ["표"], "box_dur": 2.5}, None),
+    ({"dur": 4.0, "box": [100, 200, 300, 120], "what": ["표"]}, None)])
+def test_a_caption_that_ends_early_keeps_room_on_both_sides_and_its_whole_box(tmp_path, monkeypatch, capsys, take_45s,
+                                                                             opts, says):
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    spec["clips"]["00-home"][0]["beats"]["ko"][0].update(opts, ends_early=True)
+    if says is None:
+        build.run_voice(spec, "ko", out, check_only=True)
+        scripts = sorted(f.name for f in (out / "scripts" / "ko-voice").iterdir())
+        assert scripts == [f"00-home.{n}.json" for n in range(1, 6)]                        # the rest is 00-home.2
+        rest = json.loads((out / "scripts" / "ko-voice" / "00-home.2.json").read_text())
+        assert (rest["start"], rest["end"], rest["beats"]) == (8.9, 14.71, [])
+        assert "00-home.1 -> 00-home.1, 00-home.2, 00-home.3, 00-home.4" in capsys.readouterr().out
+        return
+    with pytest.raises(SystemExit) as stop:
+        build.run_voice(spec, "ko", out, check_only=True)
+    err = capsys.readouterr().err
+    assert stop.value.code == 2 and "00-home.1: '허브 화면 한 곳에서 허브를 봅니다': \"ends_early\"" in err and says in err
     assert not (out / "scripts").exists() and calls() == []
 
 

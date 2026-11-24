@@ -35,8 +35,10 @@ are a caption's values: a "what" for each box, "box_delay", "box_dur" and "what"
 Then every piece with several captions is split, one caption per piece (a later caption's piece starts SPLIT_LEAD
 seconds of the take before its anchor), each caption must still sit in its own piece, and a "voice_at" must lie in its
 piece, not before its caption. A narrated caption is held to its piece's last frame (its boxes too, unless "box_dur"
-ends them sooner); its voice starts VOICE_DELAY seconds after the caption, a card's VOICE_DELAY seconds into the card;
-the reel holds a frame until the voice has ended. Written under demo_video/out/: scripts/<lang>-voice/ and
+ends them sooner); with "ends_early" (and "dur") its piece ends where the caption ended in the silent video, and the
+rest of the window plays on as a piece without a caption, ROOM seconds at least each. Its voice starts VOICE_DELAY
+seconds after the caption, a card's VOICE_DELAY seconds into the card; the reel holds a frame until the voice has
+ended. Written under demo_video/out/: scripts/<lang>-voice/ and
 clips/<lang>-voice/ (<take>.<n>, numbered anew after the split), voice/<lang>/ (lines.json, readings.json, the plugin's
 <name>.mp3 and voice.json), reels/hosting-hub-<reel>-<lang>-voice.json and .mp4 (and the plugin's .voice.json),
 reports/<reel>-<lang>-voice/ (texts.json, and the plugin's audit.json, boxes/ and review page). The cards are the silent
@@ -81,6 +83,10 @@ VOICE_GAP = 0.6                                         # seconds of silence at 
 VOICE_TAIL = 1.0                                        # seconds a reel runs on after its last voice
 LOUDNESS = -16.0                                        # integrated loudness of the voices, LUFS
 VOICE_TOLERANCE = 0.25                                  # seconds a voice may be heard early or late at either end
+# the plugin's clip step, as the voiced build needs it to know where a caption ended in the silent video and when its
+# box shows: a caption shows CAPTION_LEAST seconds at least; a box anchored to a shot waits for the camera
+CAPTION_LEAST = 1.5                                     # seconds of the finished piece
+CAMERA_MOVE = 1.4                                       # seconds of the take the camera takes to arrive on a shot
 
 
 def piece(raw: str, start: float, end: float, speed: float = DEFAULT_SPEED, ko: list | tuple = ()) -> dict:
@@ -95,7 +101,8 @@ def beat(at: str, text: str, **opts) -> dict:
     build only: "say" (the narration), "box" and "what" (the highlight boxes and, per box, what it points at),
     "box_delay" (seconds after the caption starts), "box_dur" (seconds the boxes show, from their start; without it
     until the caption ends), "voice_at" (seconds into the finished piece; replaces the start computed from the
-    anchor)."""
+    anchor), "ends_early": True (with "dur": the narrated caption ends where it ended in the silent video, and the rest
+    of its piece plays on without a caption)."""
     return {"at": at, "text": text, **opts}
 
 
@@ -184,10 +191,12 @@ SPEC = {
             piece("21-review", 30.0, 38.6, WAIT),
             # quality_failed 39.1, quality 40.6, release_card 47.6, steps 54.1
             piece("21-review", 38.6, 60.0, ko=[
-                beat("shot:quality", "quality_agent의 심사는 의존성 검사 Scan에서 실패해 멈춥니다", dur=5.0,
+                # in the voiced build this caption ends where it ends here (46.82), before the camera moves on to
+                # release_review's page (release_card 47.58), and its box ends with it
+                beat("shot:quality", "quality_agent의 심사는 의존성 검사 Scan에서 실패해 멈춥니다", dur=5.0, ends_early=True,
                      say="quality_agent는 두 번째 단계인 Scan에서 떨어졌습니다. 의존성 검사가 취약한 패키지를 찾아 심사가 "
                          "멈췄고, 뒤의 단계는 돌지 않습니다. 그동안 release_review는 배포 단계로 넘어갑니다.",
-                     box=[21, 524, 1878, 117], what=["Scan 단계 실패 메시지"], box_dur=4.25),
+                     box=[21, 524, 1878, 117], what=["Scan 단계 실패 메시지"]),
                 beat("shot:steps", "심사 단계마다 AWS Lambda나 AWS CodeBuild가 일을 맡습니다", pos="top",
                      say="일곱 단계 가운데 제출된 코드를 다루는 Scan과 Deploy는 AWS CodeBuild가, 나머지는 AWS Lambda가 "
                          "맡습니다. Deploy는 에이전트를 AgentCore Runtime에 올리는 단계입니다.",
@@ -715,12 +724,19 @@ def is_seconds(value) -> bool:
 
 
 def value_problems(b: dict) -> list[str]:
-    """A caption's own values for the voiced build: "voice_at" a number; "box_delay" a number of 0 or more and
-    "box_dur" a number above 0, each only beside a box (where the voice starts in its piece is checked once the pieces
-    are split, see voiced_problems)."""
+    """A caption's own values for the voiced build: "voice_at" a number; "ends_early" true or false, and true only on
+    a narrated caption with "dur"; "box_delay" a number of 0 or more and "box_dur" a number above 0, each only beside
+    a box (where the voice starts in its piece is checked once the pieces are split, see voiced_problems; where an
+    early end falls, see early_end_problems)."""
     found = []
     if "voice_at" in b and not is_seconds(b["voice_at"]):
         found.append(f'"voice_at" must be a number of seconds (it is {b["voice_at"]!r})')
+    if "ends_early" in b and not isinstance(b["ends_early"], bool):
+        found.append(f'"ends_early" must be true or false (it is {b["ends_early"]!r})')
+    elif b.get("ends_early") and "dur" not in b:
+        found.append('"ends_early" on a caption without "dur" (it ends the caption where its "dur" ended it)')
+    elif b.get("ends_early") and "say" not in b:
+        found.append('"ends_early" on a caption without a narration (only a narrated caption is held)')
     for field in ("box_delay", "box_dur", "what"):
         if field in b and not box_count(b.get("box")):
             found.append(f'"{field}" on a caption without a box')
@@ -921,13 +937,80 @@ def split_piece(part: dict, lang: str, log: list[dict]) -> list[dict]:
             for i, (_, b) in enumerate(timed)]
 
 
+def early_end(b: dict, part: dict, log: list[dict]) -> float:
+    """The take's second at which a caption ended in the silent video: its start plus its "dur" (at least
+    CAPTION_LEAST) in the finished piece, turned back into seconds of the take."""
+    return round(part["start"] + (caption_start(b, part, log) + max(float(b["dur"]), CAPTION_LEAST)) * part["speed"], 3)
+
+
+def split_at_early_end(part: dict, lang: str, log: list[dict]) -> list[dict]:
+    """A piece of one caption as the voiced build cuts it: when its caption has "ends_early" (and "dur"), the piece
+    ends where the caption ended in the silent video, and the rest of its window becomes a piece without a caption
+    (the same take and speed; the voice runs on over it). Any other piece comes back as it is."""
+    said = [b for b in part["beats"].get(lang, []) if b.get("ends_early") is True and "dur" in b]
+    if len(part["beats"].get(lang, [])) != 1 or not said:
+        return [part]
+    cut = early_end(said[0], part, log)
+    if not part["start"] < cut < part["end"]:
+        return [part]                                              # early_end_problems names it
+    return [{**part, "end": cut}, {**copy.deepcopy(part), "start": cut, "beats": {lang: []}}]
+
+
 def voiced(spec: dict, lang: str, logs: dict[str, list]) -> dict:
-    """The spec as the voiced build cuts it: every piece with several captions split (split_piece), so that the pieces
-    of a take are numbered anew; the cards and reels as they are. `logs`: the camlog of each raw take, by its name."""
+    """The spec as the voiced build cuts it: every piece with several captions split (split_piece), and every caption
+    that ends early given a piece of its own up to its end (split_at_early_end), so that the pieces of a take are
+    numbered anew; the cards and reels as they are. `logs`: the camlog of each raw take, by its name."""
     out = copy.deepcopy(spec)
-    out["clips"] = {take: [p for part in pieces for p in split_piece(part, lang, logs.get(part["raw"], []))]
+    out["clips"] = {take: [p for part in pieces for p in _voiced_of(part, lang, logs)]
                     for take, pieces in spec["clips"].items()}
     return out
+
+
+def _voiced_of(part: dict, lang: str, logs: dict[str, list]) -> list[dict]:
+    """The voiced pieces that one piece of the spec becomes."""
+    log = logs.get(part["raw"], [])
+    return [q for p in split_piece(part, lang, log) for q in split_at_early_end(p, lang, log)]
+
+
+def early_end_problems(spec: dict, lang: str, logs: dict[str, list]) -> list[str]:
+    """A caption that ends early leaves ROOM seconds of its finished piece to itself and to the piece after it, and
+    its box shows whole before the caption ends (a box shows from the caption's start plus its delay, the plugin's
+    rule, for "box_dur" seconds or to the caption's end). One line each, naming the caption by its piece of the spec."""
+    found = []
+    for take, pieces in spec["clips"].items():
+        for name, part in zip(piece_names(take, pieces), pieces):
+            log = logs.get(part["raw"], [])
+            for p in split_piece(part, lang, log):
+                for b in p["beats"].get(lang, []):
+                    if b.get("ends_early") is not True or "dur" not in b:
+                        continue
+                    who, cut = f'{name}: {b["text"]!r}: "ends_early"', early_end(b, p, log)
+                    shows, rest = max(float(b["dur"]), CAPTION_LEAST), (p["end"] - cut) / p["speed"]
+                    if shows < ROOM:
+                        found.append(f"{who} shows the caption {shows:.2f} s, less than {ROOM} s (ROOM)")
+                    if rest < ROOM:
+                        found.append(f"{who} ends the caption at {cut} s of the take and leaves {rest:.2f} s of its "
+                                     f"piece after the caption, less than {ROOM} s (ROOM)")
+                    if not box_count(b.get("box")) or rest < ROOM:
+                        continue
+                    end = (cut - p["start"]) / p["speed"]          # the caption's end in its finished piece
+                    begins = caption_start(b, p, log) + _box_delay(b, p["speed"])
+                    if round(begins - end, 6) >= 0:
+                        found.append(f"{who} ends the caption at {end:.2f} s of its piece, before its box would show "
+                                     f"(from {begins:.2f} s)")
+                    elif "box_dur" in b and round(begins + float(b["box_dur"]) - end, 6) > 0:
+                        found.append(f'{who} ends the caption at {end:.2f} s of its piece, before its box ends at '
+                                     f'{begins + float(b["box_dur"]):.2f} s: shorten "box_dur" to {end - begins:.2f} s '
+                                     "or less")
+    return found
+
+
+def _box_delay(b: dict, speed: float) -> float:
+    """Seconds after its caption starts that a box shows: "box_delay", or, the plugin's rule, the camera's arrival on a
+    shot the caption is anchored to (CAMERA_MOVE / speed + 0.2), else 0."""
+    if "box_delay" in b:
+        return float(b["box_delay"])
+    return CAMERA_MOVE / speed + 0.2 if str(b["at"]).startswith("shot:") else 0.0
 
 
 def _narrated(spec: dict, lang: str):
@@ -1081,6 +1164,9 @@ def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = 
         _stop(found, "caption(s) do not sit in their pieces; nothing was written")
     logs = {r: json.loads((out / "raw" / f"{r}.camlog.json").read_text())["log"]
             for r in sorted({p["raw"] for t in used for p in spec["clips"][t]})}
+    found = early_end_problems({**spec, "clips": {t: spec["clips"][t] for t in used}}, lang, logs)
+    if found:
+        _stop(found, "caption(s) cannot end early as asked; nothing was written")
     v = voiced({**spec, "clips": {t: pieces for t, pieces in spec["clips"].items() if t in used}}, lang, logs)
     found = window_problems(v, lang, out / "raw", used)
     if found:
@@ -1107,7 +1193,7 @@ def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = 
           f"({sum(len(spec['clips'][t]) for t in v['clips'])} before the split), {len(lines)} narrations ({on_cards} on "
           f"cards, {len(lines) - on_cards} on captions), {len(v['reels'])} reels; files in {out}")
     for take in v["clips"]:
-        for line in _renamed(spec["clips"][take], take, lang):
+        for line in _renamed(spec["clips"][take], take, lang, logs):
             print(f"  {line}")
     if plugin:
         for reel in v["reels"]:
@@ -1162,14 +1248,15 @@ def _report(out: Path, reel: str, lang: str) -> Path:
     return out / "reports" / f"{reel}-{lang}-voice"
 
 
-def _renamed(pieces: list[dict], take: str, lang: str) -> list[str]:
+def _renamed(pieces: list[dict], take: str, lang: str, logs: dict[str, list]) -> list[str]:
     """How the split renames a take's pieces: one line per silent piece whose voiced name or names differ."""
     lines, n = [], 1
     for name, part in zip(piece_names(take, pieces), pieces):
-        k = max(1, len(part["beats"].get(lang, [])))
+        k, captions = len(_voiced_of(part, lang, logs)), len(part["beats"].get(lang, []))
         now = [f"{take}.{i}" for i in range(n, n + k)]
+        why = [f"{captions} captions"] * (captions > 1) + ["a caption that ends early"] * (k > max(1, captions))
         if now != [name]:
-            lines.append(f"{name} -> {', '.join(now)}" + (f" (split: {k} captions)" if k > 1 else ""))
+            lines.append(f"{name} -> {', '.join(now)}" + (f" (split: {', '.join(why)})" if why else ""))
         n += k
     return lines
 
