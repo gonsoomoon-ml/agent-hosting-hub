@@ -20,7 +20,44 @@ The concept picture (`docs/hosting-hub-concept.png`) draws the two flows as boxe
 
 The system picture (`docs/hosting-hub-system.png`) puts AWS service names in the same places. For example, ⑤ is `CreateAgentRuntime`, which the review's deploy step calls. Both pictures are in Korean only, and the pictures' source files are not in this repository. The hub screen (`platform_team/hub_ui/static/`) has two smaller pictures of its own, one per flow.
 
+To go through the video's steps by hand in your own account, see [Follow the video by hand](docs/demo-guide.md) (in Korean).
+
 ## What is in it
+
+The folders are split by who uses them. Below is the structure opened two levels deep. The table under it says what `platform_team/`, `dev_team/`, `e2e_checks/` and `tests/` hold and leads to each README. The two folders used for the video (`demo_scenes/`, `demo_video/`) are described in "The video" and "Commands typed in the video" below.
+
+```text
+agent-hosting-hub/
+├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy and more ("Seven commands" below)
+├── .env.example          # the hub's three values: region, prefix, model
+│
+├── platform_team/        # platform team: the hub's frame and the operations commands; one folder per feature
+│   ├── terraform/        #   root module: brings the feature folders' terraform/ together in one apply
+│   ├── shared_code/      #   code several features share (settings, AWS calls, the code bundle)
+│   ├── agent_catalog/    #   catalog (AWS Agent Registry): applying, searching, registering shared tools
+│   ├── hosting_review/   #   hosting review (Step Functions, Lambda, CodeBuild) and rejection
+│   ├── agent_gateway/    #   agent gateway and the command that calls an agent
+│   ├── tool_gateway/     #   tool gateway
+│   ├── sample_tools/     #   sample in-house tools (synthetic data)
+│   ├── company_policy/   #   company policy: Cedar templates, policy engine, rollout.sh
+│   ├── custom_guardrail/ #   custom guardrail: interceptor Lambda, guardrail.sh
+│   ├── agent_monitoring/ #   alerts, the tool-call alarm, the usage report (usage.sh), reading logs
+│   ├── agent_stop/       #   stopping and resuming one agent (stop.sh, resume.sh)
+│   ├── dev_access/       #   the development team's role
+│   └── hub_ui/           #   hub screen (sample, on this PC only)
+│
+├── dev_team/             # development team: the template and example agents
+│   ├── agent_template/   #   standard template and the upload command (publish.sh)
+│   ├── release_review/   #   example agent (LangGraph)
+│   ├── quality_agent/    #   example agent (Strands); variants/ holds two versions made for the demo
+│   └── preloaded_agents/ #   two agents that are there from the start (docs_adk, spec_assistant)
+│
+├── docs/                 # the two pictures (concept, system) and the guide to follow the video by hand
+├── e2e_checks/           # check scripts that run on real AWS; spikes/ is a record of checked assumptions
+├── tests/                # unit tests; they make no AWS call
+├── demo_scenes/          # the four commands typed in the video's terminal (ask, publish, search, logs)
+└── demo_video/           # what makes the video: storyboards, the recording script, captions and cuts (build.py), the developer PC
+```
 
 | Folder | Who writes it | Contents |
 |---|---|---|
@@ -28,6 +65,22 @@ The system picture (`docs/hosting-hub-system.png`) puts AWS service names in the
 | `dev_team/` | Development team | The [agent template](dev_team/agent_template/README.md) and the command that uploads (`publish.sh`), two example agents: [release_review](dev_team/release_review/README.md) (LangGraph), [quality_agent](dev_team/quality_agent/README.md) (Strands). `preloaded_agents/` holds two agents that are there from the start (the platform team puts them up with `make preload`): [docs_adk](dev_team/preloaded_agents/docs_adk/README.md) (Google ADK), [spec_assistant](dev_team/preloaded_agents/spec_assistant/README.md) (a managed harness with no code). See "The two agents that are there from the start" below |
 | `e2e_checks/` | Anyone | Check scripts that run on real AWS. `e2e_hosting.py` (flow 1 from end to end), `e2e_operations.py` (flow 2 from end to end), `check_platform.py` (the hub's frame), `check_cleanup.py` (what is left after a destroy). `spikes/` is not part of the product: it holds scripts that checked assumptions while the hub was being built ([experiments](e2e_checks/spikes/README.md)) |
 | `tests/` | Anyone | Unit tests (`make test`). They make no AWS call. |
+
+## Reading the code
+
+Where the first two steps of flow 1 (hosting) run in the code. The numbers are those of the [concept picture](docs/hosting-hub-concept.png) above.
+
+| Step | What happens | Where it enters |
+|---|---|---|
+| ① Search for agents and tools | The developer finds approved records in the catalog. A record that is not approved does not come up in a search. | `demo_scenes/search` → `platform_team/agent_catalog/search_catalog.py` → `search_records()` in `platform_team/agent_catalog/catalog_records.py` |
+| ② Apply for agent hosting | `publish.sh <agent folder>` does four things in order. It checks the application (`agent.json`). It packs the `.py` files and `requirements.txt` at the top of the folder into a zip and uploads it to the submission bucket (an S3 bucket). It writes the application as a record of the catalog. It asks for approval. When the record becomes `PENDING_APPROVAL`, that event starts the hosting review. | `dev_team/agent_template/publish.sh` → `publish()` in `platform_team/agent_catalog/publish_agent.py` |
+
+In ②, `publish()` calls these in order.
+
+- The check: `validate()` in `platform_team/agent_catalog/application_form.py`
+- The packing: `bundle()` in `platform_team/agent_catalog/publish_agent.py`. With a variant, the files of `variants/<variant>/` replace those of the folder.
+- Writing the record and asking for approval: `put_record()` and `submit()` in `platform_team/agent_catalog/catalog_records.py`. Approval is asked for only when the record's status after writing is `DRAFT`. When the status stays as it was, as with an application that changes nothing, it is not asked for again.
+- The start of the review: `aws_cloudwatch_event_rule.on_submit` in `platform_team/hosting_review/terraform/main.tf`
 
 ## Requirements
 
