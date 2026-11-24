@@ -179,3 +179,90 @@ def test_the_spikes_are_records_that_no_command_runs():
              if "e2e_checks/spikes/" not in str(f) and f.suffix != ".md" and f.name != "test_repo_hygiene.py"
              and re.search(r"spike_(?:cli_in_codebuild|terraform|operations)", f.read_text(encoding="utf-8", errors="ignore"))]
     assert users == []
+
+
+# ---------------------------------------------------------------- the top-level READMEs' folder tree and code walk
+READMES = {"README.md": ("## 코드 따라 읽기", "## 사전 요건"), "README.en.md": ("## Reading the code", "## Requirements")}
+
+
+def _tree_folders(text: str) -> set[str]:
+    """The folders the README's tree names, as paths from the repo root (the tree is two levels deep)."""
+    block = text.split("```text\n", 1)[1].split("```", 1)[0]
+    out, parent = set(), ""
+    for line in block.splitlines():
+        m = re.match(r"^(│   )?[├└]── (\S+)/(?:\s|$)", line)
+        if not m:
+            continue
+        if m.group(1):
+            out.add(f"{parent}/{m.group(2)}")
+        else:
+            parent = m.group(2)
+            out.add(parent)
+    return out
+
+
+def test_the_readmes_folder_tree_is_the_repos():
+    """Every folder in the tree is in the repo, every folder of the two teams is in the tree, and both languages
+    draw the same tree."""
+    trees = {name: _tree_folders((ROOT / name).read_text(encoding="utf-8")) for name in READMES}
+    assert trees["README.md"] == trees["README.en.md"]
+    tree = trees["README.md"]
+    assert len(tree) > 20
+    assert [p for p in sorted(tree) if not (ROOT / p).is_dir()] == []
+    tracked = {f.relative_to(ROOT).parts for f in repo_files()}
+    for team in ("platform_team", "dev_team"):
+        folders = {f"{team}/{parts[1]}" for parts in tracked if parts[0] == team and len(parts) > 2}
+        assert folders - tree == set(), f"the README's tree leaves out folders of {team}/"
+
+
+def _walk_names(readme: str) -> tuple[set[str], set[str], set[str]]:
+    """The files, functions and Terraform resources the walk through the code names in code ticks."""
+    start, end = READMES[readme]
+    body = (ROOT / readme).read_text(encoding="utf-8").split(start, 1)[1].split(end, 1)[0]
+    ticks = set(re.findall(r"`([^`]+)`", body))
+    files = {t for t in ticks if "/" in t and "<" not in t}
+    functions = {t[:-2] for t in ticks if t.endswith("()")}
+    resources = {t for t in ticks if re.fullmatch(r"aws_\w+\.\w+", t)}
+    return files, functions, resources
+
+
+def test_the_code_the_readmes_walk_through_is_there():
+    """Every file, function and Terraform resource named in the walk through the code exists, and both languages
+    name the same ones."""
+    files, functions, resources = _walk_names("README.md")
+    assert _walk_names("README.en.md") == (files, functions, resources)
+    assert len(files) >= 6 and len(functions) >= 6 and resources
+    assert [f for f in sorted(files) if not (ROOT / f).is_file()] == []
+    code = "\n".join((ROOT / f).read_text(encoding="utf-8") for f in sorted(files))
+    assert [f for f in sorted(functions) if not re.search(rf"^def {re.escape(f)}\(", code, re.M)] == []
+    for kind, label in (r.split(".") for r in resources):
+        assert f'resource "{kind}" "{label}"' in code
+
+
+def test_the_two_readmes_have_the_same_number_of_sections():
+    counts = {name: len(re.findall(r"^## ", (ROOT / name).read_text(encoding="utf-8"), re.M)) for name in READMES}
+    assert counts["README.md"] == counts["README.en.md"] >= 12
+
+
+def _anchor(heading: str) -> str:
+    """A heading's anchor as GitHub makes it: code ticks and punctuation dropped, blanks to hyphens, lower case."""
+    text = re.sub(r"[^\w\- ]", "", heading.replace("`", "")).strip().lower()
+    return text.replace(" ", "-")
+
+
+def test_the_guides_links_lead_to_files_and_headings_in_the_repo():
+    """The guide to follow the demo by hand is linked from both READMEs, and every link in it leads to a file of the
+    repo and, where it names one, to a heading of that file."""
+    guide = ROOT / "docs/demo-guide.md"
+    for readme in READMES:
+        assert "](docs/demo-guide.md)" in (ROOT / readme).read_text(encoding="utf-8")
+    links = re.findall(r"\]\(([^)#\s]+)(?:#([^)\s]+))?\)", guide.read_text(encoding="utf-8"))
+    assert len(links) >= 6
+    for target, anchor in links:
+        if target.startswith("http"):
+            continue
+        file = (guide.parent / target).resolve()
+        assert file.is_file(), f"the guide links {target}, which is not in the repo"
+        if anchor:
+            headings = re.findall(r"^#+ (.+)$", file.read_text(encoding="utf-8"), re.M)
+            assert anchor in {_anchor(h) for h in headings}, f"the guide links #{anchor}, which {target} does not have"

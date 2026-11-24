@@ -22,7 +22,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ## 무엇이 들어 있나
 
-폴더는 쓰는 사람에 따라 나뉜다. 아래는 두 번째 단계까지의 구조다. 그 밑의 표는 폴더마다 무엇이 들어 있는지 적고 각 README로 이어진다.
+폴더는 쓰는 사람에 따라 나뉜다. 아래는 폴더를 두 층까지 펼친 구조다. 그 밑의 표는 그 가운데 `platform_team/`, `dev_team/`, `e2e_checks/`, `tests/`에 무엇이 들어 있는지 적고 각 README로 이어진다. 영상에 쓰는 두 폴더(`demo_scenes/`, `demo_video/`)는 아래 "영상"과 "영상에서 치는 명령"에 적었다.
 
 ```text
 agent-hosting-hub/
@@ -50,11 +50,11 @@ agent-hosting-hub/
 │   ├── quality_agent/    #   예시 에이전트(Strands). variants/에 데모를 위한 버전 둘
 │   └── preloaded_agents/ #   처음부터 올라와 있는 에이전트 둘(docs_adk, spec_assistant)
 │
-├── docs/                 # 영상처럼 따라 하는 안내
+├── docs/                 # 그림 둘(개념도, 구성도)과 영상처럼 따라 하는 안내
 ├── e2e_checks/           # 실제 AWS에서 돌리는 확인 스크립트. spikes/는 가정을 확인한 기록
 ├── tests/                # 단위 시험. AWS를 부르지 않는다
 ├── demo_scenes/          # 시연 영상의 터미널에서 치는 명령 넷(ask, publish, search, logs)
-└── demo_video/           # 시연 영상을 만드는 것: 스토리보드, 녹화 스크립트, 개발자 PC
+└── demo_video/           # 시연 영상을 만드는 것: 스토리보드, 녹화 스크립트, 자막과 컷(build.py), 개발자 PC
 ```
 
 | 폴더 | 누가 쓰나 | 내용 |
@@ -66,14 +66,19 @@ agent-hosting-hub/
 
 ## 코드 따라 읽기
 
-두 흐름이 코드의 어디를 지나가는지 단계마다 적는다. 번호는 각 폴더의 README가 쓰는 개념도의 번호다.
+흐름 1(호스팅)의 첫 두 단계가 코드의 어디를 지나가는지 적는다. 번호는 위 [개념도](docs/hosting-hub-concept.png)의 번호다.
 
-### 흐름 1: 호스팅
-
-| 단계 | 일어나는 일 | 코드 |
+| 단계 | 일어나는 일 | 들어가는 곳 |
 |---|---|---|
-| ① 에이전트와 도구 검색 | 개발자가 카탈로그에서 승인된 record를 찾는다. 승인되지 않은 record는 검색에 나오지 않는다. | `demo_scenes/search` → `platform_team/agent_catalog/search_catalog.py` → `catalog_records.py`의 `search_records()` |
-| ② 에이전트 호스팅 신청 | `publish.sh <에이전트 폴더>`가 네 가지를 차례로 한다. 신청서(`agent.json`)를 검사한다. 폴더의 `.py` 파일과 `requirements.txt`를 zip으로 묶어 제출함(S3 bucket)에 올린다. 신청서를 카탈로그의 record로 쓴다. 승인을 요청한다. record가 `PENDING_APPROVAL`이 되면 그 이벤트가 호스팅 심사를 시작한다. | `dev_team/agent_template/publish.sh` → `platform_team/agent_catalog/publish_agent.py`의 `publish()`. 검사는 `application_form.py`의 `validate()`, record는 `catalog_records.py`의 `put_record()`와 `submit()`, 심사를 시작하는 규칙은 `platform_team/hosting_review/terraform/main.tf`의 `aws_cloudwatch_event_rule.on_submit` |
+| ① 에이전트와 도구 검색 | 개발자가 카탈로그에서 승인된 record를 찾는다. 승인되지 않은 record는 검색에 나오지 않는다. | `demo_scenes/search` → `platform_team/agent_catalog/search_catalog.py` → `platform_team/agent_catalog/catalog_records.py`의 `search_records()` |
+| ② 에이전트 호스팅 신청 | `publish.sh <에이전트 폴더>`가 네 가지를 차례로 한다. 신청서(`agent.json`)를 검사한다. 폴더 맨 위의 `.py` 파일과 `requirements.txt`를 zip으로 묶어 제출함(S3 bucket)에 올린다. 신청서를 카탈로그의 record로 쓴다. 승인을 요청한다. record가 `PENDING_APPROVAL`이 되면 그 이벤트가 호스팅 심사를 시작한다. | `dev_team/agent_template/publish.sh` → `platform_team/agent_catalog/publish_agent.py`의 `publish()` |
+
+②에서 `publish()`가 차례로 부르는 것은 이렇다.
+
+- 검사: `platform_team/agent_catalog/application_form.py`의 `validate()`
+- 묶기: `platform_team/agent_catalog/publish_agent.py`의 `bundle()`. 변형을 주면 `variants/<변형>/`의 파일이 폴더의 파일을 대신한다.
+- record 쓰기와 승인 요청: `platform_team/agent_catalog/catalog_records.py`의 `put_record()`와 `submit()`. 승인 요청은 record를 쓴 뒤의 상태가 `DRAFT`일 때만 한다. 바뀐 것이 없는 재신청처럼 상태가 그대로이면 다시 요청하지 않는다.
+- 심사의 시작: `platform_team/hosting_review/terraform/main.tf`의 `aws_cloudwatch_event_rule.on_submit`
 
 ## 사전 요건
 
