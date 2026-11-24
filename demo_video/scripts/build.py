@@ -27,26 +27,31 @@ scripts/<lang>/ and clips/<lang>/ (<take>.<n>, one per piece), cards/<lang>/, re
 
 --voice builds the same reels with a spoken narration, beside the silent ones; the silent build never reads the
 narration's fields. A caption may carry "say" (its narration), "box" (highlight boxes, as edit_demo.py takes them) with
-"what" (one short phrase per box: what it points at), "box_delay" and "voice_at"; a card may carry "say". READINGS gives
-the spoken form of an on-screen name, so that the synthesizer gets Hangul only. Before anything is written, each
-narration is checked: sentences in the 합니다 style (each ends in 니다.), none of the three characters a caption may not
-hold, no Latin letter or digit left once READINGS is applied, a "what" for each box, and a piece or card that a reel
-uses. Then every piece with several captions is split, one caption per piece (a later caption's piece starts SPLIT_LEAD
-seconds of the take before its anchor), and each caption must still sit in its own piece. A narrated caption is held to
-its piece's last frame; its voice starts VOICE_DELAY seconds after the caption, a card's VOICE_DELAY seconds into the
-card; the reel holds a frame until the voice has ended. Written under demo_video/out/: scripts/<lang>-voice/ and
+"what" (one short phrase per box: what it points at), "box_delay", "box_dur" and "voice_at"; a card may carry "say".
+READINGS gives the spoken form of an on-screen name, so that the synthesizer gets Hangul only. Before anything is
+written, each narration is checked: sentences in the 합니다 style (each ends in 니다.), none of the three characters a
+caption may not hold, no Latin letter or digit left once READINGS is applied, on a piece or card that a reel uses; so
+are a caption's values: a "what" for each box, "box_delay", "box_dur" and "what" only beside a box, numbers of seconds.
+Then every piece with several captions is split, one caption per piece (a later caption's piece starts SPLIT_LEAD
+seconds of the take before its anchor), each caption must still sit in its own piece, and a "voice_at" must lie in its
+piece, not before its caption. A narrated caption is held to its piece's last frame (its boxes too, unless "box_dur"
+ends them sooner); its voice starts VOICE_DELAY seconds after the caption, a card's VOICE_DELAY seconds into the card;
+the reel holds a frame until the voice has ended. Written under demo_video/out/: scripts/<lang>-voice/ and
 clips/<lang>-voice/ (<take>.<n>, numbered anew after the split), voice/<lang>/ (lines.json, readings.json, the plugin's
 <name>.mp3 and voice.json), reels/hosting-hub-<reel>-<lang>-voice.json and .mp4 (and the plugin's .voice.json),
 reports/<reel>-<lang>-voice/ (texts.json, and the plugin's audit.json, boxes/ and review page). The cards are the silent
 build's pictures (cards/<lang>/<name>.png), made only when one is missing (from voice/<lang>/cards.json). The plugin's
-voice step calls Amazon Polly through the AWS CLI, in the region of the environment; edit_demo.py voice, clip and reel,
-make_cards.py and check_demo.py (audit, boxes, sheet) are run in that order, and a failed audit stops the build.
+voice step calls Amazon Polly through the AWS CLI, in the region of the environment. edit_demo.py clip, make_cards.py,
+edit_demo.py voice, then per reel edit_demo.py reel and check_demo.py audit, boxes and sheet are run in that order (a
+box the clip step refuses stops the build before anything is synthesized); the reel and the audit get the thresholds
+VOICE_GAP, VOICE_TAIL, LOUDNESS and VOICE_TOLERANCE, and a failed audit stops the build.
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import json
+import math
 import re
 import subprocess
 import sys
@@ -69,8 +74,13 @@ ROOM = 2.0                                              # seconds of the finishe
 VOICE_DELAY = 0.3                                       # seconds a narration starts after its caption (or into its card)
 SPLIT_LEAD = 0.2                                        # seconds of the take a split piece starts before its caption
 SILENT_FIELDS = ("at", "text", "offset", "dur", "pos")  # what a caption passes on to the silent build
-VOICED_FIELDS = SILENT_FIELDS + ("box", "box_delay")    # and to the voiced build, which holds a narrated caption
+VOICED_FIELDS = SILENT_FIELDS + ("box", "box_delay", "box_dur")  # and to the voiced build (it holds a narrated caption)
 VOICES = {"ko": ["--voice", "Seoyeon", "--engine", "generative", "--language", "ko-KR"]}     # Amazon Polly
+# the narrated reels' thresholds, given to the plugin: its reel takes the first three, its audit the last two
+VOICE_GAP = 0.6                                         # seconds of silence at least between two voices
+VOICE_TAIL = 1.0                                        # seconds a reel runs on after its last voice
+LOUDNESS = -16.0                                        # integrated loudness of the voices, LUFS
+VOICE_TOLERANCE = 0.25                                  # seconds a voice may be heard early or late at either end
 
 
 def piece(raw: str, start: float, end: float, speed: float = DEFAULT_SPEED, ko: list | tuple = ()) -> dict:
@@ -83,8 +93,9 @@ def beat(at: str, text: str, **opts) -> dict:
     """A caption (the plugin's beat): anchored to a camlog event, 'shot:<key>[#n]' or '<note kind>[#n]', plus an
     optional "offset" (seconds), "dur" (seconds of the finished piece) and "pos": "top" (edit_demo.py). For the voiced
     build only: "say" (the narration), "box" and "what" (the highlight boxes and, per box, what it points at),
-    "box_delay" (seconds after the caption starts), "voice_at" (seconds into the finished piece; replaces the start
-    computed from the anchor)."""
+    "box_delay" (seconds after the caption starts), "box_dur" (seconds the boxes show, from their start; without it
+    until the caption ends), "voice_at" (seconds into the finished piece; replaces the start computed from the
+    anchor)."""
     return {"at": at, "text": text, **opts}
 
 
@@ -483,14 +494,37 @@ def say_problems(say, lang: str) -> list[str]:
     return found
 
 
+def is_seconds(value) -> bool:
+    """A number of seconds as a beat may give it (not a text, not true or false)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def value_problems(b: dict) -> list[str]:
+    """A caption's own values for the voiced build: "voice_at" a number; "box_delay" a number of 0 or more and
+    "box_dur" a number above 0, each only beside a box (where the voice starts in its piece is checked once the pieces
+    are split, see voiced_problems)."""
+    found = []
+    if "voice_at" in b and not is_seconds(b["voice_at"]):
+        found.append(f'"voice_at" must be a number of seconds (it is {b["voice_at"]!r})')
+    for field in ("box_delay", "box_dur", "what"):
+        if field in b and not box_count(b.get("box")):
+            found.append(f'"{field}" on a caption without a box')
+    if box_count(b.get("box")):
+        if "box_delay" in b and not (is_seconds(b["box_delay"]) and b["box_delay"] >= 0):
+            found.append(f'"box_delay" must be a number of seconds, 0 or more (it is {b["box_delay"]!r})')
+        if "box_dur" in b and not (is_seconds(b["box_dur"]) and b["box_dur"] > 0):
+            found.append(f'"box_dur" must be a number of seconds above 0 (it is {b["box_dur"]!r})')
+    return found
+
+
 def what_problems(b: dict) -> list[str]:
     """A caption's boxes each have a short phrase in "what" that says what the box points at (the review page shows it
     beside the box)."""
     n, what = box_count(b.get("box")), b.get("what")
     if n and not what:
         return ['a box without "what" (one short phrase per box saying what it points at)']
-    if what is None:
-        return []
+    if what is None or not n:
+        return []                                                  # a "what" with no box: see value_problems
     if not isinstance(what, list) or not all(isinstance(w, str) and w.strip() for w in what):
         return ['"what" must be a list of short phrases, one per box']
     return [f'{n} box(es) but {len(what)} phrase(s) in "what" (one per box)'] if len(what) != n else []
@@ -509,7 +543,7 @@ def narration_problems(spec: dict, lang: str) -> list[str]:
         for name, part in zip(piece_names(take, pieces), pieces):
             for b in part["beats"].get(lang, []):
                 who = f"{name}: {b['text']!r}"
-                found += [f"{who}: {p}" for p in what_problems(b)]
+                found += [f"{who}: {p}" for p in value_problems(b) + what_problems(b)]
                 if "say" in b:
                     found += [f"{who}: {p}" for p in say_problems(b["say"], lang)]
                     if take not in used:
@@ -709,9 +743,31 @@ def voice_starts(spec: dict, lang: str, logs: dict[str, list]) -> dict[str, floa
             return VOICE_DELAY
         if "voice_at" in item:
             return float(item["voice_at"])
-        t = anchor_seconds(item["at"], logs[part["raw"]]) + float(item.get("offset", 0))
-        return round(max(0.0, (t - part["start"]) / part["speed"]) + VOICE_DELAY, 3)
+        return round(caption_start(item, part, logs[part["raw"]]) + VOICE_DELAY, 3)
     return {name: start(item, part) for name, item, part in _narrated(spec, lang)}
+
+
+def caption_start(b: dict, part: dict, log: list[dict]) -> float:
+    """Seconds into its finished piece that a caption starts: max(0, (anchor + offset - start) / speed)."""
+    return max(0.0, (anchor_seconds(b["at"], log) + float(b.get("offset", 0)) - part["start"]) / part["speed"])
+
+
+def voiced_problems(spec: dict, lang: str, logs: dict[str, list]) -> list[str]:
+    """A "voice_at" given on a caption of a voiced spec lies inside its piece and not before its caption starts (a
+    voice never speaks of what is not on the screen yet), one line each, naming the voiced piece and the caption."""
+    found = []
+    for name, part in _pieces(spec):
+        for b in part["beats"].get(lang, []):
+            if "voice_at" not in b or not is_seconds(b["voice_at"]):
+                continue                                           # a value that is no number: value_problems
+            at, begins = b["voice_at"], round(caption_start(b, part, logs[part["raw"]]), 3)
+            length = (part["end"] - part["start"]) / part["speed"]
+            who = f'{name}: {b["text"]!r}: "voice_at" {at} s'
+            if at < begins:
+                found.append(f"{who} lies before its caption's start at {begins:.2f} s")
+            elif at > length:
+                found.append(f"{who} lies beyond its piece ({length:.2f} s long)")
+    return found
 
 
 def reel_texts(spec: dict, reel: str, lang: str) -> dict:
@@ -724,9 +780,11 @@ def reel_texts(spec: dict, reel: str, lang: str) -> dict:
 
 
 def voiced_manifest(spec: dict, reel: str, lang: str, at: dict[str, float]) -> dict:
-    """edit_demo.py's reel for a voiced spec: a card is its picture for its seconds; the pieces of a take share a group
-    (a voice may run on over its take's later pieces, never into another take or a card) and meet in hard cuts; a
-    segment whose name is in `at` carries its voice, starting that many seconds into the segment."""
+    """edit_demo.py's reel for a voiced spec, with the build's thresholds: a card is its picture for its seconds; the
+    pieces of a take meet in hard cuts and share a group, so that a voice may run on over its take's later pieces
+    without a caption, never into another take or a card; a piece with a caption and no narration has a group of its
+    own, so that no voice runs on over it. A segment whose name is in `at` carries its voice, starting that many
+    seconds into the segment."""
     def narrated(entry: dict, name: str) -> dict:
         return entry | ({"voice": f"voice/{lang}/{name}.mp3", "voice_at": at[name]} if name in at else {})
     segments = []
@@ -736,14 +794,16 @@ def voiced_manifest(spec: dict, reel: str, lang: str, at: dict[str, float]) -> d
                                       "seconds": spec["cards"][lang][name]["seconds"]}, name))
             continue
         names = piece_names(name, spec["clips"][name])
-        for i, file in enumerate(names):
-            entry = {"file": f"clips/{lang}-voice/{file}.mp4", "group": name}
+        for i, (file, part) in enumerate(zip(names, spec["clips"][name])):
+            beats = part["beats"].get(lang, [])
+            unsaid = beats and not any("say" in b for b in beats)
+            entry = {"file": f"clips/{lang}-voice/{file}.mp4", "group": file if unsaid else name}
             if i > 0:
                 entry["fade_in"] = 0
             if i < len(names) - 1:
                 entry["fade_out"] = 0
             segments.append(narrated(entry, file))
-    return {"fade": 0.4, "segments": segments}
+    return {"fade": 0.4, "voice_gap": VOICE_GAP, "voice_tail": VOICE_TAIL, "loudness": LOUDNESS, "segments": segments}
 
 
 # ---------------------------------------------------------------------------------------------------------- run
@@ -785,10 +845,10 @@ def run(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = False)
 
 def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = False) -> None:
     """The narrated reels beside the silent ones. Every check comes before anything is written: the texts, the
-    narrations and boxes, the raw takes, each caption in its piece and, once split, in its own piece. Then the script
-    files, the lines, the readings and the review page's texts; without check_only the voices, the clips and any
-    missing card; the manifests; without check_only, per reel: the reel, its audit (a failed one stops the build),
-    the boxes of its pieces, its review page."""
+    narrations and boxes, the raw takes, each caption in its piece and, once split, in its own piece, and where each
+    given voice start lies in its piece. Then the script files, the lines, the readings and the review page's texts;
+    without check_only the clips, any missing card and the voices; the manifests; without check_only, per reel: the
+    reel, its audit (a failed one stops the build), the boxes of its pieces, its review page."""
     found = problems(spec, lang)
     if found:
         _stop(found, "text(s) break the rules; nothing was written")
@@ -810,6 +870,9 @@ def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = 
     found = window_problems(v, lang, out / "raw", used)
     if found:
         _stop(found, "caption(s) do not sit in their own pieces once split (one caption per piece); nothing was written")
+    found = voiced_problems(v, lang, logs)
+    if found:
+        _stop(found, "voice start(s) do not fit their pieces once split; nothing was written")
 
     scripts, voice = out / "scripts" / f"{lang}-voice", out / "voice" / lang
     for name, part in _pieces(v):
@@ -820,7 +883,7 @@ def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = 
     for reel in v["reels"]:
         write(_report(out, reel, lang) / "texts.json", reel_texts(v, reel, lang))
     if plugin:
-        _voices_clips_and_cards(plugin, v, lang, out)
+        _clips_cards_and_voices(plugin, v, lang, out)
     at = voice_starts(v, lang, logs)
     for reel in v["reels"]:
         write(out / "reels" / f"{reel_file(reel, lang)}-voice.json", voiced_manifest(v, reel, lang, at))
@@ -836,12 +899,11 @@ def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = 
             _reel_and_checks(plugin, v, reel, lang, out)
 
 
-def _voices_clips_and_cards(plugin: Path, v: dict, lang: str, out: Path) -> None:
-    """The plugin's voice step (only what changed is synthesized), the clips of a voiced spec, and the card pictures
-    the silent build has not made yet."""
+def _clips_cards_and_voices(plugin: Path, v: dict, lang: str, out: Path) -> None:
+    """The clips of a voiced spec, the card pictures the silent build has not made yet, then the plugin's voice step
+    (only what changed is synthesized). The clips come first: a box the clip step refuses stops the build before
+    anything is synthesized."""
     voice, py = out / "voice" / lang, sys.executable
-    subprocess.run([py, str(plugin / "edit_demo.py"), "voice", str(voice / "lines.json"), "--out", str(voice),
-                    "--readings", str(voice / "readings.json"), "--hangul-only", *VOICES[lang]], check=True)
     for name, part in _pieces(v):
         subprocess.run(clip_command(plugin, name, part, lang, out, folder=f"{lang}-voice"), check=True)
     cards, used = v["cards"][lang], used_names(v)
@@ -851,6 +913,8 @@ def _voices_clips_and_cards(plugin: Path, v: dict, lang: str, out: Path) -> None
                                      for n in missing})
         subprocess.run([py, str(plugin / "make_cards.py"), str(voice / "cards.json"),
                         "--out", str(out / "cards" / lang)], check=True)
+    subprocess.run([py, str(plugin / "edit_demo.py"), "voice", str(voice / "lines.json"), "--out", str(voice),
+                    "--readings", str(voice / "readings.json"), "--hangul-only", *VOICES[lang]], check=True)
 
 
 def _reel_and_checks(plugin: Path, v: dict, reel: str, lang: str, out: Path) -> None:
@@ -859,7 +923,9 @@ def _reel_and_checks(plugin: Path, v: dict, reel: str, lang: str, out: Path) -> 
     py, check, report = sys.executable, str(plugin / "check_demo.py"), _report(out, reel, lang)
     manifest, mp4, plan = (out / "reels" / f"{reel_file(reel, lang)}-voice{ext}" for ext in (".json", ".mp4", ".voice.json"))
     subprocess.run([py, str(plugin / "edit_demo.py"), "reel", str(manifest), "--out", str(mp4)], check=True, cwd=out)
-    done = subprocess.run([py, check, "audit", str(mp4), "--plan", str(plan), "--out", str(report / "audit.json")])
+    (report / "audit.json").unlink(missing_ok=True)               # an audit that ends without a report shows no old one
+    done = subprocess.run([py, check, "audit", str(mp4), "--plan", str(plan), f"--tolerance={VOICE_TOLERANCE}",
+                           f"--loudness={LOUDNESS}", "--out", str(report / "audit.json")])
     if done.returncode != 0:
         _stop(_audit_lines(report / "audit.json", done.returncode),
               f"problem(s) in the audit of {mp4.name} (report: {report / 'audit.json'}); the build stopped there")

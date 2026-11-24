@@ -817,7 +817,8 @@ def test_the_silent_build_writes_what_the_reels_of_2026_11_23_were_cut_from(tmp_
 
 
 def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
-    # a narration, a box, what it points at, a box delay and a voice start on every caption, a narration on every card:
+    # a narration, a box, what it points at, its delay and length, a voice start on every caption, a narration on every
+    # card:
     # the silent build still writes exactly what it wrote before
     import copy
     build = _build()
@@ -826,7 +827,7 @@ def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
         for p in pieces:
             for b in p["beats"]["ko"]:
                 b.update(say="허브가 신청을 심사합니다.", box=[100, 200, 300, 120], what=["심사 표"], box_delay=0.5,
-                         voice_at=1.0)
+                         box_dur=2.0, voice_at=1.0)
     for card in spec["cards"]["ko"].values():
         card["say"] = "허브를 소개합니다."
     build.run(spec, out=tmp_path, check_only=True)
@@ -834,7 +835,8 @@ def test_the_silent_scripts_carry_no_voice_fields(tmp_path):
     # a beat with every field: the silent script keeps the five of a silent caption
     part = build.piece("00-home", 3.5, 20.0, ko=[build.beat("shot:wide", "허브 화면을 봅니다", offset=0.5, dur=4.0, pos="top",
                                                              say="허브 화면입니다.", box=[100, 200, 300, 120],
-                                                             what=["허브 화면"], box_delay=0.5, voice_at=1.0)])
+                                                             what=["허브 화면"], box_delay=0.5, box_dur=2.0,
+                                                             voice_at=1.0)])
     assert build.clip_script(part, "ko")["beats"] == [{"at": "shot:wide", "text": "허브 화면을 봅니다", "offset": 0.5,
                                                        "dur": 4.0, "pos": "top"}]
 
@@ -871,12 +873,12 @@ def test_a_piece_with_three_captions_becomes_three_pieces_cut_before_each_anchor
 def test_a_voiced_caption_is_held_and_its_voice_starts_0_3_s_after_it():
     build = _build()
     said = build.beat("shot:flow1", "흐름 1은 허브가 심사하는 길입니다", offset=0.4, say="흐름 일은 허브가 심사하는 길입니다.",
-                      box=[100, 200, 300, 120], what=["흐름 1의 설명"], box_delay=0.8)
+                      box=[100, 200, 300, 120], what=["흐름 1의 설명"], box_delay=0.8, box_dur=3.0)
     plain = build.beat("shot:wide", "허브 화면을 봅니다", dur=3.0)
     part_said, part_plain = build.piece("00-home", 14.0, 30.0, ko=[said]), build.piece("00-home", 3.5, 14.0, ko=[plain])
     assert build.voiced_script(part_said, "ko") == {"start": 14.0, "end": 30.0, "speed": 1.25, "beats": [
         {"at": "shot:flow1", "text": "흐름 1은 허브가 심사하는 길입니다", "offset": 0.4, "box": [100, 200, 300, 120],
-         "box_delay": 0.8, "hold": True}]}
+         "box_delay": 0.8, "box_dur": 3.0, "hold": True}]}
     assert build.voiced_script(part_plain, "ko") == build.clip_script(part_plain, "ko")     # no narration: as today
     spec = {"clips": {"00-home": [part_plain, part_said]},
             "cards": {"ko": {"card-ch0": {"seconds": 3, "say": "준비입니다."}, "card-intro": {"seconds": 4}}},
@@ -890,19 +892,26 @@ def test_a_voiced_caption_is_held_and_its_voice_starts_0_3_s_after_it():
 
 def test_cards_are_picture_segments_and_pieces_of_a_take_share_a_group():
     build = _build()
-    spec = {"clips": {"21-review": [build.piece("21-review", 4.5, 11.5), build.piece("21-review", 30.0, 38.6, speed=4),
-                                    build.piece("21-review", 38.6, 60.0)],
+    # the build gives the plugin its thresholds: the gap between voices, the tail, the loudness and the audit's tolerance
+    assert (build.VOICE_GAP, build.VOICE_TAIL, build.LOUDNESS, build.VOICE_TOLERANCE) == (0.6, 1.0, -16.0, 0.25)
+    said = build.beat("shot:list", "신청이 들어오자 심사가 시작됩니다", say="신청이 들어오자 심사가 시작됩니다.")
+    plain = build.beat("shot:quality", "심사는 Scan에서 멈춥니다")
+    spec = {"clips": {"21-review": [build.piece("21-review", 4.5, 11.5, ko=[said]),
+                                    build.piece("21-review", 30.0, 38.6, speed=4),
+                                    build.piece("21-review", 38.6, 60.0, ko=[plain])],
                       "22-works": [build.piece("22-works", 11.0, 36.5)]},
             "cards": {"ko": {"card-ch2": {"seconds": 3}}}, "reels": {"r": ["card-ch2", "21-review", "22-works"]}}
-    at = {"card-ch2": 0.3, "21-review.1": 0.62, "22-works.1": 1.1}
-    assert build.voiced_manifest(spec, "r", "ko", at) == {"fade": 0.4, "segments": [
+    at = {"card-ch2": 0.3, "21-review.1": 0.62}
+    # a captioned piece without a narration (21-review.3) has a group of its own: the voice of 21-review.1 may run on
+    # over the wait 21-review.2, never over another caption
+    assert build.voiced_manifest(spec, "r", "ko", at) == {"fade": 0.4, "voice_gap": 0.6, "voice_tail": 1.0,
+                                                          "loudness": -16.0, "segments": [
         {"image": "cards/ko/card-ch2.png", "seconds": 3, "voice": "voice/ko/card-ch2.mp3", "voice_at": 0.3},
         {"file": "clips/ko-voice/21-review.1.mp4", "group": "21-review", "fade_out": 0,
          "voice": "voice/ko/21-review.1.mp3", "voice_at": 0.62},
         {"file": "clips/ko-voice/21-review.2.mp4", "group": "21-review", "fade_in": 0, "fade_out": 0},
-        {"file": "clips/ko-voice/21-review.3.mp4", "group": "21-review", "fade_in": 0},
-        {"file": "clips/ko-voice/22-works.1.mp4", "group": "22-works", "voice": "voice/ko/22-works.1.mp3",
-         "voice_at": 1.1}]}
+        {"file": "clips/ko-voice/21-review.3.mp4", "group": "21-review.3", "fade_in": 0},
+        {"file": "clips/ko-voice/22-works.1.mp4", "group": "22-works"}]}
 
 
 def _narrate(build, say, **opts):
@@ -972,7 +981,7 @@ def test_a_narration_with_a_dash_dot_or_arrow_stops_the_build(bad):
     ([100, 200, 300, 120], None, 'a box without "what"'),
     ("shot:wide", [], 'a box without "what"'),
     ([[100, 200, 300, 120], [500, 200, 300, 120]], ["심사 표"], '2 box(es) but 1 phrase(s) in "what"'),
-    (None, ["심사 표"], '0 box(es) but 1 phrase(s) in "what"'),
+    (None, ["심사 표"], '"what" on a caption without a box'),
     ([100, 200, 300, 120], "심사 표", '"what" must be a list of short phrases'),
     ([100, 200, 300, 120], [""], '"what" must be a list of short phrases'),
     ([100, 200, 300, 120], ["심사 표"], None),
@@ -1032,6 +1041,8 @@ elif args[0] in ("clip", "reel"):
     put(opt("--out"), args[0] + "\n")
     if args[0] == "reel":
         put(opt("--out").with_suffix(".voice.json"), json.dumps({"segments": [], "voices": [], "warnings": []}))
+elif args[0] == "audit" and os.environ.get("STAND_IN_AUDIT_NO_REPORT"):
+    raise SystemExit(2)
 elif args[0] == "audit":
     problem = os.environ.get("STAND_IN_AUDIT_PROBLEM")
     put(opt("--out"), json.dumps({"ok": not problem, "problems": [problem] if problem else [], "warnings": []}))
@@ -1084,6 +1095,7 @@ def _voiced_setup(tmp_path, monkeypatch, take):
         (plugin / f).write_text(STAND_IN_PLUGIN)
     monkeypatch.setenv("DEMO_VIDEO_PLUGIN", str(plugin))
     monkeypatch.delenv("STAND_IN_AUDIT_PROBLEM", raising=False)
+    monkeypatch.delenv("STAND_IN_AUDIT_NO_REPORT", raising=False)
     log = plugin / "calls.jsonl"
 
     def calls():
@@ -1158,13 +1170,14 @@ def test_voice_check_writes_scripts_lines_and_manifests_and_cuts_nothing(tmp_pat
         {"at": "shot:flow1", "text": second["text"], "box": [100, 200, 300, 120], "hold": True}]
     assert read("scripts/ko-voice/00-home.3.json")["beats"] == [{"at": "asked", "text": third["text"]}]
     assert read("scripts/ko-voice/00-home.4.json")["beats"] == []
-    assert read("reels/hosting-hub-stage-1-ko-voice.json") == {"fade": 0.4, "segments": [
+    assert read("reels/hosting-hub-stage-1-ko-voice.json") == {"fade": 0.4, "voice_gap": 0.6, "voice_tail": 1.0,
+                                                               "loudness": -16.0, "segments": [
         {"image": "cards/ko/card-ch0.png", "seconds": 3},
         {"file": "clips/ko-voice/00-home.1.mp4", "group": "00-home", "fade_out": 0, "voice": "voice/ko/00-home.1.mp3",
          "voice_at": 0.62},                                         # (3.9 - 3.5) / 1.25 + 0.3
         {"file": "clips/ko-voice/00-home.2.mp4", "group": "00-home", "fade_in": 0, "fade_out": 0,
          "voice": "voice/ko/00-home.2.mp3", "voice_at": 0.46},     # (14.91 - 14.71) / 1.25 + 0.3
-        {"file": "clips/ko-voice/00-home.3.mp4", "group": "00-home", "fade_in": 0, "fade_out": 0},
+        {"file": "clips/ko-voice/00-home.3.mp4", "group": "00-home.3", "fade_in": 0, "fade_out": 0},   # no narration
         {"file": "clips/ko-voice/00-home.4.mp4", "group": "00-home", "fade_in": 0}]}
     main = read("reels/hosting-hub-main-ko-voice.json")["segments"]
     assert main[0] == {"image": "cards/ko/card-intro.png", "seconds": 4, "voice": "voice/ko/card-intro.mp3",
@@ -1191,8 +1204,9 @@ def test_a_caption_without_room_in_its_own_piece_stops_the_voiced_build(tmp_path
 
 
 @pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
-def test_the_voiced_build_calls_voice_clips_reels_audit_boxes_and_sheet_in_that_order(tmp_path, monkeypatch, capsys,
+def test_the_voiced_build_calls_clips_voice_reels_audit_boxes_and_sheet_in_that_order(tmp_path, monkeypatch, capsys,
                                                                                       take_45s):
+    # the clips come before the voices: a box the clip step refuses stops the build before anything is synthesized
     build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
     (out / "cards" / "ko" / "card-intro.png").unlink()            # a missing card picture is made after the clips
     build.run_voice(spec, "ko", out, check_only=False)
@@ -1201,19 +1215,20 @@ def test_the_voiced_build_calls_voice_clips_reels_audit_boxes_and_sheet_in_that_
     def step(call):                                                # the plugin's command: a script and its first word
         return call[0] if call[0] == "make_cards.py" else call[1]
     per_reel = ["reel", "audit", "boxes", "sheet"]                 # 00-home.2 is the reel's one piece with a box
-    assert [step(c) for c in done] == ["voice", "clip", "clip", "clip", "clip", "make_cards.py", *per_reel, *per_reel]
+    assert [step(c) for c in done] == ["clip", "clip", "clip", "clip", "make_cards.py", "voice", *per_reel, *per_reel]
     o = str(out)
-    assert done[0][1:] == ["voice", f"{o}/voice/ko/lines.json", "--out", f"{o}/voice/ko", "--readings",
+    assert done[1][1:] == ["clip", f"{o}/raw/00-home.webm", "--script", f"{o}/scripts/ko-voice/00-home.2.json", "--out",
+                           f"{o}/clips/ko-voice/00-home.2.mp4"]
+    assert done[3][-1] == "--no-captions"                          # 00-home.4, the wait, has no caption
+    assert done[4][1:] == [f"{o}/voice/ko/cards.json", "--out", f"{o}/cards/ko"]
+    assert done[5][1:] == ["voice", f"{o}/voice/ko/lines.json", "--out", f"{o}/voice/ko", "--readings",
                            f"{o}/voice/ko/readings.json", "--hangul-only", "--voice", "Seoyeon", "--engine", "generative",
                            "--language", "ko-KR"]
-    assert done[2][1:] == ["clip", f"{o}/raw/00-home.webm", "--script", f"{o}/scripts/ko-voice/00-home.2.json", "--out",
-                           f"{o}/clips/ko-voice/00-home.2.mp4"]
-    assert done[4][-1] == "--no-captions"                          # 00-home.4, the wait, has no caption
-    assert done[5][1:] == [f"{o}/voice/ko/cards.json", "--out", f"{o}/cards/ko"]
     reel, report = f"{o}/reels/hosting-hub-main-ko-voice", f"{o}/reports/main-ko-voice"
     assert [c[1:] for c in done[6:10]] == [
         ["reel", f"{reel}.json", "--out", f"{reel}.mp4"],
-        ["audit", f"{reel}.mp4", "--plan", f"{reel}.voice.json", "--out", f"{report}/audit.json"],
+        ["audit", f"{reel}.mp4", "--plan", f"{reel}.voice.json", "--tolerance=0.25", "--loudness=-16.0", "--out",
+         f"{report}/audit.json"],
         ["boxes", f"{o}/scripts/ko-voice/00-home.2.json", "--raw", f"{o}/raw/00-home.webm", "--out",
          f"{report}/boxes/00-home.2.json"],
         ["sheet", f"{reel}.mp4", "--plan", f"{reel}.voice.json", "--texts", f"{report}/texts.json", "--boxes",
@@ -1226,10 +1241,71 @@ def test_the_voiced_build_calls_voice_clips_reels_audit_boxes_and_sheet_in_that_
     capsys.readouterr()
     with pytest.raises(SystemExit) as stop:
         build.run_voice(spec, "ko", out, check_only=False)
-    assert stop.value.code == 2 and [step(c) for c in calls()] == ["voice", "clip", "clip", "clip", "clip", "reel",
+    assert stop.value.code == 2 and [step(c) for c in calls()] == ["clip", "clip", "clip", "clip", "voice", "reel",
                                                                    "audit"]
     err = capsys.readouterr().err
     assert problem in err and "hosting-hub-main-ko-voice.mp4" in err
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+def test_an_audit_that_writes_no_report_never_shows_an_older_one(tmp_path, monkeypatch, capsys, take_45s):
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    old = out / "reports" / "main-ko-voice" / "audit.json"
+    old.parent.mkdir(parents=True)
+    old.write_text(json.dumps({"ok": False, "problems": ["an older run's problem"], "warnings": []}))
+    monkeypatch.setenv("STAND_IN_AUDIT_NO_REPORT", "1")              # the audit exits 2 and writes nothing
+    with pytest.raises(SystemExit) as stop:
+        build.run_voice(spec, "ko", out, check_only=False)
+    err = capsys.readouterr().err
+    assert stop.value.code == 2 and "an older run's problem" not in err and not old.exists()
+    assert "the audit exited 2 and wrote no readable report" in err
+
+
+@pytest.mark.parametrize("opts, says", [
+    ({"say": "허브 화면의 홈입니다.", "voice_at": "1.5"}, '"voice_at" must be a number of seconds'),
+    ({"say": "허브 화면의 홈입니다.", "voice_at": True}, '"voice_at" must be a number of seconds'),
+    ({"box": [100, 200, 300, 120], "what": ["표"], "box_delay": "1"}, '"box_delay" must be a number of seconds, 0 or more'),
+    ({"box": [100, 200, 300, 120], "what": ["표"], "box_delay": -0.5}, '"box_delay" must be a number of seconds, 0 or more'),
+    ({"box": [100, 200, 300, 120], "what": ["표"], "box_dur": 0}, '"box_dur" must be a number of seconds above 0'),
+    ({"box": [100, 200, 300, 120], "what": ["표"], "box_dur": "2"}, '"box_dur" must be a number of seconds above 0'),
+    ({"box_delay": 1.0}, '"box_delay" on a caption without a box'),
+    ({"box_dur": 2.0}, '"box_dur" on a caption without a box'),
+    ({"box": [100, 200, 300, 120], "what": ["표"], "box_delay": 0, "box_dur": 2.5}, None),
+    ({"say": "허브 화면의 홈입니다.", "voice_at": 1}, None)])
+def test_a_value_on_a_caption_that_cannot_be_used_stops_the_build(tmp_path, capsys, opts, says):
+    import copy
+    build = _build()
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"]["00-home"][0]["beats"]["ko"][0].update(opts)
+    found = build.narration_problems(spec, "ko")
+    if says is None:
+        assert found == []
+        return
+    assert len(found) == 1 and found[0].startswith(CAPTION) and says in found[0], found
+    _voice_refused(build, spec, tmp_path)
+    assert says in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+@pytest.mark.parametrize("voice_at, says", [
+    (0.1, "lies before its caption's start at 0.16 s"),            # the caption starts 0.16 s into 00-home.2
+    (4.2, "lies beyond its piece (4.07 s long)"),                   # 00-home.2 is (19.8 - 14.71) / 1.25 s long
+    (0.16, None), (4.0, None)])
+def test_a_voice_start_outside_its_piece_or_before_its_caption_stops_the_build(tmp_path, monkeypatch, capsys, take_45s,
+                                                                              voice_at, says):
+    # a voice never starts before its caption, and starts inside its piece; checked once the pieces are split
+    build, spec, out, calls = _voiced_setup(tmp_path, monkeypatch, take_45s)
+    spec["clips"]["00-home"][0]["beats"]["ko"][1]["voice_at"] = voice_at
+    if says is None:
+        build.run_voice(spec, "ko", out, check_only=True)
+        assert json.loads((out / "reels" / "hosting-hub-main-ko-voice.json").read_text())["segments"][2]["voice_at"] \
+            == voice_at
+        return
+    with pytest.raises(SystemExit) as stop:
+        build.run_voice(spec, "ko", out, check_only=True)
+    err = capsys.readouterr().err
+    assert stop.value.code == 2 and "00-home.2: '흐름 1은 허브가 심사하는 길입니다': \"voice_at\"" in err and says in err
+    assert not (out / "scripts").exists() and calls() == []
 
 
 # ------------------------------------------------------------------ the recording: record.sh, the user's shell, storyboards
