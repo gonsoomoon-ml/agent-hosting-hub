@@ -10,7 +10,7 @@
 make ui                                   # http://127.0.0.1:8300 , Ctrl+C로 멈춘다
 ```
 
-- 리전과 접두어는 다른 명령과 같다. `make ui`는 `make`의 규칙으로 `.env`도 읽는다([README의 `.env`](../../README.md#env)). `python -m platform_team.hub_ui`로 직접 띄우면 셸의 `AWS_REGION`, `DEMO_PREFIX`(없으면 `us-west-2`, `hub`)를 쓰고 `.env`는 읽지 않는다.
+- 리전과 접두어는 다른 명령과 같다. `make ui`는 `make`의 규칙으로 `.env`도 읽는다([시작하기의 `.env`](../../docs/getting-started.md#env)). `python -m platform_team.hub_ui`로 직접 띄우면 셸의 `AWS_REGION`, `DEMO_PREFIX`(없으면 `us-west-2`, `hub`)를 쓰고 `.env`는 읽지 않는다.
 - 자격 증명은 띄운 셸의 것이다. 화면의 모든 읽기와 버튼이 그 자격 증명으로 돈다. 그 자격 증명이 할 수 있는 것은 화면도 할 수 있다.
 - `HUB_UI_PORT`: 포트(기본 8300). 주소는 언제나 `127.0.0.1`이다. 코드에 고정되어 있어 바꾸는 설정이 없다.
 - `HUB_UI_LANG`: 고르지 않은 페이지의 언어, `ko`(기본) 또는 `en`. 머리줄의 `한 | EN`으로 바꾸면 쿠키 `hub_lang`에 남는다. 밝게, 어둡게, 자동(OS를 따른다)은 쿠키 `hub_theme`에 남는다.

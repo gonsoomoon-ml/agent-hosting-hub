@@ -49,7 +49,7 @@ platform_team/custom_guardrail/guardrail.sh status   # 붙었는지, policy engi
 platform_team/custom_guardrail/guardrail.sh detach   # 뗀다
 ```
 
-어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([README의 `.env`](../../README.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍는다. 플랫폼팀의 자격 증명으로 돈다.
+어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([시작하기의 `.env`](../../docs/getting-started.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍는다. 플랫폼팀의 자격 증명으로 돈다.
 
 - `attach`: `UpdateGateway`는 게이트웨이의 설정 전체를 바꾼다. 주지 않은 선택 필드는 초기화된다(서비스 모델의 `UpdateGateway` 설명, botocore 1.44.9). 여기서 이것을 본 것은 interceptor 필드 하나다(아래 "확인한 것과 하지 않은 것"의 `detach`). 다른 필드가 초기화되는 것은 확인하지 않았다. 그래서 먼저 `GetGateway`로 게이트웨이를 읽고, `UpdateGateway`가 받는 설정(이름, 설명, 역할, 인증 방식과 그 설정, protocol과 그 설정, KMS 키, custom transform, policy engine, exception level, WAF, domain)을 읽은 그대로 다시 넘기며 interceptor만 더한다. 다른 interceptor가 있으면 그것도 그대로 둔다. interceptor는 요청(`REQUEST`)과 답(`RESPONSE`) 두 지점에 걸고, 요청의 헤더는 넘기지 않는다(`passRequestHeaders: false`). 그다음 게이트웨이가 `READY`가 되고 바뀐 것이 보일 때까지 300초까지 기다리고, policy engine의 설정과 target의 이름들이 앞과 같은지 본다. 다르면 오류로 끝난다(되돌리지는 않는다). target의 이름은 고치기 직전과 기다린 뒤에 읽으므로, 그 몇 초 사이에 심사의 Entry가 target을 더하거나 반려가 target을 지우면, 고치기가 아무것도 빼지 않았어도 `the agent gateway <이름> changed in the update`로 실패한다(`detach`도 같다). 그때 고치기는 이미 된 것이다. `status`로 target을 보고, 같은 명령을 다시 돌려도 된다. 이미 붙어 있으면(`detach`면 이미 떼어져 있으면) 아무것도 바꾸지 않는다. 코드가 그렇게 하고, 이 겹침은 해 보지 않았다.
 - `detach`: 같은 방법으로 이 interceptor만 뺀다. 붙어 있지 않거나, 허브가 올라와 있지 않거나, 게이트웨이가 없으면 아무것도 하지 않고 성공한다.

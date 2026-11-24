@@ -168,7 +168,7 @@ platform_team/hosting_review/reject.sh <에이전트> "<사유>"
 platform_team/hosting_review/reject.sh quality_agent "jinja2 2.11.2 has published advisories"
 ```
 
-어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([README의 `.env`](../../README.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍고, 지운 것을 한 줄에 하나씩 찍는다. 실패하면 무엇이 실패했는지 한 줄로 찍고 0이 아닌 값으로 끝난다. 플랫폼팀의 자격 증명으로 돈다.
+어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([시작하기의 `.env`](../../docs/getting-started.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍고, 지운 것을 한 줄에 하나씩 찍는다. 실패하면 무엇이 실패했는지 한 줄로 찍고 0이 아닌 값으로 끝난다. 플랫폼팀의 자격 증명으로 돈다.
 
 - 사유는 꼭 적는다(255자까지). 팀은 record에서 사유를 읽고, 고친 것을 다시 제출한다. 다시 제출하면 심사가 처음부터 돈다.
 - 먼저 그 에이전트의 `entry_permit_<에이전트>`가 있는지 본다. 이 정책은 Approve만 만든다. Approve는 정책을 건 뒤에 실패하면 이번 심사에서 건 것을 지우고, 지우기가 실패하거나 Lambda가 그 사이에 끊길 때만 남긴다(위의 "심사가 실패했을 때"). 그래서 있으면 보통 이전 버전이 승인돼 돌고 있다. 반려는 정책만 볼 뿐 record가 승인된 적이 있는지는 모른다. 새 버전도 같은 이름의 역할, Runtime, target, 정책을 쓰므로, 이때는 record만 `REJECTED`로 바꾸고(이미 `REJECTED`면 상태와 사유를 그대로 둔다) 아무것도 지우지 않는다. 지운 것 대신 `entry_permit_<에이전트> is there: an approved version is running, or an approval that stopped left it; nothing was removed`를 찍는다(위의 "승인된 에이전트의 새 버전").

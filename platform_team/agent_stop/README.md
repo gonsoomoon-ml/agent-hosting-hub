@@ -13,7 +13,7 @@ platform_team/agent_stop/stop.sh <에이전트> [--session <세션 ID> ...]   # 
 platform_team/agent_stop/resume.sh <에이전트>                         # 다시 연다
 ```
 
-어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([README의 `.env`](../../README.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍는다. 플랫폼팀의 자격 증명으로 돈다. 인자가 맞지 않으면 사용법을 찍고 아무것도 바꾸지 않는다. 실패하면 이유를 한 줄로 찍고(계정 ID는 `<ACCOUNT>`로 가린다) 0이 아닌 값으로 끝난다.
+어느 폴더에서 불러도 된다. 허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다([시작하기의 `.env`](../../docs/getting-started.md#env)). 첫 줄에 어느 허브인지(접두어, 리전) 찍는다. 플랫폼팀의 자격 증명으로 돈다. 인자가 맞지 않으면 사용법을 찍고 아무것도 바꾸지 않는다. 실패하면 이유를 한 줄로 찍고(계정 ID는 `<ACCOUNT>`로 가린다) 0이 아닌 값으로 끝난다.
 
 이 문서가 적는 두 명령의 동작은 코드와 단위 시험(`tests/test_agent_stop.py`, `tests/test_aws_calls.py`)이 정한 것이다. AWS에서 본 것으로 적은 것은 2026-11-22의 확인 시험(`e2e_checks/spikes/spike_operations.py`, 두 번)이 같은 정책 문장과 같은 호출로 본 것과, 같은 날 운영 확인(`make e2e-ops`)이 두 명령을 돌려 본 것이다([확인 시험](../../e2e_checks/spikes/README.md), 아래 "운영 확인에서 본 것"). 하나만 다르다. 아래 "한계"의 첫 항목은 이 허브를 만들기 전 2026-11-21의 확인 실행(따로 만든 에이전트, 다른 정책 문장)에서 본 것이고, 그 실행의 코드는 이 리포에 없다.
 
@@ -72,7 +72,7 @@ Runtime의 ARN은 SSM `/<prefix>/agents/<에이전트>/runtime_arn`에서 읽는
 2026-11-22에 `us-west-2`, 접두어 `hub`의 허브에서 `make e2e-ops`(`e2e_checks/e2e_operations.py`)가 두 명령을 돌렸다. 사고 버전(`v2-loop`)의 `quality_agent`에게 사건 질문을 세션 ID 헤더와 함께 보내고, 도구 호출 알람의 알림이 온 뒤에 멈췄다.
 
 - `stop.sh quality_agent`는 20초 걸렸다. 정책 `stop_agent_quality_agent`를 만들어 `ACTIVE`를 기다리고, 지난 30분의 stream에서 세션 여덟을 찾았다. 사고의 세션(헤더로 보낸 ID)도 그 안에 있었으므로 `--session`은 필요 없었다. 사고의 세션과 그 전에 연 세션 하나에는 오류가 오지 않았고, 나머지 여섯은 이미 끝난 세션이었다(위의 "세션을 어디서 찾나").
-- 명령이 끝난 뒤 사용자의 호출은 403이었고 본문이 `stop_agent_quality_agent`를 담았다. 확인은 30초까지 다시 부르며 403을 기다렸고, 몇 번째 호출에서 403이 왔는지는 찍지 않았다. 되풀이가 찍는 `asking again` 줄은 명령이 끝나고 8초 뒤가 마지막이었고, 그 뒤 3분 동안 새 줄이 없었다(그때의 확인은 줄의 번호로 이것을 정했다. 지금의 확인은 줄마다 제 시간으로 정한다. [README의 "`make e2e-ops`가 확인하는 것"](../../README.md#make-e2e-ops가-확인하는-것)). 이웃(`release_review`, `docs_adk`는 에이전트 게이트웨이로, harness `spec_assistant`는 `InvokeHarness`로)은 그동안 답했다.
+- 명령이 끝난 뒤 사용자의 호출은 403이었고 본문이 `stop_agent_quality_agent`를 담았다. 확인은 30초까지 다시 부르며 403을 기다렸고, 몇 번째 호출에서 403이 왔는지는 찍지 않았다. 되풀이가 찍는 `asking again` 줄은 명령이 끝나고 8초 뒤가 마지막이었고, 그 뒤 3분 동안 새 줄이 없었다(그때의 확인은 줄의 번호로 이것을 정했다. 지금의 확인은 줄마다 제 시간으로 정한다. [확인한 것의 "`make e2e-ops`가 확인하는 것"](../../docs/checks.md#make-e2e-ops가-확인하는-것)). 이웃(`release_review`, `docs_adk`는 에이전트 게이트웨이로, harness `spec_assistant`는 `InvokeHarness`로)은 그동안 답했다.
 - 멈춘 채로 고친 버전(변형 없음)을 제출하자 심사가 `SUCCEEDED`였다(298초). 시험 호출의 보통 질문이 200이었으므로 멈춤 정책의 예외가 심사의 시험 호출을 지나게 했다. 승인된 뒤에도 사용자의 호출은 403이었다. 멈춤 정책은 `resume.sh`까지 남았다.
 - `resume.sh quality_agent`는 8초 걸렸고 `stop_agent_quality_agent`를 지웠다. 그 뒤 첫 호출부터(5초) 200이었고 두 도구를 썼다.
 - 같은 허브에서 다시 돌린 두 번째 실행(멈춤의 코드를 고친 뒤)에서도 같았다. `stop.sh`는 17초에 0으로 끝났고, 사고의 세션을 끝냈다. 되풀이의 마지막 줄은 명령이 끝나고 8초 뒤였고 그 뒤 3분 동안 새 줄이 없었다.
