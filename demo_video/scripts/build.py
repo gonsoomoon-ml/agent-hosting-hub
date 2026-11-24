@@ -165,8 +165,9 @@ SPEC = {
                 beat("shot:ask5", "Claude Code는 셸 명령을 실행하기 전에 개발자에게 묻습니다", dur=3.5, pos="top",
                      say="이렇게 Claude Code는 미리 허락되지 않은 셸 명령을 돌리기 전에 묻습니다. 이번 명령은 폴더를 만들고 "
                          "템플릿을 복사해 파일을 쓰는 긴 명령입니다.",
-                     # the dialog stands still from 72.56 (the camera) until the No closes it after 75.76
-                     box=[7, 834, 553, 224], what=["실행해도 되는지 묻는 창"], box_delay=1.04, box_dur=2.5)]),
+                     # from the stop of the camera's move to shot ask5 (71.27 + 1.4 = 72.67) until the No closes the
+                     # dialog after 75.76: the box shows 72.67-75.68 of the take
+                     box=[7, 834, 553, 224], what=["실행해도 되는지 묻는 창"], box_delay=1.12, box_dur=2.41)]),
             # work5 79.6: the No and its sentence; then the files are written
             piece("11-find", 79.4, 107.0, WAIT, ko=[
                 beat("shot:work5", "개발자는 No로 답하고 실행 없이 파일만 만들게 합니다",

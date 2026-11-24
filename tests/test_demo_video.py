@@ -1191,8 +1191,23 @@ def test_every_box_lies_in_the_frame_clear_of_its_caption_and_shows_long_enough_
             assert x >= 0 and y >= 0 and x + w <= 1920 and y + h <= 1080, (name, rect)
             assert min(w, h) > 2 * (BORDER + AIR), (name, rect)                    # room for the thing inside
             assert y + h + OUTLINE <= top or y - OUTLINE >= bottom, (name, rect, b.get("pos", "bottom"))
-        # a box ended before a camera move shows at least 2.5 s, or a viewer cannot find it
-        assert b.get("box_dur", 2.5) >= 2.5, (name, b["box_dur"])
+        # a box ended before a camera move shows at least 2.5 s, or a viewer cannot find it; 12-make.2's dialog
+        # shows only 2.46 s after the camera stops, and its box fills that room (the next test)
+        assert b.get("box_dur", 2.5) >= (2.41 if name == "12-make.2" else 2.5), (name, b["box_dur"])
+
+
+def test_the_box_on_claude_codes_question_shows_from_the_cameras_stop_until_before_the_dialog_closes():
+    # 12-make.2: the shot ask5 is at 71.27 s of the take (camlog of 11-find) and the plugin's camera check counts the
+    # move to it until 71.27 + 1.4 = 72.67 s; the No closes the dialog after 75.76 s (seen on the frames: the dialog
+    # is on the clip's frame at 75.75 s of the take and closed at 75.79 s)
+    build = _build()
+    [(part, b)] = [(part, b) for take, pieces in build.SPEC["clips"].items()
+                   for name, part in zip(build.piece_names(take, pieces), pieces) for b in part["beats"]["ko"]
+                   if name == "12-make.2" and "box" in b]
+    assert (b["box_delay"], b["box_dur"]) == (1.12, 2.41)
+    begins = build.caption_start(b, part, [{"t": 71.27, "kind": "shot", "key": "ask5"}]) + b["box_delay"]
+    shows = (part["start"] + begins * part["speed"], part["start"] + (begins + b["box_dur"]) * part["speed"])
+    assert shows[0] >= 71.27 + build.CAMERA_MOVE - 1e-6 and shows[1] < 75.76, shows
 
 
 # A stand-in for the plugin's scripts (edit_demo.py, make_cards.py, check_demo.py): each call is noted in calls.jsonl
