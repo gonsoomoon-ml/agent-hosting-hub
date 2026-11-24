@@ -18,14 +18,14 @@ The concept picture draws the two flows as boxes and numbered arrows. Flow 1 (ho
 
 ![A frame of the hub's demo video: release_review's hosting review passing the seven steps](demo_video/poster.png)
 
-A video that demonstrates the hub was recorded on 2026-11-23. There is a full reel (10 minutes 50 seconds) and five reels, one per stage (55 seconds to 3 minutes 31 seconds), and the picture above is one frame of the full reel.
+A video that demonstrates the hub was recorded on 2026-11-23. There is a full video (10 minutes 50 seconds) and five videos, one per stage (55 seconds to 3 minutes 31 seconds), and the picture above is one frame of the full reel.
 
 - Preparation: the hub screen's home.
 - Stage 1: Claude Code on the developer PC finds the shared tools in the catalog's MCP server and makes the files of `quality_agent` from the standard template (it does not run or upload them), and the developer applies for `release_review` and the vulnerable version of `quality_agent`.
-- Stage 2: the hosting reviews of the two applications run by themselves, so that `quality_agent` stops at Scan and `release_review` passes the seven steps, is approved and answers, and the platform team writes a reason and rejects, and the fixed version is approved.
+- Stage 2: the hosting reviews of the two applications run automatically, so that `quality_agent` stops at Scan and `release_review` passes the seven steps, is approved and answers, and the platform team writes a reason and rejects, and the fixed version is approved.
 - Stage 3: the company policy `guard_prompt` is set in log-only mode, and a request that holds an instruction to the agent is not blocked and is counted once in the tally.
 - Stage 4: when the mode is raised to enforce, the same request gets 403 from both `release_review` and `docs_adk`, and it shows how a request with a code name and an answer with an employee ID differ before and after the custom guardrail is attached.
-- Stage 5: a version that repeats passes the review but does not answer, and the tool-call alarm goes off; only that one agent is stopped and its neighbors answer. Claude Code reads the logs and the code and points to the cause, the fixed version is approved while still stopped, and after it is resumed it answers again.
+- Stage 5: a version that repeats its tool call passes the review but does not answer, and the tool-call alarm goes off; only that one agent is stopped and its neighbors answer. Claude Code reads the logs and the code and points to the cause, the fixed version is approved while still stopped, and after it is resumed it answers again.
 
 The video file is not in this repository. The sources of the video are in `demo_video/`: the storyboard of each scene, the editing script that holds every caption (`demo_video/scripts/build.py`), and the developer PC (`demo_video/tools/dev_pc`). Which stage was recorded how many times and what was cut is in [`demo_video/README.md`](demo_video/README.md). The hub the video was recorded on was deleted afterwards. Putting the hub up and checking it (`make deploy`, `make e2e`, `make e2e-ops`) needs neither this folder nor `demo_scenes/`.
 
@@ -35,9 +35,9 @@ You need Terraform 1.9 or later, Python 3.12 or later with uv, AWS credentials, 
 
 ```bash
 cp .env.example .env   # the hub's three values: region, prefix, model
-make deploy            # puts up the hub's frame; about 4 minutes in an empty account
+make deploy            # deploys the hub's base resources; about 4 minutes in an empty account
 make seed              # puts the shared tool record into the catalog and approves it; 6 seconds
-make preload           # puts up the two agents that are there from the start; about 11 minutes
+make preload           # puts up the two preloaded agents; about 11 minutes
 make ui                # starts the hub screen (sample) on this PC: http://127.0.0.1:8300
 make destroy           # deletes everything the hub made; 9 to 18 minutes, by the number of agents
 ```
@@ -55,9 +55,9 @@ agent-hosting-hub/
 ├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy and more ("Seven commands" below)
 ├── .env.example          # the hub's three values: region, prefix, model
 │
-├── platform_team/        # platform team: the hub's frame and the operations commands; one folder per feature
+├── platform_team/        # platform team: the hub's base resources and the operations commands; one folder per feature
 │   ├── terraform/        #   root module: brings the feature folders' terraform/ together in one apply
-│   ├── shared_code/      #   code several features share (settings, AWS calls, the code bundle)
+│   ├── shared_code/      #   code several features share (settings, AWS calls, the code package)
 │   ├── agent_catalog/    #   catalog (AWS Agent Registry): applying, searching, registering shared tools
 │   ├── hosting_review/   #   hosting review (Step Functions, Lambda, CodeBuild) and rejection
 │   ├── agent_gateway/    #   agent gateway and the command that calls an agent
@@ -74,7 +74,7 @@ agent-hosting-hub/
 │   ├── agent_template/   #   standard template and the upload command (publish.sh)
 │   ├── release_review/   #   example agent (LangGraph)
 │   ├── quality_agent/    #   example agent (Strands); variants/ holds two versions made for the demo
-│   └── preloaded_agents/ #   two agents that are there from the start (docs_adk, spec_assistant)
+│   └── preloaded_agents/ #   the two preloaded agents (docs_adk, spec_assistant)
 │
 ├── docs/                 # the two pictures and the detailed pages ("Read more" below; in Korean)
 ├── e2e_checks/           # check scripts that run on real AWS; spikes/ is a record of checked assumptions
@@ -89,7 +89,7 @@ These pages are in Korean.
 
 | Document | Contents |
 |---|---|
-| [Getting started](docs/getting-started.md) | Requirements, `.env`, the seven commands and how long they took, the two agents that are there from the start |
+| [Getting started](docs/getting-started.md) | Requirements, `.env`, the seven commands and how long they took, the two preloaded agents |
 | [Commands](docs/commands.md) | The operations commands, the hub screen (sample), the commands typed in the video |
 | [What was checked](docs/checks.md) | What `make e2e` and `make e2e-ops` check, the dates of the runs and what was seen |
 | [Cost and cleanup](docs/cost-and-cleanup.md) | The resources that cost money, what `make destroy` deletes and what it leaves |
