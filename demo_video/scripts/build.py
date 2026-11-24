@@ -15,11 +15,12 @@ the video plugin's rules for captions (references/script.md of the plugin):
   - a caption is anchored to a shot or a note of its take's camlog, never to raw seconds;
   - a stage carries no more captions than its budget (BUDGET);
   - a reel names only takes and cards defined here.
-A text that breaks a rule stops the build (exit 2) with one line per text. Without --check the build then measures the
-takes and reads their camlogs: a piece whose window does not start before it ends or ends beyond its take, a caption
-whose anchor the camlog does not hold or that falls outside its piece (or less than ROOM seconds of the finished piece
-before its end), and a caption whose "dur" runs into the next caption stop the build the same way before anything is
-cut. Then it runs the plugin's
+A text that breaks a rule stops the build (exit 2) with one line per text, and so does a key of a caption or a card
+that neither build reads (CAPTION_KEYS, CARD_KEYS: a misspelled key would otherwise be dropped without a word).
+Without --check the build then measures the takes and reads their camlogs: a piece whose window does not start before
+it ends or ends beyond its take, a caption whose anchor the camlog does not hold or that falls outside its piece (or
+less than ROOM seconds of the finished piece before its end), and a caption whose "dur" runs into the next caption stop
+the build the same way before anything is cut. Then it runs the plugin's
 edit_demo.py (clip, reel) and make_cards.py, found through DEMO_VIDEO_PLUGIN (the plugin's scripts folder), with the
 Python that runs this file (make_cards.py needs Pillow). In a reel the pieces of one take are joined with hard cuts;
 the edges between takes and cards fade (0.4 s). Everything is written under demo_video/out/ (git-ignored):
@@ -31,7 +32,8 @@ narration's fields. A caption may carry "say" (its narration), "box" (highlight 
 READINGS gives the spoken form of an on-screen name, so that the synthesizer gets Hangul only. Before anything is
 written, each narration is checked: sentences in the 합니다 style (each ends in 니다.), none of the three characters a
 caption may not hold, no Latin letter or digit left once READINGS is applied, on a piece or card that a reel uses; so
-are a caption's values: a "what" for each box, "box_delay", "box_dur" and "what" only beside a box, numbers of seconds.
+are a caption's values: a "what" for each box, "box_delay", "box_dur" and "what" only beside a box, numbers of seconds,
+and a box given as numbers, [x, y, w, h], inside the 1920x1080 frame (FRAME).
 Then every piece with several captions is split, one caption per piece (a later caption's piece starts SPLIT_LEAD
 seconds of the take before its anchor), each caption must still sit in its own piece, and a "voice_at" must lie in its
 piece, not before its caption. A narrated caption is held to its piece's last frame (its boxes too, unless "box_dur"
@@ -46,7 +48,10 @@ build's pictures (cards/<lang>/<name>.png), made only when one is missing (from 
 voice step calls Amazon Polly through the AWS CLI, in the region of the environment. edit_demo.py clip, make_cards.py,
 edit_demo.py voice, then per reel edit_demo.py reel and check_demo.py audit, boxes and sheet are run in that order (a
 box the clip step refuses stops the build before anything is synthesized); the reel and the audit get the thresholds
-VOICE_GAP, VOICE_TAIL, LOUDNESS and VOICE_TOLERANCE, and a failed audit stops the build.
+VOICE_GAP, VOICE_TAIL, LOUDNESS and VOICE_TOLERANCE, and a failed audit stops the build. Any other of these steps that
+fails stops it too (exit 2): the plugin's own lines say why, and one line of the build names the step and its piece,
+cards or reel. The narrated build needs demo-video 1.4.0 or later (edit_demo.py voice, voices and pictures in a reel,
+check_demo.py).
 """
 from __future__ import annotations
 
@@ -77,16 +82,20 @@ VOICE_DELAY = 0.3                                       # seconds a narration st
 SPLIT_LEAD = 0.2                                        # seconds of the take a split piece starts before its caption
 SILENT_FIELDS = ("at", "text", "offset", "dur", "pos")  # what a caption passes on to the silent build
 VOICED_FIELDS = SILENT_FIELDS + ("box", "box_delay", "box_dur")  # and to the voiced build (it holds a narrated caption)
+CAPTION_KEYS = VOICED_FIELDS + ("what", "say", "voice_at", "ends_early")      # every key of a caption the builds read
+CARD_KEYS = ("seconds", "kicker", "title", "rows", "accent", "where", "say")  # every key of a card the builds read
 VOICES = {"ko": ["--voice", "Seoyeon", "--engine", "generative", "--language", "ko-KR"]}     # Amazon Polly
 # the narrated reels' thresholds, given to the plugin: its reel takes the first three, its audit the last two
 VOICE_GAP = 0.6                                         # seconds of silence at least between two voices
 VOICE_TAIL = 1.0                                        # seconds a reel runs on after its last voice
 LOUDNESS = -16.0                                        # integrated loudness of the voices, LUFS
 VOICE_TOLERANCE = 0.25                                  # seconds a voice may be heard early or late at either end
-# the plugin's clip step, as the voiced build needs it to know where a caption ended in the silent video and when its
-# box shows: a caption shows CAPTION_LEAST seconds at least; a box anchored to a shot waits for the camera
+# the plugin's clip step, as the voiced build needs it to know where a caption ended in the silent video, when its box
+# shows and where a box may lie: a caption shows CAPTION_LEAST seconds at least; a box anchored to a shot waits for the
+# camera; a box given as numbers lies inside the frame
 CAPTION_LEAST = 1.5                                     # seconds of the finished piece
 CAMERA_MOVE = 1.4                                       # seconds of the take the camera takes to arrive on a shot
+FRAME = (1920, 1080)                                    # the frame's width and height in pixels, every take's
 
 
 def piece(raw: str, start: float, end: float, speed: float = DEFAULT_SPEED, ko: list | tuple = ()) -> dict:
@@ -656,12 +665,20 @@ def card_texts(card: dict) -> list[str]:
     return [card["kicker"], card["title"], *card.get("rows", []), *([card["where"]] if "where" in card else [])]
 
 
+def key_problems(item: dict, known: tuple[str, ...], kind: str) -> list[str]:
+    """Each key of a caption or a card that neither build reads, one line each: a misspelled "ends_early" or
+    "box_dur", or a "box" on a card, would otherwise be dropped without a word."""
+    return [f"the key {k!r} is not one the build knows ({kind}'s keys: {', '.join(known)})"
+            for k in item if k not in known]
+
+
 def problems(spec: dict, lang: str) -> list[str]:
     found = []
     if lang not in spec["cards"]:
         return [f"no texts in the language {lang!r} (there are: {', '.join(sorted(spec['cards']))})"]
     cards = spec["cards"][lang]
     for name, card in cards.items():
+        found += [f"{name}: {p}" for p in key_problems(card, CARD_KEYS, "a card")]
         checks = [(card["kicker"], False), (card["title"], "where" in card), *((r, True) for r in card.get("rows", [])),
                   *([(card["where"], False)] if "where" in card else [])]
         for text, sentence in checks:
@@ -672,6 +689,7 @@ def problems(spec: dict, lang: str) -> list[str]:
             beats = part["beats"].get(lang, [])
             per_stage[stage(take)] += len(beats)
             for b in beats:
+                found += [f"{name}: {b['text']!r}: {p}" for p in key_problems(b, CAPTION_KEYS, "a caption")]
                 if not isinstance(b["at"], str):
                     found.append(f"{name}: {b['text']!r} is anchored to raw seconds ({b['at']}), not to a shot or a note")
                 found += [f"{name}: {b['text']!r} {p}" for p in text_problems(b["text"], True)]
@@ -723,18 +741,35 @@ def say_problems(say, lang: str) -> list[str]:
     return found
 
 
-def is_seconds(value) -> bool:
-    """A number of seconds as a beat may give it (not a text, not true or false)."""
+def is_number(value) -> bool:
+    """A finite number as a beat may give it, of seconds or of pixels (not a text, not true or false)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def frame_problems(box) -> list[str]:
+    """A box given as numbers, [x, y, w, h] or a list of them, is four numbers with a size that lie inside FRAME, each
+    rounded to a pixel first (the rule of the plugin's clip step, which finds it only once the script files are written
+    and the clips before it are cut). A box from the camlog ('shot:<key>', 'mark:<key>') is left to the clip step."""
+    if not isinstance(box, (list, tuple)) or not box:
+        return []
+    found = []
+    for rect in box if isinstance(box[0], (list, tuple)) else [box]:
+        if not (isinstance(rect, (list, tuple)) and len(rect) == 4 and all(is_number(v) for v in rect)):
+            found.append(f"the box {rect!r} needs four numbers [x, y, w, h]")
+            continue
+        x, y, w, h = (round(v) for v in rect)
+        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > FRAME[0] or y + h > FRAME[1]:
+            found.append(f"the box {list(rect)} has no size or lies outside the {FRAME[0]}x{FRAME[1]} frame")
+    return found
 
 
 def value_problems(b: dict) -> list[str]:
     """A caption's own values for the voiced build: "voice_at" a number; "ends_early" true or false, and true only on
     a narrated caption with "dur"; "box_delay" a number of 0 or more and "box_dur" a number above 0, each only beside
-    a box (where the voice starts in its piece is checked once the pieces are split, see voiced_problems; where an
-    early end falls, see early_end_problems)."""
+    a box; a box given as numbers inside the frame (frame_problems). Where the voice starts in its piece is checked
+    once the pieces are split, see voiced_problems; where an early end falls, see early_end_problems."""
     found = []
-    if "voice_at" in b and not is_seconds(b["voice_at"]):
+    if "voice_at" in b and not is_number(b["voice_at"]):
         found.append(f'"voice_at" must be a number of seconds (it is {b["voice_at"]!r})')
     if "ends_early" in b and not isinstance(b["ends_early"], bool):
         found.append(f'"ends_early" must be true or false (it is {b["ends_early"]!r})')
@@ -746,9 +781,10 @@ def value_problems(b: dict) -> list[str]:
         if field in b and not box_count(b.get("box")):
             found.append(f'"{field}" on a caption without a box')
     if box_count(b.get("box")):
-        if "box_delay" in b and not (is_seconds(b["box_delay"]) and b["box_delay"] >= 0):
+        found += frame_problems(b["box"])
+        if "box_delay" in b and not (is_number(b["box_delay"]) and b["box_delay"] >= 0):
             found.append(f'"box_delay" must be a number of seconds, 0 or more (it is {b["box_delay"]!r})')
-        if "box_dur" in b and not (is_seconds(b["box_dur"]) and b["box_dur"] > 0):
+        if "box_dur" in b and not (is_number(b["box_dur"]) and b["box_dur"] > 0):
             found.append(f'"box_dur" must be a number of seconds above 0 (it is {b["box_dur"]!r})')
     return found
 
@@ -1061,7 +1097,7 @@ def voiced_problems(spec: dict, lang: str, logs: dict[str, list]) -> list[str]:
     found = []
     for name, part in _pieces(spec):
         for b in part["beats"].get(lang, []):
-            if "voice_at" not in b or not is_seconds(b["voice_at"]):
+            if "voice_at" not in b or not is_number(b["voice_at"]):
                 continue                                           # a value that is no number: value_problems
             at, begins = b["voice_at"], round(caption_start(b, part, logs[part["raw"]]), 3)
             length = (part["end"] - part["start"]) / part["speed"]
@@ -1169,10 +1205,11 @@ def run_voice(spec: dict, lang: str = "ko", out: Path = OUT, check_only: bool = 
         _stop(found, "caption(s) do not sit in their pieces; nothing was written")
     logs = {r: json.loads((out / "raw" / f"{r}.camlog.json").read_text())["log"]
             for r in sorted({p["raw"] for t in used for p in spec["clips"][t]})}
-    found = early_end_problems({**spec, "clips": {t: spec["clips"][t] for t in used}}, lang, logs)
+    in_reels = {**spec, "clips": {t: pieces for t, pieces in spec["clips"].items() if t in used}}  # the spec's order
+    found = early_end_problems(in_reels, lang, logs)
     if found:
         _stop(found, "caption(s) cannot end early as asked; nothing was written")
-    v = voiced({**spec, "clips": {t: pieces for t, pieces in spec["clips"].items() if t in used}}, lang, logs)
+    v = voiced(in_reels, lang, logs)
     found = window_problems(v, lang, out / "raw", used)
     if found:
         _stop(found, "caption(s) do not sit in their own pieces once split (one caption per piece); nothing was written")
@@ -1211,16 +1248,16 @@ def _clips_cards_and_voices(plugin: Path, v: dict, lang: str, out: Path) -> None
     anything is synthesized."""
     voice, py = out / "voice" / lang, sys.executable
     for name, part in _pieces(v):
-        subprocess.run(clip_command(plugin, name, part, lang, out, folder=f"{lang}-voice"), check=True)
+        _step(clip_command(plugin, name, part, lang, out, folder=f"{lang}-voice"), f"the piece {name}")
     cards, used = v["cards"][lang], used_names(v)
     missing = [n for n in cards if n in used and not (out / "cards" / lang / f"{n}.png").exists()]
     if missing:
         write(voice / "cards.json", {n: {"seconds": cards[n]["seconds"], "lines": card_lines(cards[n])}
                                      for n in missing})
-        subprocess.run([py, str(plugin / "make_cards.py"), str(voice / "cards.json"),
-                        "--out", str(out / "cards" / lang)], check=True)
-    subprocess.run([py, str(plugin / "edit_demo.py"), "voice", str(voice / "lines.json"), "--out", str(voice),
-                    "--readings", str(voice / "readings.json"), "--hangul-only", *VOICES[lang]], check=True)
+        _step([py, str(plugin / "make_cards.py"), str(voice / "cards.json"), "--out", str(out / "cards" / lang)],
+              f"the card(s) {', '.join(missing)}")
+    _step([py, str(plugin / "edit_demo.py"), "voice", str(voice / "lines.json"), "--out", str(voice),
+           "--readings", str(voice / "readings.json"), "--hangul-only", *VOICES[lang]], "the narrations")
 
 
 def _reel_and_checks(plugin: Path, v: dict, reel: str, lang: str, out: Path) -> None:
@@ -1228,7 +1265,7 @@ def _reel_and_checks(plugin: Path, v: dict, reel: str, lang: str, out: Path) -> 
     boxes of each of its pieces that has one, and its review page."""
     py, check, report = sys.executable, str(plugin / "check_demo.py"), _report(out, reel, lang)
     manifest, mp4, plan = (out / "reels" / f"{reel_file(reel, lang)}-voice{ext}" for ext in (".json", ".mp4", ".voice.json"))
-    subprocess.run([py, str(plugin / "edit_demo.py"), "reel", str(manifest), "--out", str(mp4)], check=True, cwd=out)
+    _step([py, str(plugin / "edit_demo.py"), "reel", str(manifest), "--out", str(mp4)], f"the reel {reel}", cwd=out)
     (report / "audit.json").unlink(missing_ok=True)               # an audit that ends without a report shows no old one
     done = subprocess.run([py, check, "audit", str(mp4), "--plan", str(plan), f"--tolerance={VOICE_TOLERANCE}",
                            f"--loudness={LOUDNESS}", "--out", str(report / "audit.json")])
@@ -1239,13 +1276,24 @@ def _reel_and_checks(plugin: Path, v: dict, reel: str, lang: str, out: Path) -> 
              for name, part in zip(piece_names(take, v["clips"][take]), v["clips"][take])
              if any(box_count(b.get("box")) for b in part["beats"].get(lang, []))]
     for name, part in boxed:
-        subprocess.run([py, check, "boxes", str(out / "scripts" / f"{lang}-voice" / f"{name}.json"), "--raw",
-                        str(out / "raw" / f"{part['raw']}.webm"), "--out", str(report / "boxes" / f"{name}.json")],
-                       check=True)
+        _step([py, check, "boxes", str(out / "scripts" / f"{lang}-voice" / f"{name}.json"), "--raw",
+               str(out / "raw" / f"{part['raw']}.webm"), "--out", str(report / "boxes" / f"{name}.json")],
+              f"the piece {name} of the reel {reel}")
     boxes = [str(report / "boxes" / f"{name}.json") for name, _ in boxed]
-    subprocess.run([py, check, "sheet", str(mp4), "--plan", str(plan), "--texts", str(report / "texts.json"),
-                    *(["--boxes", *boxes] if boxes else []), "--out", str(report)], check=True)
+    _step([py, check, "sheet", str(mp4), "--plan", str(plan), "--texts", str(report / "texts.json"),
+           *(["--boxes", *boxes] if boxes else []), "--out", str(report)], f"the reel {reel}")
     print(f"reel {reel}: {mp4}, audit passed, review page {report / 'review.html'}")
+
+
+def _step(cmd: list[str], what: str, cwd: Path | None = None) -> None:
+    """One plugin step of the voiced build (cmd: the Python, the plugin's script and its arguments). A step that fails
+    has said why in its own lines; the build adds one naming the step and what it was run for, and stops (exit 2)."""
+    done = subprocess.run(cmd, cwd=cwd)
+    if done.returncode != 0:
+        script = Path(cmd[1]).name
+        step = script if script == "make_cards.py" else f"{script} {cmd[2]}"
+        print(f"build stopped: {step} failed for {what} (exit {done.returncode})", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def _report(out: Path, reel: str, lang: str) -> Path:
@@ -1293,9 +1341,17 @@ def _stop(found: list[str], what: str) -> None:
 
 
 def _plugin(needs: tuple[str, ...] = ("edit_demo.py", "make_cards.py")) -> Path:
+    """The plugin's scripts folder (DEMO_VIDEO_PLUGIN) with the scripts a build needs, or the build stops (exit 2). A
+    folder that lacks only check_demo.py is a plugin older than the narrated build needs (demo-video 1.4.0 adds it)."""
     import os
     folder = os.environ.get("DEMO_VIDEO_PLUGIN")
-    if not folder or not all((Path(folder) / f).is_file() for f in needs):
+    missing = [f for f in needs if not folder or not (Path(folder) / f).is_file()]
+    if missing == ["check_demo.py"]:
+        print(f"DEMO_VIDEO_PLUGIN names a demo-video plugin without check_demo.py: the narrated build needs demo-video "
+              f"1.4.0 or later (edit_demo.py voice, voices and pictures in a reel, check_demo.py): {PLUGIN_URL}",
+              file=sys.stderr)
+        raise SystemExit(2)
+    if missing:
         print(f"DEMO_VIDEO_PLUGIN must name the scripts folder of the demo-video plugin ({', '.join(needs)}): "
               f"{PLUGIN_URL}", file=sys.stderr)
         raise SystemExit(2)
