@@ -914,10 +914,24 @@ def test_cards_are_picture_segments_and_pieces_of_a_take_share_a_group():
         {"file": "clips/ko-voice/22-works.1.mp4", "group": "22-works"}]}
 
 
-def _narrate(build, say, **opts):
-    """The build's SPEC with a narration (and other beat fields) on the first caption of 00-home."""
+def _unsaid(build):
+    """The build's SPEC with every narration taken out, so that a test speaks only the narrations it writes (with the
+    readings it gives) on the reels it builds."""
     import copy
     spec = copy.deepcopy(build.SPEC)
+    for card in spec["cards"]["ko"].values():
+        card.pop("say", None)
+    for pieces in spec["clips"].values():
+        for part in pieces:
+            for b in part["beats"]["ko"]:
+                b.pop("say", None)
+    return spec
+
+
+def _narrate(build, say, **opts):
+    """The build's SPEC without its narrations, with one narration (and other beat fields) on the first caption of
+    00-home."""
+    spec = _unsaid(build)
     spec["clips"]["00-home"][0]["beats"]["ko"][0].update(say=say, **opts)
     return spec
 
@@ -946,8 +960,7 @@ def test_a_narration_with_a_latin_letter_or_digit_after_the_readings_stops_the_b
     err = capsys.readouterr().err
     assert repr(bad) in err and "'loop'" in err
     # a card's narration: the problem names the card
-    import copy
-    spec = copy.deepcopy(build.SPEC)
+    spec = _unsaid(build)
     spec["cards"]["ko"]["card-closing"]["say"] = "AgentCore가 런타임을 줍니다."
     assert build.narration_problems(spec, "ko") == [
         "card-closing: the narration 'AgentCore가 런타임을 줍니다.' still holds 'AgentCore' after the readings "
@@ -1015,6 +1028,19 @@ def test_a_narration_no_reel_plays_stops_the_build(tmp_path):
     _voice_refused(build, spec, tmp_path)
 
 
+def test_every_card_and_caption_of_the_reels_has_a_narration():
+    # the narrated reels speak over every card and every caption they show, and every narration keeps the rules
+    build = _build()
+    used = build.used_names(build.SPEC)
+    cards = build.SPEC["cards"]["ko"]
+    unsaid = [name for name, card in cards.items() if name in used and not str(card.get("say") or "").strip()]
+    unsaid += [f"{name}: {b['text']!r}" for take, pieces in build.SPEC["clips"].items() if take in used
+               for name, part in zip(build.piece_names(take, pieces), pieces)
+               for b in part["beats"]["ko"] if not str(b.get("say") or "").strip()]
+    assert unsaid == []
+    assert build.narration_problems(build.SPEC, "ko") == []
+
+
 # A stand-in for the plugin's scripts (edit_demo.py, make_cards.py, check_demo.py): each call is noted in calls.jsonl
 # beside it, and it writes small files at the paths it is given, of the shapes the build and its next step read.
 STAND_IN_PLUGIN = r'''
@@ -1059,9 +1085,8 @@ elif args[0] == "sheet":
 
 def _voiced_spec(build):
     """One take (00-home: CAMLOG, the 45 s take) whose first piece has three captions, two of them narrated and one
-    of those with a box, then a wait; a narrated card; two reels."""
-    import copy
-    spec = copy.deepcopy(build.SPEC)
+    of those with a box, then a wait; a narrated card; two reels (the build's own narrations taken out)."""
+    spec = _unsaid(build)
     spec["clips"] = {"00-home": [
         build.piece("00-home", 3.5, 41.5, ko=[
             build.beat("shot:wide", "허브 화면 한 곳에서 허브를 봅니다", say="허브 화면의 홈입니다. 여기서 모두 봅니다."),
