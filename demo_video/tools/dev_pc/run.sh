@@ -50,6 +50,17 @@ name=hub-dev-pc
 # Every 12-digit number (an account ID) masked.
 mask() { sed -E 's/(^|[^0-9])[0-9]{12}([^0-9]|$)/\1<ACCOUNT>\2/g; s/(^|[^0-9])[0-9]{12}([^0-9]|$)/\1<ACCOUNT>\2/g'; }
 
+# What a program in the container printed, as this PC's terminal shows it: its control characters dropped (tab and
+# newline kept; the 8-bit ones too), then every 12-digit number masked as mask does (after the controls, which could
+# split a number), then each line cut after 300 characters.
+shown() {
+  perl -ne 'my $u = utf8::decode($_);
+    s/[\x00-\x08\x0b-\x1f\x7f-\x9f]//g;
+    s/(?<![0-9])[0-9]{12}(?![0-9])/<ACCOUNT>/g;
+    s/^(.{300}).+/$1 [cut]/;
+    utf8::encode($_) if $u; print'
+}
+
 # An AWS call in the hub's Region; its error, if any, is printed with the account masked.
 aws_hub() {
   local err status=0
@@ -167,7 +178,7 @@ case "$1" in
       docker exec -i -u dev "$name" sh -c 'cat > /home/dev/work/.mcp.json'
     # once, so that the first command of a take prints only its own lines
     docker exec -u dev -w /home/dev/work "$name" uv sync --quiet
-    agents="$(docker exec -u dev "$name" ls /home/dev/work/dev_team | tr '\n' ' ')"
+    agents="$(docker exec -u dev "$name" ls /home/dev/work/dev_team | tr '\n' ' ' | shown)"
     echo "up: $name, the checkout in /home/dev/work (dev_team: $agents), quality_agent comes with run.sh agent quality_agent"
     ;;
 
@@ -176,21 +187,21 @@ case "$1" in
     need_route
     failed=0
     echo "== claude --version"
-    box "$name" claude --version 2>&1 | mask
+    box "$name" claude --version 2>&1 | shown
     echo "== claude -p: Claude Code answers through Amazon Bedrock"
     t0=$SECONDS
-    box "$name" claude -p "Answer with the single word: ready" 2>&1 | mask || failed=1
+    box "$name" claude -p "Answer with the single word: ready" 2>&1 | shown || failed=1
     echo "($((SECONDS - t0)) s)"
     echo "== this PC's instance metadata service is out of reach"
     if box "$name" curl -s -m 3 -o /dev/null -X PUT http://169.254.169.254/latest/api/token \
-         -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>&1 | mask; then
+         -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>&1 | shown; then
       echo "it answered"
       failed=1
     else
       echo "no answer"
     fi
     echo "== the user dev holds no capability and cannot delete the route"
-    cap="$(box "$name" grep CapEff /proc/self/status 2>&1 | mask)" || true
+    cap="$(box "$name" grep CapEff /proc/self/status 2>&1 | shown)" || true
     if [[ "$cap" =~ ^CapEff:[[:space:]]+0+$ ]]; then
       echo "$cap (the user dev holds no effective capability)"
     else
@@ -202,9 +213,9 @@ case "$1" in
       echo "the user dev deleted the route: the container is removed"
       exit 1
     fi
-    echo "the user dev cannot delete the route: $(printf '%s' "$del" | mask)"
+    echo "the user dev cannot delete the route: $(printf '%s' "$del" | shown)"
     echo "== the tools of the MCP server hub-catalog (.mcp.json)"
-    box -i "$name" /opt/uv/tools/mcp-proxy-for-aws/bin/python - <<'PY' 2>&1 | mask || failed=1
+    box -i "$name" /opt/uv/tools/mcp-proxy-for-aws/bin/python - <<'PY' 2>&1 | shown || failed=1
 import asyncio, json, os
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -222,15 +233,15 @@ async def main():
 asyncio.run(main())
 PY
     echo '== search "part specification tool" (the developer role)'
-    box "$name" search "part specification tool" 2>&1 | mask || failed=1
+    box "$name" search "part specification tool" 2>&1 | shown || failed=1
     echo "== aws sts get-caller-identity in the container's shell"
-    box "$name" aws sts get-caller-identity --query Arn --output text 2>&1 | mask || failed=1
+    box "$name" aws sts get-caller-identity --query Arn --output text 2>&1 | shown || failed=1
     echo "== aws sts get-caller-identity through Claude Code's shell tool"
     cmd="aws sts get-caller-identity --query Arn --output text"
     seen="$(box "$name" claude -p "Run this shell command and show its output: $cmd" \
-      --allowedTools "Bash($cmd)" --output-format stream-json --verbose 2> >(mask >&2) |
+      --allowedTools "Bash($cmd)" --output-format stream-json --verbose 2> >(shown >&2) |
       jq -r 'select(.type == "user") | .message.content[]? | select(.type == "tool_result")
-             | .content | if type == "array" then map(.text // "") | join("") else . end' | mask)" || failed=1
+             | .content | if type == "array" then map(.text // "") | join("") else . end' | shown)" || failed=1
     echo "$seen"
     if [[ "$seen" == *":assumed-role/$prefix-dev-role/developer"* ]]; then
       echo "Claude Code's tools run as the developer role, not as Claude Code's Bedrock token"

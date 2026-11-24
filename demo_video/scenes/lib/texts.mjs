@@ -13,6 +13,12 @@ export const TEXTS = {
     noRun: '실행하거나 올리지 말고 파일만 만들어 주세요.',
     // 23-reject: the platform engineer's reason
     reject: 'jinja2 2.11.2에 알려진 취약점이 있어 반려합니다. 이 의존성을 빼거나 취약점이 고쳐진 버전으로 올린 뒤 다시 신청해 주세요.',
+    // 56-cause: the developer's request to Claude Code (it names what was published, not the cause)
+    cause: 'publish quality_agent v2-loop로 올린 quality_agent가 검사 Q-1002 질문에 답하지 않고 같은 도구를 계속 불렀습니다. '
+      + 'logs quality_agent 30으로 최근 로그를 읽고, dev_team/quality_agent의 코드(올린 것은 v2-loop 판)를 읽어서 왜 그랬는지 '
+      + '찾아 주세요. 파일을 고치거나 다른 명령을 돌리지는 마세요.',
+    // 56-cause: the developer's answer when Claude Code asks to run something (answered No)
+    readOnly: '다른 명령은 돌리지 말고, logs와 cat, 읽기 도구로만 읽어 주세요.',
   },
 };
 

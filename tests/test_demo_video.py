@@ -27,8 +27,12 @@ ALLOWED = [f"mcp__{SERVER}__*", "Edit(./dev_team/**)", "Bash(search:*)", "Bash(l
 DENIED = ["Read(//run/dev-pc/**)", "Edit(./demo_scenes/**)", "Edit(./platform_team/**)", "Edit(./.claude/**)",
           "Edit(./.mcp.json)", "Edit(./pyproject.toml)", "Edit(./uv.lock)",
           # under dev_team/, where edits need no question: no Claude Code folder (skills, hooks, settings), MCP server
-          # list or instructions file that a later session would load
-          "Edit(./dev_team/**/.claude/**)", "Edit(./dev_team/**/.mcp.json)", "Edit(./dev_team/**/CLAUDE.md)"]
+          # list or instructions file that a later session would load; directly under dev_team/ by name (so that no
+          # reading of **/ decides it), and in any folder below it
+          "Edit(./dev_team/.claude/**)", "Edit(./dev_team/.mcp.json)", "Edit(./dev_team/CLAUDE.md)",
+          "Edit(./dev_team/**/.claude/**)", "Edit(./dev_team/**/.mcp.json)", "Edit(./dev_team/**/CLAUDE.md)",
+          # Claude Code's own files in the container's home, which run.sh up keeps
+          "Edit(~/.claude/**)", "Edit(~/.claude.json)"]
 SKIP_WORDS = ("--dangerously-skip-permissions", "dangerously", "--permission-mode", "bypassPermissions", "acceptEdits")
 
 
@@ -67,7 +71,7 @@ def test_the_settings_hold_no_credential_and_allow_only_the_listed_tools():
     assert not re.search(r"(AKIA|ASIA)[0-9A-Z]{16}", text)
 
 
-def test_no_pre_allowed_rule_is_broader_than_the_list_or_reaches_a_denied_file():
+def test_no_pre_allowed_rule_is_broader_than_the_list():
     allow = _settings()["permissions"]["allow"]
     # each Bash rule is one command word, each Edit rule stays under dev_team/, the MCP rule names the one server
     assert sorted(re.fullmatch(r"Bash\((\w+):\*\)", a).group(1) for a in allow if a.startswith("Bash(")) == [
@@ -75,23 +79,53 @@ def test_no_pre_allowed_rule_is_broader_than_the_list_or_reaches_a_denied_file()
     assert [a for a in allow if a.startswith("Edit(")] == ["Edit(./dev_team/**)"]
     assert [a for a in allow if a.startswith("mcp__")] == [f"mcp__{SERVER}__*"]
     assert not [a for a in allow if a.startswith(("Read(", "Write(", "WebFetch", "WebSearch", "Agent", "Task"))]
-    edits = [a[len("Edit("):-1] for a in allow if a.startswith("Edit(")]
+
+
+def _named_by(path: str, rules: list[str]) -> list[str]:
+    """The Edit rules that name a path without any pattern: the path itself, or a folder of it followed by a closing
+    /** (a rule with any other * is skipped, so no reading of a pattern decides it)."""
+    named = []
+    for rule in (r for r in rules if r.startswith("Edit(")):
+        p = rule[len("Edit("):-1]
+        if "*" in p.removesuffix("/**"):
+            continue
+        if p == path or (p.endswith("/**") and path.startswith(p.removesuffix("**"))):
+            named.append(rule)
+    return named
+
+
+def test_every_file_a_later_session_loads_from_dev_team_or_the_home_is_named_by_a_deny_rule():
+    # Edit(./dev_team/**) lets Claude Code write under dev_team/ without a question. A Claude Code folder (a skill, a
+    # hook, settings), an MCP server list or an instructions file directly under dev_team/ would be loaded by a later
+    # session, and so would Claude Code's own files in the container's home, which run.sh up keeps. Each is named by a
+    # deny rule as it is written, with no pattern but a closing /**: how Claude Code reads **/ does not decide it.
+    deny = _settings()["permissions"]["deny"]
+    for path in ("./dev_team/CLAUDE.md", "./dev_team/.mcp.json", "./dev_team/.claude/settings.json",
+                 "./dev_team/.claude/skills/y/SKILL.md", "~/.claude.json", "~/.claude/settings.json",
+                 "~/.claude/skills/y/SKILL.md"):
+        assert _named_by(path, deny), path
+    for path in ("./dev_team/quality_agent/agent.py", "./dev_team/CLAUDE.md.txt", "./dev_team/.claude-notes/x"):
+        assert not _named_by(path, deny), path
+
+
+def test_in_the_tests_own_fnmatch_reading_the_patterns_are_written_as_meant():
+    # fnmatchcase is this test's own reading of the patterns ('*' also crosses '/'), not Claude Code's matcher: it
+    # shows that the allow rule misses every denied file and that the nested denies cover nested files as written,
+    # not what the tool does with them. What the tool did on 2026-11-23 (a write to one nested path,
+    # dev_team/x/.claude/skills/y/SKILL.md, refused) is in demo_video/README.md.
+    allow = [a[len("Edit("):-1] for a in _settings()["permissions"]["allow"] if a.startswith("Edit(")]
     for path in ("./demo_scenes/search", "./demo_scenes/logs", "./platform_team/shared_code/hub_env.sh",
-                 "./.claude/settings.json", "./.mcp.json", "./pyproject.toml", "./uv.lock", "./CLAUDE.md"):
-        assert not [e for e in edits if fnmatchcase(path, e)], path
-    assert fnmatchcase("./dev_team/quality_agent/agent.py", edits[0])
-
-
-def test_no_claude_code_folder_mcp_list_or_instructions_may_be_written_under_dev_team():
-    # Edit(./dev_team/**) lets Claude Code write there without a question; a nested .claude/ (a skill, a hook), a
-    # .mcp.json or a CLAUDE.md there would be read by a later session, so each is denied
-    deny = [d[len("Edit("):-1] for d in _settings()["permissions"]["deny"] if d.startswith("Edit(./dev_team/")]
-    assert deny == ["./dev_team/**/.claude/**", "./dev_team/**/.mcp.json", "./dev_team/**/CLAUDE.md"]
+                 "./.claude/settings.json", "./.mcp.json", "./pyproject.toml", "./uv.lock", "./CLAUDE.md",
+                 "~/.claude/settings.json", "~/.claude.json"):
+        assert not [e for e in allow if fnmatchcase(path, e)], path
+    assert fnmatchcase("./dev_team/quality_agent/agent.py", allow[0])
+    nested = [d[len("Edit("):-1] for d in _settings()["permissions"]["deny"] if d.startswith("Edit(./dev_team/**/")]
+    assert nested == ["./dev_team/**/.claude/**", "./dev_team/**/.mcp.json", "./dev_team/**/CLAUDE.md"]
     for path in ("./dev_team/x/.claude/skills/y/SKILL.md", "./dev_team/quality_agent/.claude/settings.json",
                  "./dev_team/x/.mcp.json", "./dev_team/quality_agent/CLAUDE.md"):
-        assert [d for d in deny if fnmatchcase(path, d)], path
+        assert [d for d in nested if fnmatchcase(path, d)], path
     for path in ("./dev_team/quality_agent/agent.py", "./dev_team/quality_agent/requirements.txt"):
-        assert not [d for d in deny if fnmatchcase(path, d)], path
+        assert not [d for d in nested if fnmatchcase(path, d)], path
 
 
 def test_the_readme_and_the_projects_claude_md_say_what_the_settings_say():
@@ -100,7 +134,8 @@ def test_the_readme_and_the_projects_claude_md_say_what_the_settings_say():
         assert f"`{rule}`" in readme, rule
     claude_md = (DEV_PC / "CLAUDE.md").read_text(encoding="utf-8")
     assert "`dev_team/` 아래에만" in claude_md and "개발자가 직접" in claude_md
-    for folder in ("`demo_scenes/`", "`platform_team/`", "`.claude/`", "`.mcp.json`", "`pyproject.toml`", "`uv.lock`"):
+    for folder in ("`demo_scenes/`", "`platform_team/`", "`.claude/`", "`.mcp.json`", "`pyproject.toml`", "`uv.lock`",
+                   "`CLAUDE.md`", "`~/.claude/`", "`~/.claude.json`"):
         assert folder in claude_md, folder
 
 
@@ -244,8 +279,12 @@ elif "CapEff" in line:
     print("CapEff:\t0000000000000000")
 elif "curl" in line:
     sys.exit(7)
-elif os.environ.get("FAKE_STDERR"):
-    print(os.environ["FAKE_STDERR"], file=sys.stderr)
+elif args[-2:-1] == ["ls"] and "FAKE_LS" in os.environ:
+    sys.stdout.write(os.environ["FAKE_LS"])
+else:
+    sys.stdout.write(os.environ.get("FAKE_STDOUT", ""))
+    if os.environ.get("FAKE_STDERR"):
+        print(os.environ["FAKE_STDERR"], file=sys.stderr)
 '''
 
 
@@ -288,8 +327,10 @@ def fake_pc(tmp_path):
         "PATH": f"{bin_}:/usr/bin:/bin", "FAKE_LOG": str(tmp_path / "docker.log"), "FAKE_STDIN": str(tmp_path / "stdin")}
 
     def run(*args, **extra):
-        return subprocess.run([str(repo / "demo_video/tools/dev_pc/run.sh"), *args], capture_output=True, text=True,
-                              env=env | extra, timeout=60)
+        r = subprocess.run([str(repo / "demo_video/tools/dev_pc/run.sh"), *args], capture_output=True,
+                           env=env | extra, timeout=60)
+        # decoded here, not with text=True, so that a carriage return run.sh lets through stays one
+        return subprocess.CompletedProcess(r.args, r.returncode, r.stdout.decode(), r.stderr.decode())
 
     def calls():
         log = tmp_path / "docker.log"
@@ -379,6 +420,30 @@ def test_check_masks_standard_error_and_shows_that_dev_holds_no_capability(fake_
     assert "the user dev cannot delete the route: RTNETLINK answers: Operation not permitted" in r.stdout
 
 
+# text a program in the container chose: a title and a screen clear, colours, a bell, a carriage return, an 8-bit CSI
+# (U+009B), a tab, and one long line
+CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")                       # every control but tab and newline
+CHOSEN = "\x1b]0;title\x07\x1b[2J\x1b[31mred\x1b[0m\ttab\r\x9b1mc1 " + "y" * 400 + "\n"
+
+
+def test_up_shows_the_containers_listing_without_control_characters_and_cut_short(fake_pc):
+    r = fake_pc["run"]("up", FAKE_LS="agent_template\n\x1b[2J\x1b]0;x\x07planted\n" + "z" * 400 + "\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not CONTROLS.search(r.stdout + r.stderr), repr(r.stdout + r.stderr)
+    listing = r.stdout.split("(dev_team: ", 1)[1].split("), quality_agent comes with", 1)[0]
+    assert "agent_template" in listing and "planted" in listing and listing.endswith(" [cut]")
+    assert len(listing) <= 300 + len(" [cut]")
+
+
+def test_check_shows_the_containers_output_without_control_characters_and_cut_short(fake_pc):
+    r = fake_pc["run"]("check", FAKE_STDOUT=CHOSEN, FAKE_STDERR="\x1b[2Jarn:aws:iam::234567890123:role/x\x07 denied")
+    out = r.stdout + r.stderr
+    assert not CONTROLS.search(out), repr(out)
+    assert "red" in out and "\ttab" in out and "[cut]" in out                  # the text stays, the tab too
+    assert "234567890123" not in out and "<ACCOUNT>" in out
+    assert max(len(line) for line in out.splitlines()) <= 300 + len(" [cut]")
+
+
 # ------------------------------------------------------------------ the build script: captions, cards, clips and reels
 
 BUILD = VIDEO / "scripts" / "build.py"
@@ -403,11 +468,12 @@ def _refused(spec, tmp_path, says):
     return says
 
 
-def _with_beat(text):
+def _with_beat(text, at="shot:wide"):
+    """The build's SPEC with one caption on the first piece of 00-home instead of its own."""
     import copy
     build = _build()
     spec = copy.deepcopy(build.SPEC)
-    spec["clips"]["00-home"]["beats"]["ko"] = [{"at": "shot:wide", "text": text}]
+    spec["clips"]["00-home"][0]["beats"]["ko"] = [{"at": at, "text": text}]
     return spec
 
 
@@ -420,7 +486,15 @@ def test_a_caption_over_45_characters_stops_the_build(tmp_path, capsys):
     ok = "허브가 신청을 자동으로 심사합니다"
     build = _build()
     build.run(_with_beat(ok), lang="ko", out=tmp_path / "ok", check_only=True)      # 45 or fewer passes
-    assert (tmp_path / "ok" / "scripts" / "ko" / "00-home.json").exists()
+    assert (tmp_path / "ok" / "scripts" / "ko" / "00-home.1.json").exists()
+
+
+def test_a_caption_anchored_to_raw_seconds_stops_the_build(tmp_path, capsys):
+    # a caption is anchored to a shot or a note of the take's camlog, so it stays on the event it names
+    text = "허브가 신청을 자동으로 심사합니다"
+    _refused(_with_beat(text, at=12.5), tmp_path, text)
+    err = capsys.readouterr().err
+    assert text in err and "raw seconds" in err
 
 
 @pytest.mark.parametrize("bad", ["—", "·", "→"])
@@ -459,9 +533,23 @@ def test_a_stage_over_its_caption_budget_stops_the_build(tmp_path, capsys):
     assert build.BUDGET == {0: 5, 1: 11, 2: 12, 3: 8, 4: 10, 5: 18}
     import copy
     spec = copy.deepcopy(build.SPEC)
-    spec["clips"]["00-home"]["beats"]["ko"] = [{"at": "shot:wide", "text": "허브가 신청을 자동으로 심사합니다"}] * 6
+    spec["clips"]["00-home"][0]["beats"]["ko"] = [{"at": "shot:wide", "text": "허브가 신청을 자동으로 심사합니다"}] * 6
     _refused(spec, tmp_path, "준비")
     assert "준비" in capsys.readouterr().err
+    # the budget counts every piece of a stage's takes: 12-make (cut from the 11-find recording) is stage 1
+    assert build.stage("12-make") == 1 and build.stage("00-home") == 0 and build.stage("57-back") == 5
+    spec = copy.deepcopy(build.SPEC)
+    spare = 11 - sum(len(p["beats"]["ko"]) for t in spec["clips"] if build.stage(t) == 1 for p in spec["clips"][t])
+    spec["clips"]["12-make"][-1]["beats"]["ko"] += [{"at": "shot:made", "text": "허브가 신청을 자동으로 심사합니다"}] * (spare + 1)
+    _refused(spec, tmp_path, "1단계")
+    assert "1단계" in capsys.readouterr().err
+
+
+# the takes of the video, in the order they are recorded (12-make is cut from the 11-find recording)
+CLIP_TAKES = ["00-home", "11-find", "12-make", "13-submit", "21-review", "22-works", "23-reject", "24-again",
+              "25-approved", "26-answers", "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked",
+              "43-before", "44-attach", "45-after", "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours",
+              "56-cause", "57-back"]
 
 
 def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
@@ -471,14 +559,10 @@ def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
     assert set(spec["reels"]) == {"main", "stage-1", "stage-2", "stage-3", "stage-4", "stage-5"}
     for reel, segments in spec["reels"].items():
         for seg in segments:
-            assert build.segment_name(seg) in names, (reel, seg)
+            assert seg in names, (reel, seg)
     # every take of the script is a clip of the main reel, in the order the takes are recorded
-    takes = ["00-home", "11-find", "12-make", "13-submit", "21-review", "22-works", "23-reject", "24-again",
-             "25-approved", "26-answers", "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked",
-             "43-before", "44-attach", "45-after", "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours",
-             "56-cause", "57-back"]
-    main = [build.segment_name(s) for s in spec["reels"]["main"]]
-    assert [n for n in main if n in spec["clips"]] == takes
+    main = spec["reels"]["main"]
+    assert [n for n in main if n in spec["clips"]] == CLIP_TAKES
     assert main[0] == "card-intro" and main[-2:] == ["card-summary", "card-closing"]
     # a reel that names something the build does not define is refused before anything is written
     import copy
@@ -488,33 +572,86 @@ def test_every_reel_names_only_clips_the_build_defines(tmp_path, capsys):
     assert "27-nowhere" in capsys.readouterr().err
 
 
-CARDS_OF_THE_PLAN = {
+def test_the_stage_reels_are_the_main_reels_stages_and_stage_1_opens_with_the_preparation():
+    build = _build()
+    reels = build.SPEC["reels"]
+    # the preparation (its chapter card and the home page) opens the main reel and the stage-1 reel
+    assert reels["main"][1:3] == ["card-ch0", "00-home"]
+    assert reels["stage-1"][:3] == ["card-ch0", "00-home", "card-ch1"]
+    # each stage reel is the main reel's run of that stage, so a caption reads the same in every reel
+    for n in range(1, 6):
+        stage = reels[f"stage-{n}"]
+        start = reels["main"].index("card-ch0" if n == 1 else f"card-ch{n}")
+        assert reels["main"][start:start + len(stage)] == stage, n
+    takes = [t for n in range(1, 6) for t in reels[f"stage-{n}"] if t in build.SPEC["clips"]]
+    assert takes == CLIP_TAKES
+
+
+def test_the_pieces_of_one_take_are_joined_with_hard_cuts():
+    build = _build()
+    spec = {"clips": {"21-review": [build.piece("21-review", 4.5, 11.5), build.piece("21-review", 30.0, 38.6, speed=4),
+                                    build.piece("21-review", 38.6, 60.0)],
+                      "22-works": [build.piece("22-works", 11.0, 36.5)]},
+            "cards": {"ko": {"card-ch2": {"seconds": 3}}}, "reels": {"r": ["card-ch2", "21-review", "22-works"]}}
+    assert build.reel_manifest(spec, "r", "ko") == {"fade": 0.4, "segments": [
+        {"file": "cards/ko/card-ch2.mp4"},
+        {"file": "clips/ko/21-review.1.mp4", "fade_out": 0},
+        {"file": "clips/ko/21-review.2.mp4", "fade_in": 0, "fade_out": 0},
+        {"file": "clips/ko/21-review.3.mp4", "fade_in": 0},
+        {"file": "clips/ko/22-works.1.mp4"}]}
+    # in the main reel every edge between two pieces of one take is a hard cut, and only those
+    segments = build.reel_manifest(build.SPEC, "main", "ko")["segments"]
+    take = [s["file"].split("/")[-1].rsplit(".", 2)[0] for s in segments]
+    for i in range(len(segments) - 1):
+        same = take[i] == take[i + 1] and segments[i]["file"].startswith("clips/")
+        assert (segments[i].get("fade_out") == 0) == same and (segments[i + 1].get("fade_in") == 0) == same, i
+    # interactions play at 1.25 and waits at 4; one window plays slower, to hold a line that is on screen briefly
+    speeds = [p["speed"] for pieces in build.SPEC["clips"].values() for p in pieces]
+    assert set(speeds) - {1.25, 4} == {0.13} and speeds.count(0.13) == 1
+
+
+def test_the_main_reel_runs_between_8_and_11_minutes():
+    build = _build()
+    spec = {"clips": {"t": [build.piece("t", 10.0, 20.0), build.piece("t", 20.0, 60.0, speed=4)]},
+            "cards": {"ko": {"c": {"seconds": 3}}}, "reels": {"r": ["c", "t"]}}
+    assert build.reel_seconds(spec, "r", "ko") == 3 + 8 + 10
+    main = build.reel_seconds(build.SPEC, "main", "ko")
+    assert 8 * 60 <= main <= 11 * 60
+    # the main reel is the five stage reels (준비 inside stage 1, so counted once) plus the intro, summary and closing
+    cards = build.SPEC["cards"]["ko"]
+    stages = sum(build.reel_seconds(build.SPEC, f"stage-{n}", "ko") for n in range(1, 6))
+    ends = sum(cards[c]["seconds"] for c in ("card-intro", "card-summary", "card-closing"))
+    assert main == pytest.approx(stages + ends)
+
+
+CARDS_OF_THE_SCRIPT = {
     "card-intro": ["AI 에이전트 호스팅 허브 on Amazon Bedrock AgentCore", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다"],
     "card-ch0": ["준비", "플랫폼팀이 허브를 한 번 만들어 둡니다", "허브 화면의 홈"],
     "card-ch1": ["1단계. 호스팅 신청", "팀은 플랫폼팀 없이 찾고, 만들고, 신청합니다", "Claude Code와 AWS Agent Registry"],
     "card-ch2": ["2단계. 호스팅 심사", "신청이 들어오면 허브가 자동으로 심사합니다", "심사 파이프라인과 AgentCore Runtime"],
     "card-ch3": ["3단계. 전사 정책 시험", "새 전사 정책을 막지 않고 먼저 시험합니다", "Policy in AgentCore의 기록 모드"],
     "card-ch4": ["4단계. 전사 정책 적용", "전사 정책 하나가 모든 에이전트에 걸립니다", "AgentCore Gateway와 커스텀 가드레일"],
-    "card-ch5": ["5단계. 이상 대응", "문제를 일으킨 에이전트 하나만 멈춥니다", "CloudWatch 알람과 AgentCore Runtime"],
+    # 경보, not 알람: the hub screen and every caption say 경보, so the card does too
+    "card-ch5": ["5단계. 이상 대응", "문제를 일으킨 에이전트 하나만 멈춥니다", "CloudWatch 경보와 AgentCore Runtime"],
     "card-compare": ["가드레일 두 가지", "기본 제공 가드레일과 커스텀 가드레일", "기본 제공은 설정으로 걸고 기록 모드로 먼저 시험합니다",
                      "커스텀은 사내 코드로 막고 민감 정보를 가립니다", "둘 다 게이트웨이에 걸려 모든 에이전트에 적용됩니다"],
     "card-summary": ["정리", "팀은 스스로 올리고, 플랫폼팀은 한 곳에서 관리합니다", "팀은 카탈로그에서 찾고 템플릿으로 만들어 스스로 신청합니다",
                      "허브가 자동으로 심사하고 통과한 것만 올립니다", "전사 정책은 게이트웨이에 한 번 걸면 모두에 적용됩니다",
                      "이상 에이전트 하나만 멈추고 이웃은 계속 답합니다"],
-    # the script's one row "AgentCore는 Runtime, Gateway, Policy, Registry, 관측을 줍니다" is 54 characters: the same
-    # words in two rows of at most 45
+    # one row "AgentCore는 Runtime, Gateway, Policy, Registry, 관측을 줍니다" would be 54 characters: the same words in
+    # two rows of at most 45
     "card-closing": ["누가 무엇을 맡나", "AgentCore가 주는 것과 플랫폼팀이 만드는 것", "AgentCore는 Runtime, Gateway, Policy를 줍니다",
                      "AgentCore는 Registry와 관측도 줍니다", "플랫폼팀은 심사 파이프라인과 운영 명령, 허브 화면을 만듭니다"],
 }
-SECONDS_OF_THE_PLAN = {"card-intro": 4, "card-compare": 8, "card-summary": 9, "card-closing": 7}
+SECONDS_OF_THE_SCRIPT = {"card-intro": 4, "card-compare": 8, "card-summary": 9, "card-closing": 7}
 
 
-def test_the_cards_of_the_plan_pass_the_rules(tmp_path):
+def test_the_cards_of_the_script_pass_the_rules(tmp_path):
     build = _build()
     cards = build.SPEC["cards"]["ko"]
-    assert {name: build.card_texts(card) for name, card in cards.items()} == CARDS_OF_THE_PLAN
-    assert {n: cards[n]["seconds"] for n in SECONDS_OF_THE_PLAN} == SECONDS_OF_THE_PLAN
-    # the whole build file passes its own rules: the plan's cards, and every clip with no beats yet
+    assert {name: build.card_texts(card) for name, card in cards.items()} == CARDS_OF_THE_SCRIPT
+    assert {n: cards[n]["seconds"] for n in SECONDS_OF_THE_SCRIPT} == SECONDS_OF_THE_SCRIPT
+    # the whole build file passes its own rules: these cards, and every caption of every piece
     r = subprocess.run([sys.executable, str(BUILD), "--check", "--lang", "ko", "--out", str(tmp_path / "out")],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -525,9 +662,12 @@ def test_the_cards_of_the_plan_pass_the_rules(tmp_path):
     assert written["card-ch1"]["lines"][0] == ["kicker", "1단계. 호스팅 신청"]
     manifest = json.loads((tmp_path / "out" / "reels" / "hosting-hub-main-ko.json").read_text(encoding="utf-8"))
     assert manifest["segments"][0]["file"] == "cards/ko/card-intro.mp4"
-    assert {"file": "clips/ko/00-home.mp4"} in [{"file": s["file"]} for s in manifest["segments"]]
-    script = json.loads((tmp_path / "out" / "scripts" / "ko" / "00-home.json").read_text(encoding="utf-8"))
-    assert script["beats"] == [] and script["speed"] == 1.25 and "title" not in script
+    assert {"file": "clips/ko/00-home.1.mp4"} in [{"file": s["file"]} for s in manifest["segments"]]
+    # each piece's script for the plugin: its window, its speed, its captions, and no title (the cards carry it)
+    script = json.loads((tmp_path / "out" / "scripts" / "ko" / "00-home.1.json").read_text(encoding="utf-8"))
+    home = build.SPEC["clips"]["00-home"][0]
+    assert script == {"start": home["start"], "end": home["end"], "speed": 1.25, "beats": home["beats"]["ko"]}
+    assert script["beats"] and all(isinstance(b["at"], str) for b in script["beats"])
 
 
 def test_a_card_title_or_row_that_breaks_a_rule_stops_the_build(tmp_path, capsys):
@@ -558,15 +698,104 @@ def test_a_clip_with_no_beats_is_cut_without_captions(tmp_path):
     # the plugin's clip falls back to the camera's shot labels when a script has no beats: those are notes for the
     # person who records, never captions
     build = _build()
-    cmd = build.clip_command(Path("/plugin"), "00-home", build.SPEC["clips"]["00-home"], "ko", tmp_path)
+    cmd = build.clip_command(Path("/plugin"), "21-review.2", build.piece("21-review", 30.0, 38.6, speed=4), "ko",
+                             tmp_path)
     assert "--no-captions" in cmd and "--title" not in cmd
+    assert cmd[3] == str(tmp_path / "raw" / "21-review.webm")
+    assert cmd[cmd.index("--out") + 1] == str(tmp_path / "clips" / "ko" / "21-review.2.mp4")
+    cmd = build.clip_command(Path("/plugin"), "00-home.1", build.SPEC["clips"]["00-home"][0], "ko", tmp_path)
+    assert "--no-captions" not in cmd and "--title" not in cmd
+
+
+CAMLOG = {"log": [{"t": 3.9, "kind": "shot", "key": "wide"}, {"t": 14.91, "kind": "shot", "key": "flow1"},
+                  {"t": 20.0, "kind": "asked"}, {"t": 41.93, "kind": "shot", "key": "end"}]}
+FFMPEG = shutil.which("ffmpeg") and shutil.which("ffprobe")
+
+
+@pytest.fixture(scope="module")
+def take_45s(tmp_path_factory):
+    """A real webm of 45 s (black, 64x36), so the build can measure the take as it measures a recorded one."""
+    path = tmp_path_factory.mktemp("take") / "take.webm"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x36:r=5:d=45",
+                    "-c:v", "libvpx", "-deadline", "realtime", "-b:v", "20k", str(path)], check=True, timeout=60)
+    return path
+
+
+def _cut(tmp_path, monkeypatch, take, pieces):
+    """build.run on one take (00-home, its camlog CAMLOG, its video the 45 s take) with a stand-in plugin that only
+    notes that it was called; returns the exit code (None when the build went through) and whether anything was cut."""
+    build = _build()
+    import copy
+    spec = copy.deepcopy(build.SPEC)
+    spec["clips"] = {"00-home": pieces}
+    spec["reels"] = {"main": ["card-intro", "00-home"]}
+    out = tmp_path / "out"
+    (out / "raw").mkdir(parents=True)
+    shutil.copy(take, out / "raw" / "00-home.webm")
+    (out / "raw" / "00-home.camlog.json").write_text(json.dumps(CAMLOG))
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    for f in ("edit_demo.py", "make_cards.py"):
+        (plugin / f).write_text("import pathlib, sys\npathlib.Path(sys.argv[0]).with_suffix('.called').touch()\n")
+    monkeypatch.setenv("DEMO_VIDEO_PLUGIN", str(plugin))
+    try:
+        build.run(spec, lang="ko", out=out)
+        code = None
+    except SystemExit as stop:
+        code = stop.code
+    return code, bool(list(plugin.glob("*.called")))
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+@pytest.mark.parametrize("at, offset, says", [
+    ("shot:flow1", 0, "outside"),            # 14.91 s lies after the piece's window 3.5..12
+    ("shot:wide", 0, None),                  # 3.9 s: inside
+    ("shot:wide", 7.0, "outside"),           # 10.9 s: inside the window, but less than 2 s of the piece is left
+    ("asked#2", 0, "does not hold"),         # the camlog has one note asked
+    ("shot:nowhere", 0, "does not hold")])
+def test_a_caption_outside_its_piece_or_off_the_camlog_stops_the_build_before_anything_is_cut(
+        tmp_path, capsys, monkeypatch, take_45s, at, offset, says):
+    build = _build()
+    text = "허브 화면에서 흐름 1을 봅니다"
+    code, cut = _cut(tmp_path, monkeypatch, take_45s,
+                     [build.piece("00-home", 3.5, 12.0, ko=[build.beat(at, text, offset=offset)])])
+    if says is None:
+        assert code is None and cut
+        return
+    err = capsys.readouterr().err
+    assert code == 2 and not cut                              # nothing was cut
+    assert text in err and says in err and "00-home.1" in err
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg is not installed")
+@pytest.mark.parametrize("start, end, dur, says", [
+    (12.0, 12.0, None, "does not start before it ends"),     # an empty window
+    (20.0, 12.0, None, "does not start before it ends"),
+    (3.5, 50.0, None, "beyond the take"),                    # the take is 45 s long
+    (3.5, 41.5, 10.0, "runs into the next caption"),         # 0.32 s + 10 s passes the next caption at 9.13 s
+    (3.5, 41.5, 8.0, None),                                  # 8 s ends before it
+    (3.5, 45.0, None, None)])                                # up to the take's end
+def test_a_piece_beyond_its_take_or_a_caption_running_into_the_next_stops_the_build_before_anything_is_cut(
+        tmp_path, capsys, monkeypatch, take_45s, start, end, dur, says):
+    build = _build()
+    first = build.beat("shot:wide", "허브 화면 한 곳에서 허브를 봅니다", **({} if dur is None else {"dur": dur}))
+    second = build.beat("shot:flow1", "흐름 1은 허브가 심사하는 길입니다")
+    beats = [first, second] if end > 17 else []
+    code, cut = _cut(tmp_path, monkeypatch, take_45s, [build.piece("00-home", start, end, ko=beats)])
+    if says is None:
+        assert code is None and cut
+        return
+    err = capsys.readouterr().err
+    assert code == 2 and not cut and says in err and "00-home.1" in err
 
 
 # ------------------------------------------------------------------ the recording: record.sh, the user's shell, storyboards
 
 SCENES = VIDEO / "scenes"
 TAKES = ["00-home", "11-find", "13-submit", "21-review", "22-works", "23-reject", "24-again", "25-approved",
-         "26-answers"]                                  # 12-make is the second part of the 11-find recording
+         "26-answers",                                  # 12-make is the second part of the 11-find recording
+         "31-logonly", "32-passes", "33-record", "41-enforce", "42-blocked", "43-before", "44-attach", "45-after",
+         "51-usage", "52-incident", "53-alarm", "54-stop", "55-neighbours", "56-cause", "57-back"]
 NODE = shutil.which("node")
 
 
@@ -662,7 +891,8 @@ const fakePage = screens => {
     keyboard: { press: async key => { page.log.push(['key', key, page.looked()]); } } };
   return page;
 };
-const fakeRec = () => ({ notes: [], note(kind, data) { this.notes.push([kind, data]); }, now: () => 1 });
+// a note is merged the way the plugin's recorder writes it into the camlog: { t, kind, ...data }
+const fakeRec = () => ({ notes: [], note(kind, data = {}) { this.notes.push({ t: this.now(), kind, ...data }); }, now: () => 1 });
 const fakeCam = () => ({ kept: [], shots: [], keep(text) { this.kept.push(text); }, lines: async (k) => {}, reset: async () => {},
   hold: async () => {} });
 """
@@ -725,7 +955,7 @@ READS = [["cat dev_team/agent_template/README.md"], ["ls -la dev_team/agent_temp
          ["cd /home/dev/work/dev_team; ls agent_template"], ["grep -n -A1 -E '^name = \"strands-agents\"' uv.lock"],
          ["sed -n 1,40p dev_team/agent_template/agent.py | head -20"], ["cd dev_team && cat agent_template/agent.json"],
          ["find dev_team/agent_template -name '*.py'"], ["wc -l uv.lock 2>/dev/null"]]
-# the ways past a check of the command's text that the reviews found, in the layout Claude Code prints
+# ways past a check of the command's text, in the layout Claude Code prints
 BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv run pytest tests"],
             ['bash -c "python3 agent.py"'], ["cp quality_agent/agent.py ../demo_scenes/search"],
             ["echo \"v: $(python3 -c 'print(1)')\""], ["env python3 x.py"], ["timeout 30 python3 x.py"],
@@ -742,7 +972,7 @@ BYPASSES = [["python3 quality_agent/agent.py"], ["publish quality_agent"], ["uv 
             ["sed -i s/a/b/ uv.lock"], ["awk '{print > \"x\"}' uv.lock"], ["ls $(echo /tmp)"], ["cat $HOME/x"],
             ['cat "/run/dev-pc/bedrock.json"'], ["grep --file=/run/dev-pc/bedrock.json x uv.lock"],
             ["sort -uo x uv.lock"], ["cat uv.lock 3>/tmp/y"], ["cat ../../../etc/passwd"], ["FOO=1 cat uv.lock"],
-            # the second review's
+            # further cases
             ["sort --compress-program=sh -S 1 dev_team/quality_agent/notes.txt"],
             ["sort --compress-program sh -S 1 dev_team/quality_agent/notes.txt"],
             ["sort --compress-program=python3 --buffer-size=1 dev_team/quality_agent/notes.txt"],
@@ -761,7 +991,7 @@ FILE_PATHS = ["/home/dev/work/dev_team/quality_agent/agent.py", "~/work/dev_team
 
 
 def _every_dialog_screen() -> list[list[str]]:
-    """The seven real dialogs kept from the takes, and every command and path of both reviews in that layout."""
+    """The seven real dialogs kept from the takes, and every command and path of the lists above in that layout."""
     return ([DIALOGS[k] for k in DIALOGS] + [_shell_screen(c) for c in READS + BYPASSES]
             + [_file_screen(p) for p in FILE_PATHS])
 
@@ -792,6 +1022,11 @@ BUSY = ["✻ Cooking… (2s · esc to interrupt)"]
 DONE = ["✻ Cooked for 3s", "❯"]
 
 
+def _permission_notes(g: dict) -> list[dict]:
+    """The notes named `permission`, as a camlog holds them (without their time)."""
+    return [{k: v for k, v in n.items() if k != "t"} for n in g["notes"] if n["kind"] == "permission"]
+
+
 def _answered_with_escape_only(g: dict, dialog: list[str], name) -> None:
     """Every key sent while the dialog was the screen looked at last is Escape, and nothing was pasted onto it: each
     paste follows a look, and that look did not find the dialog."""
@@ -805,8 +1040,8 @@ def _answered_with_escape_only(g: dict, dialog: list[str], name) -> None:
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_while_a_dialog_is_on_the_screen_the_only_key_is_escape_and_enter_never_meets_an_option_row(tmp_path):
-    # the storyboard never answers Yes: whatever the question (every kept real one, every command and path of both
-    # reviews), it presses Escape, then sends the take's sentence; Enter goes out only after a look that finds no
+    # the storyboard never answers Yes: whatever the question (every kept real one, every command and path of the
+    # lists above), it presses Escape, then sends the take's sentence; Enter goes out only after a look that finds no
     # option row (here the dialog is still there at the look before the sentence: Escape again, look again)
     screens = _every_dialog_screen()
     assert len(screens) == 7 + len(READS) + len(BYPASSES) + len(FILE_PATHS)
@@ -817,9 +1052,8 @@ def test_while_a_dialog_is_on_the_screen_the_only_key_is_escape_and_enter_never_
         _answered_with_escape_only(g, s, i)
         assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"], i
         assert g["pastes"] == ["the request", "files only"], i
-        assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": n[1]["kind"]}]
-                                                                   for n in g["notes"] if n[0] == "permission"]
-        assert len([n for n in g["notes"] if n[0] == "permission"]) == 1, i
+        [note] = _permission_notes(g)
+        assert note["answer"] == "no" and note["dialog"] in ("shell", "file", "unknown"), i
 
 
 # A question Claude Code draws itself, whose option texts the other agent writes (they read neither Yes nor No).
@@ -838,7 +1072,7 @@ def test_a_dialog_whose_options_read_neither_yes_nor_no_gets_escape_and_a_plain_
                      "left_open": [OWN_QUESTION, BUSY, BUSY, BUSY, DONE],
                      "plain": [PLAIN_LIST, PLAIN_LIST, BUSY, DONE]}, tmp_path)
     during, left_open, plain = got["during"], got["left_open"], got["plain"]
-    assert [n for n in during["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": "unknown"}]]
+    assert _permission_notes(during) == [{"kind": "permission", "answer": "no", "dialog": "unknown"}]
     assert [k for k, _ in during["keys"]] == ["Enter", "Escape", "Escape", "Enter"]
     assert [k for k, _ in left_open["keys"]] == ["Escape", "Enter"]       # the open dialog first, then the request
     for name in ("during", "left_open"):
@@ -846,7 +1080,7 @@ def test_a_dialog_whose_options_read_neither_yes_nor_no_gets_escape_and_a_plain_
         _answered_with_escape_only(got[name], OWN_QUESTION, name)
     # an answer's numbered list is not a dialog: the request goes out with Enter, nothing is answered
     assert [k for k, _ in plain["keys"]] == ["Enter"] and plain["error"] == ""
-    assert not [n for n in plain["notes"] if n[0] == "permission"]
+    assert not _permission_notes(plain)
 
 
 def _wrapped_question() -> list[str]:
@@ -861,7 +1095,7 @@ def _wrapped_question() -> list[str]:
 def test_a_permission_question_whose_asking_row_wraps_is_still_answered_with_escape(tmp_path):
     wrapped = _wrapped_question()
     g = _requests({"wrapped": [BUSY, BUSY, wrapped, wrapped, BUSY, BUSY, DONE]}, tmp_path)["wrapped"]
-    assert [n for n in g["notes"] if n[0] == "permission"] == [["permission", {"answer": "no", "kind": "file"}]]
+    assert _permission_notes(g) == [{"kind": "permission", "answer": "no", "dialog": "file"}]
     assert [k for k, _ in g["keys"]] == ["Enter", "Escape", "Escape", "Enter"]
     assert g["error"] == ""
     _answered_with_escape_only(g, wrapped, "wrapped")
@@ -886,7 +1120,7 @@ def test_a_row_that_only_resembles_a_question_does_not_start_the_answering_branc
     seems = ["● agent.py는 120줄입니다. Do you want to see the rest of it?", BUSY[0]]
     got = _requests({"seems": [BUSY, seems, seems, DONE]}, tmp_path)["seems"]
     assert [k for k, _ in got["keys"]] == ["Enter"] and got["error"] == ""
-    assert not [n for n in got["notes"] if n[0] == "permission"]
+    assert not _permission_notes(got)
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
@@ -934,6 +1168,85 @@ console.log(JSON.stringify(cases.map(jobEnded)));""", tmp_path)
     assert json.loads(out) == [False, False, False, True, True, True]
 
 
+# A review page, scripted: each look gives the strip's steps (strip() calls evaluate with a scope) and the two pills
+# of that look (the record's and the run's; evaluate without an argument). The recorder's clock moves one second per
+# hold, and it merges a note as the plugin's recorder does.
+REVIEW_PAGE = """
+const reviewPage = looks => {
+  let i = -1;
+  return { evaluate: async (fn, scope) => {
+    if (scope !== undefined) { i = Math.min(i + 1, looks.length - 1); return looks[i].steps.map(([name, state]) => ({ name, state })); }
+    const l = looks[Math.max(i, 0)];
+    return { record: l.record, run: l.run };
+  } };
+};
+const clockRec = () => { let t = 0; return { notes: [], now: () => t, tick: () => { t += 1; },
+  note(kind, data = {}) { this.notes.push({ t, kind, ...data }); } }; };
+const clockCam = rec => ({ shots: [], async hold() { rec.tick(); }, async focus(key) { this.shots.push([rec.now(), key]); } });
+"""
+STEPS = ["Read", "Scan", "Grant"]
+
+
+def _look(states: str, run: str, record: str) -> dict:
+    """One look of the page: the steps' states (one letter each: p passed, r running, w waiting, f failed)."""
+    word = {"p": "passed", "r": "running", "w": "waiting", "f": "failed"}
+    return {"steps": [[n, word[c]] for n, c in zip(STEPS, states)], "run": run, "record": record}
+
+
+def _reviews(cases: dict, tmp_path) -> dict:
+    """Run waitForReview once per case ({looks, until, prefix?, seen?}) against the scripted page: its result, the
+    notes (time and name) and the 'steps' shots (time and key)."""
+    given = tmp_path / "reviews.json"
+    given.write_text(json.dumps(cases), encoding="utf-8")
+    run = """import fs from 'node:fs';
+import { waitForReview } from './hub.mjs';
+""" + REVIEW_PAGE + f"""
+const cases = JSON.parse(fs.readFileSync({json.dumps(str(given))}, 'utf8'));
+""" + """const out = {};
+for (const [name, c] of Object.entries(cases)) {
+  const page = reviewPage(c.looks), rec = clockRec(), cam = clockCam(rec);
+  const result = await waitForReview(page, rec, cam, { until: c.until, prefix: c.prefix, seen: c.seen });
+  out[name] = { result, notes: rec.notes.map(n => [n.t, n.kind]), shots: cam.shots };
+}
+console.log(JSON.stringify(out));"""
+    return json.loads(_node(run, tmp_path))
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_the_wait_for_a_review_notes_each_change_and_ends_on_approved_failed_or_time(tmp_path):
+    pending, approved = "PENDING_APPROVAL", "APPROVED"
+    got = _reviews({
+        "passes": {"until": 100, "looks": [_look("prw", "RUNNING", pending), _look("prw", "RUNNING", pending),
+                                           _look("ppr", "RUNNING", pending), _look("ppp", "SUCCEEDED", approved)]},
+        # the page first shows the earlier review, finished: its end is not this review's end
+        "earlier_first": {"until": 100, "looks": [_look("ppp", "SUCCEEDED", pending), _look("prw", "RUNNING", pending),
+                                                  _look("ppp", "SUCCEEDED", approved)]},
+        # the record reads APPROVED one look before the run reads SUCCEEDED
+        "record_first": {"until": 100, "looks": [_look("prw", "RUNNING", pending), _look("ppp", "RUNNING", approved),
+                                                 _look("ppp", "SUCCEEDED", approved)]},
+        "fails": {"until": 100, "looks": [_look("prw", "RUNNING", pending), _look("pfw", "FAILED", pending),
+                                          _look("pfw", "FAILED", pending)]},
+        "time": {"until": 3, "looks": [_look("prw", "RUNNING", pending)]},
+        "prefix": {"until": 100, "prefix": "quality_agent_", "seen": {"quality_agent_Read": "passed"},
+                   "looks": [_look("prw", "RUNNING", pending), _look("ppp", "SUCCEEDED", approved)]},
+    }, tmp_path)
+    names = {k: [n for _, n in v["notes"]] for k, v in got.items()}
+    assert got["passes"]["result"] == {"approved": True, "ended": "SUCCEEDED"}
+    assert names["passes"] == ["Read_passed", "Scan_running", "Grant_waiting", "Scan_passed", "Grant_running",
+                               "Grant_passed", "review_SUCCEEDED", "approved"]
+    assert got["passes"]["shots"] == [[1, "steps"], [3, "steps"]]            # re-framed after each change, not after none
+    assert got["earlier_first"]["result"] == {"approved": True, "ended": "SUCCEEDED"}
+    assert names["earlier_first"].count("review_SUCCEEDED") == 1
+    assert names["earlier_first"].index("review_SUCCEEDED") > names["earlier_first"].index("Scan_running")
+    assert got["record_first"]["result"] == {"approved": True, "ended": "SUCCEEDED"}
+    assert [t for t, n in got["record_first"]["notes"] if n == "approved"] == [3]
+    assert got["fails"]["result"] == {"approved": False, "ended": "FAILED"}
+    assert names["fails"][-1] == "review_FAILED" and "approved" not in names["fails"]
+    assert got["time"]["result"] == {"approved": False, "ended": ""} and max(t for t, _ in got["time"]["notes"]) <= 3
+    assert names["prefix"] == ["quality_agent_Scan_running", "quality_agent_Grant_waiting", "quality_agent_Scan_passed",
+                               "quality_agent_Grant_passed", "quality_agent_SUCCEEDED", "approved"]
+
+
 def test_the_text_check_masks_the_containers_name_instead_of_dropping_its_line(tmp_path):
     check = SCENES / "lib" / "check_texts.sh"
     texts = tmp_path / "take.texts.txt"
@@ -949,7 +1262,31 @@ def test_the_text_check_masks_the_containers_name_instead_of_dropping_its_line(t
     assert "<12 digits>,<12 digits>" in r.stdout
     texts.write_text("== 1.0 shell\ndev@dev-pc:~/work$ ls\n")
     r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
-    assert (r.returncode, r.stdout) == (0, "texts: no 12-digit number and no e-mail address in 1 screens\n")
+    assert (r.returncode, r.stdout) == (
+        0, "texts: no 12-digit number, no e-mail address and no access key ID in 1 screens\n")
+
+
+def test_the_text_check_finds_a_long_term_or_temporary_key_id_and_prints_it_masked(tmp_path):
+    check = SCENES / "lib" / "check_texts.sh"
+    texts = tmp_path / "take.texts.txt"
+    # made up, and put together here so that no file of this repo holds the shape of a key
+    for prefix in ("AKIA", "ASIA"):
+        key = prefix + "ABCDEFGHIJ012345"
+        texts.write_text(f"== 1.0 shell\ndev@dev-pc:~/work$ cat x\naws_access_key_id = {key}\n")
+        r = subprocess.run([str(check), str(texts)], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 1 and key not in r.stdout and "aws_access_key_id = <access key ID>" in r.stdout, prefix
+
+
+def test_the_text_check_prints_a_found_line_without_control_characters_and_cut_short(tmp_path):
+    texts = tmp_path / "take.texts.txt"
+    # a bell splits a 12-digit number: dropping the bell must not print the joined number unmasked
+    texts.write_bytes(("== 1.0 shell\nids 123456\x07789012 to someone@example.com " + CHOSEN).encode())
+    r = subprocess.run([str(SCENES / "lib" / "check_texts.sh"), str(texts)], capture_output=True, timeout=30)
+    out = r.stdout.decode()
+    assert r.returncode == 1 and not CONTROLS.search(out), repr(out)
+    assert "123456789012" not in out and "ids <12 digits> to someone@example.com" in out
+    assert "red" in out and "\ttab" in out and out.rstrip("\n").endswith(" [cut]")
+    assert max(len(line) for line in out.splitlines()) <= 300 + len(" [cut]")
 
 
 def test_the_hubs_state_names_each_running_review_by_its_agent():

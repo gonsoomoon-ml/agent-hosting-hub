@@ -1,10 +1,10 @@
 # 모니터링
 
-허브의 알림이 모이고, 올라온 에이전트가 무엇을 했는지 플랫폼팀이 보는 곳이다. SNS 주제 `<prefix>-alerts`를 두고, 확인용 SQS 수신함 `<prefix>-alerts-inbox`가 그 주제를 구독한다. `alert_email`을 주면 메일도 구독한다. 이 모듈은 알림 주제와 수신함, 도구 호출 알람(`<prefix>-tool-calls`), 그리고 두 게이트웨이의 로그와 trace 전달을 만든다. 이 주제로 알리는 알람은 둘이다. 이 모듈의 도구 호출 알람과, [커스텀 가드레일](../custom_guardrail/README.md)의 Terraform이 만드는 interceptor 오류 알람(`<prefix>-guardrail-errors`)이다. 사용량 보고(`usage.sh`)는 어느 에이전트가 몇 번 불렸고 어느 도구가 몇 번 불렸는지를 메트릭에서 읽어 표로 보여 준다.
+허브의 알림이 모이고, 올라온 에이전트가 무엇을 했는지 플랫폼팀이 보는 곳이다. SNS 주제 `<prefix>-alerts`를 두고, 기본 허브에는 SQS 수신함 `<prefix>-alerts-inbox`가 그 주제를 구독한다. 허브의 알림이 모이는 수신함이고, 이 저장소의 어느 명령도 이 수신함을 읽지 않는다(알림의 내용을 읽는 확인 스크립트는 `<prefix>-e2e-alerts`라는 임시 큐를 따로 만들어 이 주제를 구독하고 끝나면 지운다). 알림을 메일로 받으려면 `alert_email`을 주면 메일도 구독한다. 이 모듈은 알림 주제와 수신함, 도구 호출 경보(`<prefix>-tool-calls`), 그리고 두 게이트웨이의 로그와 trace 전달을 만든다. 이 주제로 알리는 경보는 둘이다. 이 모듈의 도구 호출 경보와, [커스텀 가드레일](../custom_guardrail/README.md)의 Terraform이 만드는 interceptor 오류 경보(`<prefix>-guardrail-errors`)이다. 사용량 보고(`usage.sh`)는 어느 에이전트가 몇 번 불렸고 어느 도구가 몇 번 불렸는지를 메트릭에서 읽어 표로 보여 준다.
 
 ## 개념도에서의 위치
 
-"모니터링" 상자다. ⑩ "기록 수집"과 ⑪ "이상 탐지 알림"의 자리이다. ⑩으로는 게이트웨이 둘의 로그와 trace를 CloudWatch로 보내고, 사용량 보고가 메트릭을 읽는다. 에이전트의 trace는 호스팅 심사가 Runtime을 띄우는 방식(아래 "에이전트의 trace")에서 나온다. ⑪로는 알림 주제와 도구 호출 알람을 만든다. 호스팅 심사가 실패할 때(④-1 "심사 실패 알림")도 이 주제로 알린다.
+[개념도](../../docs/hosting-hub-concept.png)의 흐름 2의 "모니터링" 상자다. ⑩ "기록 수집"과 ⑪ "이상 탐지 알림"의 자리이다. ⑩으로는 게이트웨이 둘의 로그와 trace를 CloudWatch로 보내고, 사용량 보고가 메트릭을 읽는다. 에이전트의 trace는 호스팅 심사가 Runtime을 띄우는 방식(아래 "에이전트의 trace")에서 나온다. ⑪로는 알림 주제와 도구 호출 경보(CloudWatch alarm)를 만든다. 호스팅 심사가 실패할 때(④-1 "심사 실패 알림")도 이 주제로 알린다.
 
 ## 도구 호출 알람
 
@@ -139,7 +139,7 @@ Python에서 쓰는 함수는 셋이다(`usage_report.py`).
 
 | 파일 | 역할 |
 |---|---|
-| `terraform/` | SNS 주제, SQS 수신함과 그 접근 정책, 구독(SQS, 고르면 메일), 도구 호출 알람 `<prefix>-tool-calls`, 게이트웨이 둘의 로그 그룹과 로그 전달(source, destination, delivery), 그 전달을 위한 자원 정책 `<prefix>-gateway-logs`. 입력은 `prefix`, `alert_email`, `tool_gateway_arn`, `agent_gateway_arn`, `watched_tool`, `tool_calls_per_minute`. 내보내는 값은 `topic_arn`, `tool_alarm_name`. |
+| `terraform/` | SNS 주제, SQS 수신함과 그 접근 정책, 구독(SQS, 고르면 메일), 도구 호출 경보 `<prefix>-tool-calls`, 게이트웨이 둘의 로그 그룹과 로그 전달(source, destination, delivery), 그 전달을 위한 자원 정책 `<prefix>-gateway-logs`. 입력은 `prefix`, `alert_email`, `tool_gateway_arn`, `agent_gateway_arn`, `watched_tool`, `tool_calls_per_minute`. 내보내는 값은 `topic_arn`, `tool_alarm_name`. |
 | `usage_report.py` | 사용량 보고(`usage`, `tool_calls`, `session_summary`)와 그 명령. 메트릭과 span을 읽기만 한다. |
 | `usage.sh` | 사용량 보고 명령. `.env`를 `make`와 같은 규칙으로 읽고 `usage_report.py`를 돌린다. |
 | `agent_logs.py` | 에이전트의 Runtime 로그 그룹에서 가장 새 줄을 오래된 줄부터 찍는다(`demo_scenes/logs`). 로그 그룹을 `DescribeLogGroups`로 찾고 `FilterLogEvents`로 읽는다(`runtime-logs-` 스트림만. `otel-rt-logs`의 복사본은 읽지 않는다). SSM을 읽지 않는다. 2026-11-23에 개발팀 역할로 AWS에서 돌렸다(`docs_adk`의 줄을 읽었고, 그 역할에 주지 않은 harness 에이전트 `spec_assistant`의 로그 그룹은 거부를 한 줄로 찍었다). |

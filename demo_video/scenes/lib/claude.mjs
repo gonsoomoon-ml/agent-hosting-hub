@@ -1,9 +1,10 @@
 // Claude Code in the developer PC, driven like a person at the keyboard. What it prints is untrusted: the text of a
 // permission question is chosen by another agent, so the storyboard does not judge it. It never answers Yes: when
 // Claude Code asks, the storyboard frames the question, holds it for the camera and presses Escape (No), then sends
-// the take's sentence that says how to go on. The only key it sends while a dialog is on the screen is Escape; text
-// is pasted, and Enter pressed (to send what was pasted, or to start claude at the shell), only after a look that
-// finds no option row of a dialog anywhere on the screen.
+// the take's sentence that says how to go on. The only key it sends to a dialog it has seen is Escape; text is
+// pasted, and Enter pressed (to send what was pasted, or to start claude at the shell), only when the look just
+// before found no option row of a dialog anywhere on the screen. A dialog that appears between that look and the key
+// gets the key (Enter takes its marked option); that is how the code is, and the recordings did not show it happen.
 import { term } from './plugin.mjs';
 
 const BUSY = 'esc to interrupt';
@@ -83,8 +84,8 @@ export async function startClaude(page) {
 
 /** Send one request (pasted: Korean survives) and follow Claude Code until it is done. Every screen not seen before
  * is kept for the take's text check (cam.keep). Each dialog is framed, held for the camera and answered No (Escape);
- * then `noRun` is sent as the way to go on. Returns { prompts: [{ question, kind, answer: 'no' }],
- * seconds }. */
+ * then `noRun` is sent as the way to go on (note `permission` { answer: 'no', dialog }). Returns
+ * { prompts: [{ question, kind, answer: 'no' }], seconds }. */
 export async function request(page, rec, cam, text, { noRun, limitMs = 600000, idleMs = 3000 } = {}) {
   const seen = new Set();
   const look = async () => {
@@ -104,7 +105,8 @@ export async function request(page, rec, cam, text, { noRun, limitMs = 600000, i
     const r = await look();
     const q = question(r);
     if (q) {
-      rec.note('permission', { answer: 'no', kind: q.kind });
+      // the dialog's kind under `dialog`: the recorder writes a note's data over its name, so `kind` would replace it
+      rec.note('permission', { answer: 'no', dialog: q.kind });
       await cam.lines(`ask${prompts.length + 1}`, q.top, q.end, { pad: 24, kmax: 1.5 }, `permission question ${prompts.length + 1}`);
       await cam.hold(4500);
       await page.keyboard.press('Escape');

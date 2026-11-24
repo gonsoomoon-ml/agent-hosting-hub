@@ -23,7 +23,8 @@ export async function hubState() {
 const list = v => [].concat(v);
 
 /** What differs between the hub's state and `want` ({records: {name: status | [statuses] | 'absent'}, reviewing:
- * [agents], mode: null | 'log-only' | 'active', attached: bool, stopped: [agents]}; a key left out is not checked). */
+ * [agents], mode: null | 'LOG_ONLY' | 'ACTIVE' (as SSM holds it), attached: bool, stopped: [agents]}; a key left out
+ * is not checked). */
 export function differences(s, want) {
   const wrong = [];
   for (const [name, status] of Object.entries(want.records ?? {})) {
