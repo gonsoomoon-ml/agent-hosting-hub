@@ -6,6 +6,62 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 흐름 2의 "모니터링" 상자입니다. ⑩ "기록 수집"과 ⑪ "이상 탐지 알림"의 자리입니다.
 
+## 흐름
+
+알림은 주제 하나로 모입니다.
+
+```
+알림을 보내는 것 셋
+  ├─ 도구 호출 경보 <prefix>-tool-calls
+  ├─ 커스텀 가드레일 오류 경보 <prefix>-guardrail-errors
+  └─ 호스팅 심사 실패 "Hosting review failed at <단계>"
+        │
+        ▼
+SNS 주제 <prefix>-alerts
+  ├─▶ SQS 수신함 <prefix>-alerts-inbox (기본, 이 저장소의 명령은 읽지 않습니다)
+  └─▶ 메일 (Terraform 변수 alert_email을 줄 때)
+```
+
+도구 호출 경보는 사고를 알리고, 멈추는 것은 플랫폼팀입니다.
+
+```
+에이전트가 답하지 못한 채 도구만 반복해 부릅니다
+  │  Quality___get_inspection_data 호출이 몰립니다
+  ▼
+도구 게이트웨이 <prefix>-tools
+  │  도구마다 호출 수를 메트릭으로 남깁니다
+  │  AWS/Bedrock-AgentCore · Invocations · Method=tools/call · Name=<도구>
+  ▼
+CloudWatch 경보 <prefix>-tool-calls
+  │  1분 합계 > 19 ?   (데이터가 없는 분은 정상으로 봅니다)
+  │  2026-11-22: 1분에 42번 → ALARM, 사고 호출 86초 뒤 알림
+  ▼
+SNS <prefix>-alerts → 플랫폼팀
+  │
+  ▼
+platform_team/agent_stop/stop.sh <에이전트>
+```
+
+요청 하나는 이렇게 기록을 남깁니다.
+
+```
+요청 하나가 남기는 것
+  ├─ 에이전트 게이트웨이
+  │    ├─ 로그   /aws/vendedlogs/bedrock-agentcore/<prefix>-agents  (14일)
+  │    └─ trace  X-Ray
+  ├─ Runtime (에이전트)
+  │    ├─ 로그   /aws/bedrock-agentcore/runtimes/<Runtime ID>-DEFAULT, stream runtime-logs-<세션 ID>
+  │    └─ span   opentelemetry-instrument main.py가 냅니다
+  ├─ 도구 게이트웨이
+  │    ├─ 로그   /aws/vendedlogs/bedrock-agentcore/<prefix>-tools  (14일)
+  │    ├─ trace  X-Ray
+  │    └─ 메트릭 도구마다 호출 수 (도구 호출 경보가 봅니다)
+  └─ 모이는 곳
+       ├─ span: 계정의 로그 그룹 aws/spans (Transaction Search)
+       │    에이전트 게이트웨이 로그의 trace_id와 에이전트 span의 traceId가 같아 둘이 이어집니다
+       └─ 메트릭: AWS/Bedrock-AgentCore, usage.sh가 표로 출력합니다
+```
+
 ## 알림
 
 - 알림 주제는 SNS 주제 `<prefix>-alerts`입니다. 기본 허브에서는 SQS 수신함 `<prefix>-alerts-inbox`가 구독하고, 이 저장소의 어느 명령도 이 수신함을 읽지 않습니다.
