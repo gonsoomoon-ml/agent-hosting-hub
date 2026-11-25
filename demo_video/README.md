@@ -107,7 +107,7 @@ demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record
 | `43-before`, `44-attach`, `45-after` | 커스텀 가드레일을 붙이기 전과 후. 붙인 채로 5단계까지 둡니다 |
 | `51-usage` | 에이전트마다의 사용량, 도구마다의 호출, 도구 호출 경보 |
 | `52-incident`, `53-alarm` | 도구를 반복해 부르는 버전(`v2-loop`)을 올리고, 경보가 `ALARM`이 됩니다 |
-| `54-stop`, `55-neighbours` | `quality_agent`만 멈추고(403), 이웃은 답합니다(200) |
+| `54-stop`, `55-neighbours` | `quality_agent`만 멈추고(403), 다른 에이전트는 답합니다(200) |
 | `56-cause` | Claude Code가 로그(`logs`)와 코드를 읽고 원인을 찾습니다. 고치지 않습니다 |
 | `57-back` | 고친 버전을 올리고, 승인된 뒤 재개하면 답합니다 |
 

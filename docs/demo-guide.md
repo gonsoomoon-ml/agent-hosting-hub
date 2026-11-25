@@ -130,7 +130,7 @@ demo_scenes/ask quality_agent "What was the result of inspection Q-1001, and wha
 | 사용자 | 심사가 끝난 뒤 검사 Q-1002를 묻습니다. | `no answer from quality_agent within 60 s`. 에이전트는 도구를 계속 부릅니다 |
 | 플랫폼팀 | `에이전트` 페이지의 "도구 호출 경보"를 봅니다. | 분당 호출이 임계값 19를 넘고(분당 42와 38), 경보 `<접두어>-tool-calls`가 `ALARM`입니다. 알림은 호출 59~86초 뒤에 왔습니다 |
 | 플랫폼팀 | `quality_agent`의 `멈추기`를 누릅니다. `stop.sh`가 같은 일을 합니다(20초). | 그 에이전트가 멈춤으로 보입니다 |
-| 사용자 | 멈춘 에이전트와 이웃 둘을 부릅니다. | `quality_agent`는 `HTTP 403`(문장에 `stop_agent_quality_agent`), `release_review`와 `docs_adk`는 200 |
+| 사용자 | 멈춘 에이전트와 다른 에이전트 둘을 부릅니다. | `quality_agent`는 `HTTP 403`(문장에 `stop_agent_quality_agent`), `release_review`와 `docs_adk`는 200 |
 | 개발팀 | 로그와 코드 `dev_team/quality_agent/variants/v2-loop/agent.py`를 읽어 원인을 찾습니다. | 로그에 `asking again (<n>)` 줄이 분당 23~25줄 있고, 코드에 횟수 제한 없이 다시 묻는 곳이 있습니다 |
 | 개발팀 | 변형 없이 고친 버전을 다시 신청합니다. | 멈춘 채로 약 5분(298초) 뒤에 심사가 통과합니다. 사용자의 호출은 아직 403입니다 |
 | 플랫폼팀, 사용자 | `재개`를 누르고(`resume.sh`, 8초) 다시 부릅니다. | `HTTP 200`, 두 도구를 쓴 답. 가드레일이 붙어 있으면 사번 자리는 `{employee_id}`입니다 |

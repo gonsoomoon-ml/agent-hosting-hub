@@ -39,7 +39,7 @@
 6. `make preload` 뒤에 `docs_adk`가 `APPROVED`이고 `guard_prompt_docs_adk`가 `ACTIVE`이며, 숨은 지시가 든 요청이 `docs_adk`에서 403입니다. `spec_assistant`는 도구를 불러 답합니다.
 7. `quality_agent`의 사고 버전(`v2-loop`)을 제출하면 새 버전의 심사가 `SUCCEEDED`이고 레코드가 `APPROVED`입니다.
 8. 사건 질문을 보내면 경보 `<prefix>-tool-calls`의 알림이 10분 안에 옵니다. 호출자는 20초 뒤에 포기하지만 반복은 계속됩니다.
-9. `stop.sh quality_agent` 뒤에 진입이 403이고 본문에 `stop_agent_quality_agent`가 있으며, 이웃 셋(`release_review`, `docs_adk`, `spec_assistant`)은 답합니다. 멈출 때 돌던 반복은 멈추고 30초 뒤부터 3분 동안 Runtime의 로그에 새 `asking again` 줄을 남기지 않습니다.
+9. `stop.sh quality_agent` 뒤에 진입이 403이고 본문에 `stop_agent_quality_agent`가 있으며, 다른 에이전트 셋(`release_review`, `docs_adk`, `spec_assistant`)은 답합니다. 멈출 때 돌던 반복은 멈추고 30초 뒤부터 3분 동안 Runtime의 로그에 새 `asking again` 줄을 남기지 않습니다.
 10. 멈춘 채로 고친 버전을 제출하면 심사가 `SUCCEEDED`입니다. 시험 호출은 멈춤 정책을 지나가고, 사용자의 호출은 여전히 403입니다.
 11. `resume.sh quality_agent` 뒤에 `quality_agent`가 200이고 두 도구를 써서 답합니다. `usage.sh 60`의 표에 에이전트 넷이 있고 두 도구의 호출 수가 0보다 큽니다.
 12. `guardrail.sh detach`와 `rollout.sh guard_prompt off` 뒤에 두 요청이 `quality_agent`에서 다시 200입니다. `guard_prompt_`로 시작하는 정책과 SSM `/<prefix>/policies/`의 값은 남지 않습니다.

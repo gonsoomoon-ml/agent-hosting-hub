@@ -12,7 +12,7 @@
 |---|---|---|
 | `platform_team/company_policy/rollout.sh <정책> log-only\|active\|off\|report` | 전사 정책(지금은 `guard_prompt` 하나)을 호스팅된 에이전트 모두에 기록 모드나 적용 모드로 켜고, 모드를 바꾸고, 끕니다. `report`는 지난 60분의 기록(`LogOnlyMatches`, `LogOnlyDecisionFlips`)을 보여 줍니다. 모드를 SSM `/<prefix>/policies/`에 적어 두므로 나중에 승인되는 에이전트에도 걸립니다. [전사 정책](../platform_team/company_policy/README.md#전사-정책-켜고-끄기) | 켜기 27~44초, 모드 바꾸기 35~56초, 끄기 27초(에이전트 둘이나 셋) |
 | `platform_team/custom_guardrail/guardrail.sh attach\|detach\|status` | 커스텀 가드레일(interceptor Lambda)을 에이전트 게이트웨이에 붙이고 뗍니다. 게이트웨이의 다른 설정, policy engine, target은 그대로 둡니다. [커스텀 가드레일](../platform_team/custom_guardrail/README.md#붙이고-떼는-명령) | 5초. 붙인 뒤 첫 호출부터 막혔습니다 |
-| `platform_team/agent_stop/stop.sh <에이전트> [--session <ID> ...]` | 에이전트 하나의 진입을 막고(`stop_agent_<에이전트>`), 그 Runtime의 최근 세션을 끝냅니다. 심사의 시험 호출과 이웃 에이전트는 막지 않습니다. [에이전트 멈추기와 재개](../platform_team/agent_stop/README.md) | 17~20초 |
+| `platform_team/agent_stop/stop.sh <에이전트> [--session <ID> ...]` | 에이전트 하나의 진입을 막고(`stop_agent_<에이전트>`), 그 Runtime의 최근 세션을 끝냅니다. 심사의 시험 호출과 다른 에이전트는 막지 않습니다. [에이전트 멈추기와 재개](../platform_team/agent_stop/README.md) | 17~20초 |
 | `platform_team/agent_stop/resume.sh <에이전트>` | 멈춤 정책만 지웁니다. | 8~12초. 그 뒤 첫 호출부터 200 |
 | `platform_team/agent_monitoring/usage.sh [분]` | 에이전트마다 불린 수, 세션, 오류, CPU와 메모리, 도구마다 불린 수를 CloudWatch 메트릭에서 읽어 표로 출력합니다. 읽기만 합니다. [모니터링](../platform_team/agent_monitoring/README.md#사용량-보고) | 2초 |
 
