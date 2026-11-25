@@ -98,4 +98,3 @@ agent-hosting-hub/
 | [영상처럼 따라 하기](docs/demo-guide.md) | 시연 영상의 순서를 자기 계정에서 손으로 따라 하는 안내 |
 | [영상을 만드는 것](demo_video/README.md) | 스토리보드, 녹화, 자막과 컷, 개발자 PC |
 | [영상에서 치는 명령](demo_scenes/README.md) | `ask`, `publish`, `search`, `logs`와 장면의 순서 |
-| [줄이기 전의 문서](https://github.com/gonsoomoon-ml/agent-hosting-hub/tree/docs-detailed-2026-11-25) | 실행마다 잰 시간과 본 것을 모두 적은 이전 버전입니다(태그 `docs-detailed-2026-11-25`). 지금의 문서는 2026-11-25에 줄였습니다 |

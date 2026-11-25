@@ -102,4 +102,3 @@ These pages are in Korean.
 | [Follow the video by hand](docs/demo-guide.md) | A guide to go through the video's steps by hand in your own account |
 | [What makes the video](demo_video/README.md) | Storyboards, recording, captions and cuts, the developer PC |
 | [Commands typed in the video](demo_scenes/README.md) | `ask`, `publish`, `search`, `logs` and the order of the scenes |
-| [The documents before they were shortened](https://github.com/gonsoomoon-ml/agent-hosting-hub/tree/docs-detailed-2026-11-25) | The earlier version, with every run's measured times and what each run showed (tag `docs-detailed-2026-11-25`). The documents were shortened on 2026-11-25 |
