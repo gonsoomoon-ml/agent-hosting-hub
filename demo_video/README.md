@@ -2,7 +2,7 @@
 
 허브의 시연 영상을 만드는 데 쓰는 것을 모은 폴더다. 영상의 결과물과 녹화의 원본, 개발자 PC의 홈과 자격 증명 파일은 `out/` 아래에 생기고 git에 올라가지 않는다(`.gitignore`).
 
-녹화와 편집은 영상 플러그인 [demo-video](https://github.com/gonsoomoon-ml/claude-extensions/tree/main/plugins/demo-video)의 스크립트(`record_demo.mjs`, `term.mjs`, `edit_demo.py`, `make_cards.py`, 해설이 든 영상의 검사에는 `check_demo.py`)로 한다. `check_demo.py`와 해설이 든 영상에 쓰는 기능은 demo-video 1.4.0부터 있고, 1.4.0은 2026-11-24 현재 아직 공개되지 않았다(위 링크의 `main`은 1.3.0이다). 이 폴더의 스크립트는 그 플러그인의 `scripts` 폴더를 환경 변수 `DEMO_VIDEO_PLUGIN`으로 찾고, 없으면 그렇게 말하고 멈춘다.
+녹화와 편집은 영상 플러그인 [demo-video](https://github.com/gonsoomoon-ml/claude-extensions/tree/main/plugins/demo-video)의 스크립트(`record_demo.mjs`, `term.mjs`, `edit_demo.py`, `make_cards.py`, 해설이 든 영상의 검사에는 `check_demo.py`)로 한다. `check_demo.py`와 해설이 든 영상에 쓰는 기능은 demo-video 1.4.0부터 있고, 1.4.0은 2026-11-25에 공개되었다(위 링크의 `main`이 1.4.0이다). 이 폴더의 스크립트는 그 플러그인의 `scripts` 폴더를 환경 변수 `DEMO_VIDEO_PLUGIN`으로 찾고, 없으면 그렇게 말하고 멈춘다.
 
 ## 영상 한 벌 (`scripts/build.py`)
 
@@ -23,7 +23,7 @@ python3 demo_video/scripts/build.py             # 그다음 클립, 카드, 릴�
 
 같은 여섯 릴을 한국어 해설과 강조 상자를 넣어 따로 만든다. 소리 없는 릴은 그대로 두고, 해설이 든 릴은 이름 끝에 `-voice`가 붙는다(`hosting-hub-main-ko-voice.mp4`, `hosting-hub-stage-<1..5>-ko-voice.mp4`). 해설이 든 전체 릴은 YouTube에 올렸다: <https://youtu.be/cp0YKgAmrxM>.
 
-해설이 든 영상에는 demo-video 1.4.0 이상이 필요하다(`edit_demo.py voice`, `reel`이 받는 음성과 그림 조각, `check_demo.py`). 1.4.0은 2026-11-24 현재 아직 공개되지 않았다. `DEMO_VIDEO_PLUGIN`이 `check_demo.py`가 없는 폴더(1.3.0이 그렇다)를 가리키면 빌드는 1.4.0 이상이 필요하다고 한 줄로 말하고 멈춘다(종료 값 2).
+해설이 든 영상에는 demo-video 1.4.0 이상이 필요하다(`edit_demo.py voice`, `reel`이 받는 음성과 그림 조각, `check_demo.py`). 1.4.0은 2026-11-25에 공개되었다. `DEMO_VIDEO_PLUGIN`이 `check_demo.py`가 없는 폴더(1.3.0이 그렇다)를 가리키면 빌드는 1.4.0 이상이 필요하다고 한 줄로 말하고 멈춘다(종료 값 2).
 
 ```
 python3 demo_video/scripts/build.py --voice --check     # 해설과 상자를 검사하고 스크립트 파일, 해설의 줄, 릴의 목록을 쓴다. AWS를 부르지 않는다
