@@ -10,23 +10,26 @@ Policies are written in Cedar, and the hub decides which agent may use which too
 
 > The repository holds two flows. Flow 1 is hosting (application, review, approval, rejection and re-application). Flow 2 is operations (the company policy's log-only and enforce modes, the custom guardrail, a new version of an approved agent, the tool-call alarm (CloudWatch alarm), stopping and resuming one agent, the usage report, and two agents that are there from the start). Both flows have a script that checks them from end to end on real AWS (`make e2e`, `make e2e-ops`).
 
-![Concept picture: flow 1 (hosting) and flow 2 (operations)](docs/hosting-hub-concept.png)
+<p align="center">
+  <a href="docs/hosting-hub-concept.png"><img src="docs/hosting-hub-concept.png" alt="Concept picture: flow 1 (hosting) and flow 2 (operations)" width="49%"></a>
+  <a href="docs/hosting-hub-system.png"><img src="docs/hosting-hub-system.png" alt="System picture: the same two flows with AWS service names" width="49%"></a>
+</p>
 
-The concept picture draws the two flows as boxes and numbered arrows. Flow 1 (hosting) is ① to ⑥; flow 2 (operations) is ⑦ to ⑫. The system picture with the AWS service names and the description of each folder are in [Structure and code](docs/architecture.md).
+The concept picture is on the left and the system picture on the right. The concept picture draws the two flows as boxes and numbered arrows, and the system picture puts AWS service names in the same places. Flow 1 (hosting) is ① to ⑥; flow 2 (operations) is ⑦ to ⑫. For example, ⑤ is "에이전트 배포" (deploy the agent) in the concept picture and `CreateAgentRuntime` in the system picture. Click a picture to open it at full size. Both pictures are in Korean only. The description of each folder is in [Structure and code](docs/architecture.md).
 
 ## The video
 
-[![A frame of the hub's demo video: release_review's hosting review passing the seven steps](demo_video/poster.png)](https://youtu.be/cp0YKgAmrxM)
+[![A frame of the hub's demo video: the hosting review of the agent release_review passing the seven steps](demo_video/poster.png)](https://youtu.be/cp0YKgAmrxM)
 
 The full video with the narration (15 minutes 16 seconds; narration and captions in Korean) is on YouTube: <https://youtu.be/cp0YKgAmrxM>. Clicking the picture above opens it too.
 
 A video that demonstrates the hub was recorded on 2026-11-23. There is a full video (10 minutes 50 seconds) and five videos, one per stage (55 seconds to 3 minutes 31 seconds), and the picture above is one frame of the full video.
 
 - Preparation: the hub screen's home.
-- Stage 1: Claude Code on the developer PC finds the shared tools in the catalog's MCP server and makes the files of `quality_agent` from the standard template (it does not run or upload them), and the developer applies for `release_review` and the vulnerable version of `quality_agent`.
-- Stage 2: the hosting reviews of the two applications run automatically, so that `quality_agent` stops at Scan and `release_review` passes the seven steps, is approved and answers, and the platform team writes a reason and rejects, and the fixed version is approved.
+- Stage 1: Claude Code on the developer PC finds the shared tools in the catalog's MCP server and makes the files of the agent `quality_agent` from the standard template (it does not run or upload them), and the developer applies for the agent `release_review` and the vulnerable version of the agent `quality_agent`.
+- Stage 2: the hosting reviews of the two applications run automatically, so that the agent `quality_agent` stops at Scan and the agent `release_review` passes the seven steps, is approved and answers, and the platform team writes a reason and rejects, and the fixed version is approved.
 - Stage 3: the company policy `guard_prompt` is set in log-only mode, and a request that holds an instruction to the agent is not blocked and is counted once in the tally.
-- Stage 4: when the mode is raised to enforce, the same request gets 403 from both `release_review` and `docs_adk`, and it shows how a request with a code name and an answer with an employee ID differ before and after the custom guardrail is attached.
+- Stage 4: when the mode is raised to enforce, the same request gets 403 from both agents, `release_review` and `docs_adk`, and it shows how a request with a code name and an answer with an employee ID differ before and after the custom guardrail is attached.
 - Stage 5: a version that repeats its tool call passes the review but does not answer, and the tool-call alarm goes off; only that one agent is stopped and its neighbors answer. Claude Code reads the logs and the code and points to the cause, the fixed version is approved while still stopped, and after it is resumed it answers again.
 
 The video file is not in this repository. The sources of the video are in `demo_video/`: the storyboard of each scene, the editing script that holds every caption (`demo_video/scripts/build.py`), and the developer PC (`demo_video/tools/dev_pc`). Which stage was recorded how many times and what was cut is in [`demo_video/README.md`](demo_video/README.md). The hub the video was recorded on was deleted afterwards. Putting the hub up and checking it (`make deploy`, `make e2e`, `make e2e-ops`) needs neither this folder nor `demo_scenes/`.

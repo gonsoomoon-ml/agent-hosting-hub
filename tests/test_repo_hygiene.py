@@ -69,7 +69,8 @@ def _text_files() -> list[pathlib.Path]:
 
 def test_every_picture_a_readme_names_is_in_the_repo():
     """A README that names a picture (as a link, an image or a path in code ticks) names one that is in the repo. The
-    top-level READMEs show the concept picture; the page on the structure shows both pictures."""
+    top-level READMEs show the concept picture and the system picture side by side; the page on the structure
+    shows both too."""
     named = re.compile(r"[\w./-]+\.(?:png|jpg|jpeg|svg|gif)\b")
     missing = []
     for md in (f for f in repo_files() if f.suffix == ".md"):
@@ -80,7 +81,9 @@ def test_every_picture_a_readme_names_is_in_the_repo():
                 missing.append((str(md.relative_to(ROOT)), name))
     assert missing == []
     for readme in ("README.md", "README.en.md"):
-        assert "](docs/hosting-hub-concept.png)" in (ROOT / readme).read_text(encoding="utf-8")
+        text = (ROOT / readme).read_text(encoding="utf-8")
+        for picture in ("docs/hosting-hub-concept.png", "docs/hosting-hub-system.png"):      # side by side, each a link
+            assert f'<a href="{picture}"><img src="{picture}"' in text, f"{readme} does not show {picture}"
     page = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
     for picture in ("hosting-hub-concept.png", "hosting-hub-system.png"):
         assert f"]({picture})" in page, f"docs/architecture.md does not show {picture}"

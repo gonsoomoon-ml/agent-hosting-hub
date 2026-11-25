@@ -8,23 +8,26 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 > 들어 있는 것은 두 흐름입니다. 흐름 1은 호스팅(신청, 심사, 승인, 반려와 재신청)이고, 흐름 2는 운영(전사 정책의 기록 모드와 적용, 커스텀 가드레일, 승인된 에이전트의 새 버전, 도구 호출 경보(CloudWatch alarm), 에이전트 하나의 멈춤과 재개, 사용량 보고, 미리 올려 둔 에이전트 둘)입니다. 두 흐름 모두 실제 AWS에서 처음부터 끝까지 확인하는 스크립트가 있습니다(`make e2e`, `make e2e-ops`).
 
-![개념도: 흐름 1(호스팅)과 흐름 2(운영)](docs/hosting-hub-concept.png)
+<p align="center">
+  <a href="docs/hosting-hub-concept.png"><img src="docs/hosting-hub-concept.png" alt="개념도: 흐름 1(호스팅)과 흐름 2(운영)" width="49%"></a>
+  <a href="docs/hosting-hub-system.png"><img src="docs/hosting-hub-system.png" alt="구성도: 같은 두 흐름을 AWS 서비스 이름으로 그린 그림" width="49%"></a>
+</p>
 
-개념도는 두 흐름을 상자와 번호 붙은 화살표로 그린 것입니다. 흐름 1(호스팅)은 ①부터 ⑥까지이고, 흐름 2(운영)는 ⑦부터 ⑫까지입니다. AWS 서비스 이름을 넣은 구성도와 폴더별 설명은 [구조와 코드](docs/architecture.md)에 있습니다.
+왼쪽은 개념도이고 오른쪽은 구성도입니다. 개념도는 두 흐름을 상자와 번호 붙은 화살표로 그린 것이고, 구성도는 같은 자리에 AWS 서비스의 이름을 넣은 것입니다. 흐름 1(호스팅)은 ①부터 ⑥까지이고, 흐름 2(운영)는 ⑦부터 ⑫까지입니다. 예를 들어 ⑤는 개념도에서 "에이전트 배포"이고 구성도에서 `CreateAgentRuntime`입니다. 그림을 누르면 크게 열립니다. 폴더별 설명은 [구조와 코드](docs/architecture.md)에 있습니다.
 
 ## 영상
 
-[![허브의 시연 영상의 한 장면: release_review의 호스팅 심사가 일곱 단계를 지나는 화면](demo_video/poster.png)](https://youtu.be/cp0YKgAmrxM)
+[![허브의 시연 영상의 한 장면: release_review 에이전트의 호스팅 심사가 일곱 단계를 지나는 화면](demo_video/poster.png)](https://youtu.be/cp0YKgAmrxM)
 
 해설이 든 전체 영상(15분 16초, 한국어 해설과 자막)은 YouTube에서 볼 수 있습니다: <https://youtu.be/cp0YKgAmrxM>. 위의 그림을 눌러도 열립니다.
 
 허브를 시연하는 영상을 2026-11-23에 녹화했습니다. 전체 영상(10분 50초)과 단계별 영상 다섯(55초에서 3분 31초)이 있고, 위의 그림은 전체 영상의 한 장면입니다.
 
 - 준비: 허브 화면의 홈입니다.
-- 1단계: 개발자 PC의 Claude Code가 카탈로그의 MCP 서버에서 공유 도구를 찾고 표준 템플릿으로 `quality_agent`의 파일을 만든 뒤(실행하거나 올리지는 않습니다), 개발자가 `release_review`와 `quality_agent`의 취약한 버전을 신청합니다.
-- 2단계: 두 신청의 호스팅 심사가 자동으로 돌아 `quality_agent`는 Scan에서 멈추고 `release_review`는 일곱 단계를 지나 승인되어 답하며, 플랫폼팀이 사유를 적어 반려하고 고친 버전이 승인됩니다.
+- 1단계: 개발자 PC의 Claude Code가 카탈로그의 MCP 서버에서 공유 도구를 찾고 표준 템플릿으로 `quality_agent` 에이전트의 파일을 만든 뒤(실행하거나 올리지는 않습니다), 개발자가 `release_review` 에이전트와 `quality_agent` 에이전트의 취약한 버전을 신청합니다.
+- 2단계: 두 신청의 호스팅 심사가 자동으로 돌아 `quality_agent` 에이전트는 Scan에서 멈추고 `release_review` 에이전트는 일곱 단계를 지나 승인되어 답하며, 플랫폼팀이 사유를 적어 반려하고 고친 버전이 승인됩니다.
 - 3단계: 전사 정책 `guard_prompt`를 기록 모드로 걸고, 에이전트에게 내리는 지시가 든 요청이 막히지 않은 채 집계에 한 건 잡힙니다.
-- 4단계: 적용 모드로 올리면 같은 요청이 `release_review`와 `docs_adk` 모두 403이고, 커스텀 가드레일을 붙이기 전과 뒤에 코드명이 든 요청과 사번이 든 답이 어떻게 다른지 보입니다.
+- 4단계: 적용 모드로 올리면 같은 요청이 `release_review` 에이전트와 `docs_adk` 에이전트 모두 403이고, 커스텀 가드레일을 붙이기 전과 뒤에 코드명이 든 요청과 사번이 든 답이 어떻게 다른지 보입니다.
 - 5단계: 반복 호출하는 버전이 심사를 통과해 답하지 않고 도구 호출 경보가 울리며, 그 에이전트 하나만 멈추고 이웃은 답합니다. Claude Code가 로그와 코드를 읽어 원인을 찾고, 고친 버전이 멈춘 채로 승인되고, 재개하면 다시 답합니다.
 
 영상 파일은 이 저장소에 들어 있지 않습니다. 영상의 원본은 `demo_video/`에 있습니다. 장면마다의 스토리보드, 모든 자막이 든 편집 스크립트(`demo_video/scripts/build.py`), 개발자 PC(`demo_video/tools/dev_pc`)입니다. 어느 단계를 몇 번 녹화했고 무엇을 잘라 냈는지는 [`demo_video/README.md`](demo_video/README.md)에 있습니다. 영상을 녹화한 허브는 그 뒤에 지웠습니다. 허브를 올리고 확인하는 데(`make deploy`, `make e2e`, `make e2e-ops`)는 이 폴더도 `demo_scenes/`도 필요하지 않습니다.
