@@ -13,6 +13,110 @@
 | `requirements.txt` | 에이전트가 쓰는 패키지입니다. 아래 규칙을 지켜야 합니다. |
 | `publish.sh` | 코드를 올리고 승인을 요청하는 명령입니다. |
 
+## 템플릿이 하는 일
+
+에이전트가 답하는 일은 팀의 코드(`agent.py`)가 합니다. 템플릿은 그 코드를 허브에 연결하는 틀입니다. 그래서 모든 팀의 에이전트가 같은 방식으로 제출되고, 심사를 받고, 호출되고, 도구를 씁니다.
+
+```
+템플릿 (모든 팀이 같습니다)
+├── main.py        허브의 요청을 받아 run()을 부릅니다
+├── agent.py       ← 팀이 씁니다: 프롬프트, 모델, 프레임워크, 어떤 도구를 언제 부를지
+├── hub_tools.py   call_tool() 한 줄로 공유 도구를 부릅니다
+└── publish.sh     명령 한 줄로 제출하고 승인을 요청합니다
+```
+
+`publish.sh`를 실행하면 아래 순서로 올라갑니다.
+
+```
+publish.sh my_agent
+  ├─① 확인    agent.json의 이름 규칙, 도구가 카탈로그에 있는지
+  ├─② 묶기    맨 위의 .py 파일과 requirements.txt → agent.zip
+  ├─③ 올리기  제출 버킷의 submissions/<team>/<name>/agent.zip
+  ├─④ 쓰기    카탈로그 레코드(신청서, 코드의 위치와 버전) → DRAFT
+  └─⑤ 요청    승인 요청 → PENDING_APPROVAL
+                 │
+                 ▼
+       호스팅 심사: Read → Scan → Grant → Deploy → Entry → TestCall → Approve
+                 │
+                 ▼
+       Runtime <prefix>_<name>, 레코드 APPROVED
+```
+
+사용자의 질문 하나는 아래 길로 지나갑니다.
+
+```
+사용자의 질문
+  │
+  ▼
+에이전트 게이트웨이 (허브의 통제가 걸리는 곳)
+  │
+  ▼
+Runtime <prefix>_<name>
+  ├─ main.py       invoke(payload)가 agent.run(prompt)을 부릅니다
+  ├─ agent.py      팀의 코드가 call_tool("Parts___get_part_spec", {"part_id": "P-100"})을 부릅니다
+  └─ hub_tools.py  MCP tools/call 요청에 SigV4 서명을 해서 보냅니다
+       │
+       ▼
+     도구 게이트웨이 → 공유 도구 (신청서에 적은 도구만 부를 수 있습니다)
+
+돌아오는 길: 도구의 답 또는 "ERROR: …" → agent.py → {"agent", "answer", "tools_used"} → 사용자
+```
+
+## 핵심 코드
+
+아래는 줄여서 옮긴 것입니다. 전체는 각 파일에 있습니다.
+
+`main.py`는 팀의 `run()`을 부르고, 답을 정해진 모양으로 돌려줍니다.
+
+```python
+app = BedrockAgentCoreApp()
+NAME = os.environ.get("AGENT_NAME", "agent")      # the hub sets it from the application's name
+
+
+@app.entrypoint
+def invoke(payload, context=None):
+    answer, tools_used = agent.run(str(payload.get("prompt", "")))
+    return {"agent": NAME, "answer": answer, "tools_used": tools_used}
+```
+
+`hub_tools.py`의 `call_tool()`은 도구 이름과 인자로 MCP 요청을 만들고, SigV4로 서명해 도구 게이트웨이로 보냅니다. 실패해도 예외를 던지지 않고 `ERROR: …` 글을 돌려주므로, 모델이 그 글을 읽고 사용자에게 이유를 말할 수 있습니다.
+
+```python
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": tool_id, "arguments": arguments}})
+    try:
+        credentials = boto3.Session(region_name=region).get_credentials()
+        request = AWSRequest(method="POST", url=url, data=body, headers=headers)
+        SigV4Auth(credentials.get_frozen_credentials(), SERVICE, region).add_auth(request)
+        status, text = _post(url, dict(request.headers), body)
+    except Exception as e:      # network, timeout, signing: told to the agent, not raised inside it
+        return f"ERROR: could not reach the tool gateway: {error_text(e)}"
+    answer = parse_tool_response(text)
+```
+
+팀이 쓰는 `agent.py`의 예는 [`quality_agent`](../quality_agent/agent.py)입니다. Strands 에이전트에 도구 둘을 주고, `run()`이 답과 부른 도구의 목록을 돌려줍니다. 템플릿과의 약속은 이 `run()` 하나입니다.
+
+```python
+@tool
+def get_part_spec(part_id: str) -> str:
+    return call_tool("Parts___get_part_spec", {"part_id": part_id})
+
+
+def ask_once(prompt: str) -> tuple[str, list]:
+    try:
+        agent = new_agent()
+        result = agent(prompt)
+    except Exception as e:      # missing setting, model access, throttling: told to the caller, not raised
+        return f"ERROR: {error_text(e)}", []
+    return str(result).strip(), tools_called(agent.messages)
+
+
+def run(prompt: str) -> tuple[str, list]:
+    if not prompt.strip():
+        return "ERROR: empty prompt", []
+    return ask_once(prompt)
+```
+
 ## 팀이 하는 일
 
 1. 이 폴더를 복사합니다.
