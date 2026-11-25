@@ -6,6 +6,53 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 ⑫ "전사 정책 설정, 이상 에이전트 차단"의 "이상 에이전트 차단"입니다. "에이전트 게이트웨이" 상자의 진입에 정책을 하나 걸고, 그 에이전트의 Runtime에서 도는 세션을 끝냅니다.
 
+## 흐름
+
+```
+platform_team/agent_stop/stop.sh quality_agent
+  │
+  ├─ 확인   에이전트 게이트웨이에 진입 target이 있는지, SSM의 Runtime ARN이 그 에이전트의 것인지
+  │           (아니면 아무것도 만들지 않고 거부합니다. harness 에이전트도 여기서 거부됩니다)
+  │
+  ├─① 문 닫기  forbid stop_agent_quality_agent  (TestCall 역할은 빠집니다)
+  │             ACTIVE가 되기를 300초까지 기다립니다
+  │             (안 되면 정책을 지우고, 세션은 하나도 끝내지 않습니다)
+  │
+  └─② 세션 끝내기
+        Runtime 로그 그룹에서 지난 30분의 runtime-logs-<세션 ID> stream을 찾습니다
+        세션마다 StopRuntimeSession
+          stopped        끝냈습니다
+          already ended  이미 끝나 있었습니다 (실패로 세지 않습니다)
+          not stopped    이유를 출력하고, 0이 아닌 값으로 끝납니다 (정책은 그대로 둡니다)
+```
+
+멈춘 동안 에이전트 게이트웨이는 이렇게 판정합니다.
+
+```
+사용자          ──────▶  entry_permit ✓  stop_agent ✗  → 403 "stop_agent_quality_agent"
+심사의 TestCall ──────▶  review_permit ✓ stop_agent (unless로 빠짐) → 200
+다른 에이전트의 사용자 ─▶ 다른 target, 다른 정책 → 그대로 답합니다
+```
+
+사고에서 재개까지는 이 순서입니다. 걸린 시간은 아래 [멈춘 동안 보이는 것](#멈춘-동안-보이는-것)에 있습니다.
+
+```
+이상 동작 발견  (예: 도구를 쉬지 않고 불러 도구 호출 경보가 울립니다)
+  │
+  ▼
+stop.sh <에이전트>
+  │  사용자의 호출은 403, 다른 에이전트는 그대로 답합니다
+  ▼
+팀이 고친 버전을 제출합니다 (publish.sh)
+  │  멈춘 채로 심사를 받고 승인됩니다
+  │  사용자의 호출은 아직 403입니다 (멈춤 정책이 남아 있습니다)
+  ▼
+resume.sh <에이전트>
+  │  멈춤 정책 하나만 지웁니다
+  ▼
+사용자의 호출이 다시 200
+```
+
 ## 명령 둘
 
 ```
