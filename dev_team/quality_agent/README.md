@@ -19,6 +19,30 @@
 
 `variants/` 아래의 폴더 하나가 데모를 위한 버전 하나입니다. 올릴 때 변형의 파일이 같은 이름의 기본 파일을 대신합니다(`publish.sh`의 두 번째 인자). **다른 에이전트의 바탕으로 쓰지 않습니다.**
 
+```
+publish.sh dev_team/quality_agent v1-vulnerable
+  │  requirements.txt에 jinja2==2.11.2 (공개된 취약점)를 일부러 넣었습니다
+  ▼
+심사의 Scan: pip-audit가 찾아 거부 → 플랫폼팀이 reject.sh
+
+publish.sh dev_team/quality_agent
+  │  기본 코드: 한 번만 묻습니다 (ask_once)
+  ▼
+심사 통과 → APPROVED
+
+publish.sh dev_team/quality_agent v2-loop
+  │  "결과가 PENDING이면 처음부터 다시 묻는다"에서 횟수 제한이 빠진 새 버전
+  │  심사의 시험 호출은 부품 사양을 물어 PENDING이 없으므로 심사를 지납니다
+  ▼
+사용자: "What is the result of inspection Q-1002?"  (Q-1002는 늘 PENDING)
+  │  도구를 쉬지 않고 부릅니다 → 도구 호출 경보 → stop.sh
+  ▼
+publish.sh dev_team/quality_agent   (고친 버전 = 기본 코드)
+  │  멈춘 채로 심사를 지납니다
+  ▼
+resume.sh → 다시 답합니다
+```
+
 ### variants/v1-vulnerable
 
 `requirements.txt`에 공개된 취약점이 있는 `jinja2==2.11.2`를 더한 변형입니다. 호스팅 심사의 스캔이 제출을 거부하는 모습을 보여 줍니다. 에이전트 코드는 같습니다.

@@ -4,6 +4,22 @@
 
 ## 노드(이 순서로 고정)
 
+```
+START
+  ▼
+read_change    입력을 정리합니다 (모델, 도구 없음)
+  ▼
+check_rules    모델 호출 한 번 → OK 또는 VIOLATION: <이유>
+  ▼
+file_request   위반일 때만 Release___file_review_request를 부릅니다
+  ▼
+report         판정과 요청 번호를 이어 답을 만듭니다 (모델 없음)
+  ▼
+END
+```
+
+모델이 도구를 스스로 고르는 [quality_agent](../quality_agent/README.md)와 달리, 이 에이전트는 모델과 도구를 언제 부를지 코드가 정합니다.
+
 | 순서 | 노드 | 하는 일 |
 |---|---|---|
 | 1 | `read_change` | 입력을 정리합니다. 모델도 도구도 부르지 않습니다. |

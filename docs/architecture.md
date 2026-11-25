@@ -23,6 +23,20 @@
 | `e2e_checks/` | 누구나 | 실제 AWS에서 돌리는 확인 스크립트: `e2e_hosting.py`(흐름 1), `e2e_operations.py`(흐름 2), `check_platform.py`(허브의 기반 자원), `check_cleanup.py`(지운 뒤 남은 것). `spikes/`는 만들면서 가정을 확인한 기록입니다([확인 테스트](../e2e_checks/spikes/README.md)) |
 | `tests/` | 누구나 | 단위 테스트(`make test`). AWS를 부르지 않습니다. |
 
+## 예시 에이전트 넷
+
+넷은 프레임워크가 모두 다릅니다. 허브는 프레임워크와 상관없이 같은 방식으로 에이전트를 올리고 통제합니다.
+
+| | [quality_agent](../dev_team/quality_agent/README.md) | [release_review](../dev_team/release_review/README.md) | [docs_adk](../dev_team/preloaded_agents/docs_adk/README.md) | [spec_assistant](../dev_team/preloaded_agents/spec_assistant/README.md) |
+|---|---|---|---|---|
+| 프레임워크 | Strands (ReAct) | LangGraph (고정 흐름) | Google ADK | AgentCore managed harness (코드 없음) |
+| 하는 일 | 검사 결과, 부품 사양 | 릴리스 규칙 위반 판단 | 사내 설계 표준 | 부품 사양, 시험 결과 |
+| 허브의 도구 | `Quality`, `Parts`의 둘 | `Release`의 하나 | 없음(`[]`) | `Parts`의 둘 |
+| 올리는 길 | `publish.sh`, 심사 | `publish.sh`, 심사 | `make preload`, 심사 | `make preload`, 심사를 건너뜁니다 |
+| 진입 통제 | 받습니다 | 받습니다 | 받습니다 | 받지 않습니다(진입 target 없음) |
+
+코드가 있는 셋의 `main.py`와 `hub_tools.py`는 [에이전트 템플릿](../dev_team/agent_template/README.md)의 복사본입니다.
+
 ## 코드 따라 읽기
 
 흐름 1(호스팅)의 첫 두 단계가 지나가는 코드입니다. 번호는 위 [개념도](hosting-hub-concept.png)의 번호입니다.
