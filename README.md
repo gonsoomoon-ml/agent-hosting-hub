@@ -8,12 +8,13 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 > 들어 있는 것은 두 흐름입니다. 흐름 1은 호스팅(신청, 심사, 승인, 반려와 재신청)이고, 흐름 2는 운영(전사 정책의 기록 모드와 적용, 커스텀 가드레일, 승인된 에이전트의 새 버전, 도구 호출 경보(CloudWatch alarm), 에이전트 하나의 멈춤과 재개, 사용량 보고, 미리 올려 둔 에이전트 둘)입니다. 두 흐름 모두 실제 AWS에서 처음부터 끝까지 확인하는 스크립트가 있습니다(`make e2e`, `make e2e-ops`).
 
-<p align="center">
-  <a href="docs/hosting-hub-concept.png"><img src="docs/hosting-hub-concept.png" alt="개념도: 흐름 1(호스팅)과 흐름 2(운영)" width="49%"></a>
-  <a href="docs/hosting-hub-system.png"><img src="docs/hosting-hub-system.png" alt="구성도: 같은 두 흐름을 AWS 서비스 이름으로 그린 그림" width="49%"></a>
-</p>
+[![개념도: 흐름 1(호스팅)과 흐름 2(운영)](docs/hosting-hub-concept.png)](docs/hosting-hub-concept.png)
 
-왼쪽은 개념도이고 오른쪽은 구성도입니다. 개념도는 두 흐름을 상자와 번호 붙은 화살표로 그린 것이고, 구성도는 같은 자리에 AWS 서비스의 이름을 넣은 것입니다. 흐름 1(호스팅)은 ①부터 ⑥까지이고, 흐름 2(운영)는 ⑦부터 ⑫까지입니다. 예를 들어 ⑤는 개념도에서 "에이전트 배포"이고 구성도에서 `CreateAgentRuntime`입니다. 그림을 누르면 크게 열립니다. 폴더별 설명은 [구조와 코드](docs/architecture.md)에 있습니다.
+개념도는 두 흐름을 상자와 번호 붙은 화살표로 그린 것입니다. 흐름 1(호스팅)은 ①부터 ⑥까지이고, 흐름 2(운영)는 ⑦부터 ⑫까지입니다.
+
+[![구성도: 같은 두 흐름을 AWS 서비스 이름으로 그린 그림](docs/hosting-hub-system.png)](docs/hosting-hub-system.png)
+
+구성도는 개념도와 같은 자리에 AWS 서비스의 이름을 넣은 것입니다. 예를 들어 ⑤는 개념도에서 "에이전트 배포"이고 구성도에서 `CreateAgentRuntime`입니다. 폴더별 설명은 [구조와 코드](docs/architecture.md)에 있습니다.
 
 ## 영상
 

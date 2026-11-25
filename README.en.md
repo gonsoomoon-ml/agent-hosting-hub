@@ -10,12 +10,13 @@ Policies are written in Cedar, and the hub decides which agent may use which too
 
 > The repository holds two flows. Flow 1 is hosting (application, review, approval, rejection and re-application). Flow 2 is operations (the company policy's log-only and enforce modes, the custom guardrail, a new version of an approved agent, the tool-call alarm (CloudWatch alarm), stopping and resuming one agent, the usage report, and two agents that are there from the start). Both flows have a script that checks them from end to end on real AWS (`make e2e`, `make e2e-ops`).
 
-<p align="center">
-  <a href="docs/hosting-hub-concept.png"><img src="docs/hosting-hub-concept.png" alt="Concept picture: flow 1 (hosting) and flow 2 (operations)" width="49%"></a>
-  <a href="docs/hosting-hub-system.png"><img src="docs/hosting-hub-system.png" alt="System picture: the same two flows with AWS service names" width="49%"></a>
-</p>
+[![Concept picture: flow 1 (hosting) and flow 2 (operations)](docs/hosting-hub-concept.png)](docs/hosting-hub-concept.png)
 
-The concept picture is on the left and the system picture on the right. The concept picture draws the two flows as boxes and numbered arrows, and the system picture puts AWS service names in the same places. Flow 1 (hosting) is ① to ⑥; flow 2 (operations) is ⑦ to ⑫. For example, ⑤ is "에이전트 배포" (deploy the agent) in the concept picture and `CreateAgentRuntime` in the system picture. Click a picture to open it at full size. Both pictures are in Korean only. The description of each folder is in [Structure and code](docs/architecture.md).
+The concept picture draws the two flows as boxes and numbered arrows. Flow 1 (hosting) is ① to ⑥; flow 2 (operations) is ⑦ to ⑫.
+
+[![System picture: the same two flows with AWS service names](docs/hosting-hub-system.png)](docs/hosting-hub-system.png)
+
+The system picture puts AWS service names in the same places as the concept picture. For example, ⑤ is "에이전트 배포" (deploy the agent) in the concept picture and `CreateAgentRuntime` in the system picture. Both pictures are in Korean only. The description of each folder is in [Structure and code](docs/architecture.md).
 
 ## The video
 
