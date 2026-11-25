@@ -6,6 +6,55 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 "개발팀"이 쓰는 권한이고, 따로 그린 상자는 없습니다. ① "에이전트와 도구 검색"과 ② "에이전트 호스팅 신청"에서 카탈로그를 쓰는 권한이 여기에 있습니다.
 
+## 흐름
+
+```
+<prefix>-dev-role   (dev_principals가 맡습니다)
+  │
+  ├─ 공유 도구 부르기
+  │    IAM: bedrock-agentcore:InvokeGateway (도구 게이트웨이에만)
+  │    Cedar: shared_tool_read (Parts___get_part_spec 하나만)
+  │
+  ├─ 카탈로그
+  │    검색, 레코드 읽기, 만들기, 고치기, 승인 요청 (Registry의 모든 레코드)
+  │    MCP endpoint로 검색 (개발자의 코딩 도우미, 예: Claude Code)
+  │
+  ├─ 제출
+  │    제출 버킷의 submissions/ 아래에 코드 올리기 (s3:PutObject, 호스팅 심사 모듈이 붙입니다)
+  │    SSM /<prefix>/platform 아래의 값 읽기 (publish.sh가 버킷과 카탈로그를 찾습니다)
+  │
+  └─ 로그 읽기 (쓰기는 못합니다)
+       로그 줄: /aws/bedrock-agentcore/runtimes/<prefix>_* 만
+       로그 그룹 이름: 계정 전체 (IAM이 좁히지 못합니다)
+```
+
+개발자는 역할 하나로 이 순서로 일합니다.
+
+```
+① 찾기     코딩 도우미 → Registry MCP endpoint → 레코드 parts-tools
+② 써 보기  call_tool("Parts___get_part_spec", …) → 도구 게이트웨이 → shared_tool_read
+           다른 도구는 이 역할의 permit이 없어 부를 수 없습니다
+③ 올리기   publish.sh → S3 submissions/ → 카탈로그 레코드 → 승인 요청 → 호스팅 심사
+④ 살펴보기 demo_scenes/logs → 허브 Runtime의 로그 줄 (harness 에이전트의 로그는 읽지 못합니다)
+```
+
+심사를 통과하면 에이전트의 실행 역할이 자기 도구의 permit(`tool_<에이전트>_…`)을 받습니다. 개발팀 역할의 권한은 심사 뒤에도 그대로입니다.
+
+도구 호출은 두 겹을 지납니다.
+
+```
+개발자 (dev-role로 서명한 요청)
+  │
+  ▼
+IAM: 도구 게이트웨이에 InvokeGateway가 허용되어 있나? (문 안으로 들어가는지)
+  │ 예
+  ▼
+Cedar: 이 역할에 이 도구의 permit이 있나? (어느 도구가 답하는지)
+  │ shared_tool_read: principal = dev-role, action = Parts___get_part_spec
+  ▼
+도구 Lambda
+```
+
 ## 할 수 있는 일
 
 | 할 수 있는 일 | 쓰는 곳 |
