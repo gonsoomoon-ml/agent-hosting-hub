@@ -6,6 +6,71 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 ⑫ "전사 정책 설정, 이상 에이전트 차단"에서 플랫폼팀이 거는 것 가운데 하나입니다. "에이전트 게이트웨이" 상자 안의 "커스텀 가드레일"이고, 도구 게이트웨이에는 붙이지 않습니다.
 
+## interceptor는 어떻게 동작하나
+
+interceptor는 게이트웨이가 요청과 답을 넘기기 직전에 부르는 Lambda입니다. 모든 요청과 모든 답을 한 번씩 검사하고, 그대로 넘기거나, 가려서 넘기거나, 403으로 막습니다.
+
+```
+사용자의 질문  "Q-1001 검사 결과 알려줘"
+  │
+  ▼
+에이전트 게이트웨이 <prefix>-agents
+  │
+  │  ① REQUEST 지점
+  ├────────▶ interceptor Lambda <prefix>-guardrail
+  │            └─ ApplyGuardrail(source="INPUT") ──▶ guardrail <prefix>-company-guardrail
+  │◀──────── 결정: 통과 / 가린 본문 / 403
+  │
+  ▼
+에이전트 (Runtime <prefix>_<에이전트>)
+  │  답: "검사자는 EMP-204817입니다"
+  │
+  │  ② RESPONSE 지점
+  ├────────▶ interceptor Lambda <prefix>-guardrail
+  │            └─ ApplyGuardrail(source="OUTPUT")
+  │◀──────── 결정: 통과 / 가린 본문 / 403
+  │
+  ▼
+사용자가 받는 답: "검사자는 {employee_id}입니다"
+```
+
+| 결정 | 언제 | Lambda가 돌려주는 것 |
+|---|---|---|
+| 통과 | 걸린 것이 없을 때 | `{"interceptorOutputVersion": "1.0", "http": {}}` |
+| 가림 | 사번이 있을 때 | 요청이면 `transformedGatewayRequest`, 답이면 `transformedGatewayResponse`에 가린 본문 |
+| 막음 | 금지어가 있을 때 | `transformedGatewayResponse`에 403과 오류 본문. 요청을 막으면 에이전트는 그 요청을 받지 못합니다. |
+
+`interceptor_lambda.py`의 핵심은 아래와 같습니다(줄인 것).
+
+```python
+def guard(text, source):                      # 고객의 가드레일로 바꿀 곳은 이 함수 하나입니다
+    r = _client().apply_guardrail(guardrailIdentifier=os.environ["GUARDRAIL_ID"], ...,
+                                  source=source, content=[{"text": {"text": text}}])
+    return blocked, masked                    # (막혔는가, 가린 뒤의 글)
+
+
+def handler(event, context, guard=guard):
+    h = event.get("http")
+    req, resp = h.get("gatewayRequest"), h.get("gatewayResponse")
+    if resp is None:                          # ① REQUEST: 사용자의 질문
+        blocked, masked = guard(whole, "INPUT")
+        if blocked:
+            return refuse()                   # 403
+        if masked != prompt:
+            return {V: "1.0", "http": {"transformedGatewayRequest": {"body": b64(masked)}}}
+        return {V: "1.0", "http": {}}         # 통과
+    raw = unb64(resp.get("body"))             # ② RESPONSE: 에이전트의 답
+    blocked, masked = guard(raw, "OUTPUT")
+    ...
+```
+
+`attach`가 게이트웨이에 더하는 설정은 아래 하나입니다(`guardrail_attach.py`).
+
+```python
+{"interceptor": {"lambda": {"arn": arn}}, "interceptionPoints": ["REQUEST", "RESPONSE"],
+ "inputConfiguration": {"passRequestHeaders": False}}
+```
+
 ## 무엇을 막고 무엇을 가리나
 
 | 규칙(Terraform 변수) | 기본값 | 요청에서 | 답에서 |
