@@ -39,7 +39,7 @@ demo_scenes/publish quality_agent v1-vulnerable
 demo_scenes/publish release_review
 # 호스팅된 에이전트를 부릅니다(release_review가 승인된 뒤)
 demo_scenes/ask release_review --file demo_scenes/inputs/change-ok.txt
-# 반려된 취약한 버전을 고쳐 다시 신청하고, 승인된 뒤 부릅니다
+# 취약한 패키지 때문에 반려된 quality_agent를 고쳐 다시 신청하고, 승인된 뒤 부릅니다
 demo_scenes/publish quality_agent
 demo_scenes/ask quality_agent "What is the spec of part P-100?"
 # 전사 정책: 기록 모드에서는 지나고 적용 모드에서는 막힙니다. 같은 파일을 docs_adk에도 보냅니다

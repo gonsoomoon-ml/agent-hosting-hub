@@ -96,7 +96,7 @@ demo_video/scenes/record.sh <장면> [최대 초] [--lang ko]      # 예: record
 |---|---|
 | `00-home` | 허브 화면의 홈 |
 | `11-find` | Claude Code가 MCP 검색 도구로 부품 규격 도구를 찾고, 템플릿으로 `quality_agent`의 파일을 만듭니다(메모 `make_asked`부터 `12-make`) |
-| `13-submit` | `release_review`와 `quality_agent`의 취약한 버전을 신청합니다 |
+| `13-submit` | `release_review`와, 취약한 패키지가 든 `quality_agent`(`v1-vulnerable`)를 신청합니다 |
 | `21-review` | 두 심사: `quality_agent`는 Scan에서 실패, `release_review`는 `APPROVED` |
 | `22-works` | 사용자가 `release_review`를 부릅니다 |
 | `23-reject` | 실패한 단계와 스캔이 찾은 줄을 보이고 반려합니다 |
