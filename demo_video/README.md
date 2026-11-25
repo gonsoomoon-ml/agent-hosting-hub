@@ -21,7 +21,7 @@ python3 demo_video/scripts/build.py             # 그다음 클립, 카드, 릴�
 
 ## 해설이 든 영상 (`build.py --voice`)
 
-같은 여섯 릴을 한국어 해설과 강조 상자를 넣어 따로 만든다. 소리 없는 릴은 그대로 두고, 해설이 든 릴은 이름 끝에 `-voice`가 붙는다(`hosting-hub-main-ko-voice.mp4`, `hosting-hub-stage-<1..5>-ko-voice.mp4`).
+같은 여섯 릴을 한국어 해설과 강조 상자를 넣어 따로 만든다. 소리 없는 릴은 그대로 두고, 해설이 든 릴은 이름 끝에 `-voice`가 붙는다(`hosting-hub-main-ko-voice.mp4`, `hosting-hub-stage-<1..5>-ko-voice.mp4`). 해설이 든 전체 릴은 YouTube에 올렸다: <https://youtu.be/cp0YKgAmrxM>.
 
 해설이 든 영상에는 demo-video 1.4.0 이상이 필요하다(`edit_demo.py voice`, `reel`이 받는 음성과 그림 조각, `check_demo.py`). 1.4.0은 2026-11-24 현재 아직 공개되지 않았다. `DEMO_VIDEO_PLUGIN`이 `check_demo.py`가 없는 폴더(1.3.0이 그렇다)를 가리키면 빌드는 1.4.0 이상이 필요하다고 한 줄로 말하고 멈춘다(종료 값 2).
 
