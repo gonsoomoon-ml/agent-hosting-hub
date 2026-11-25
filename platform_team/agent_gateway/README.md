@@ -6,6 +6,47 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 "에이전트 게이트웨이: 요청에 전사 정책 적용" 상자입니다. 흐름 2에서 7a "작업 요청"으로 사용자의 요청을 받고, 7b "요청 전달"로 정책을 통과한 요청만 에이전트 실행 환경에 넘깁니다.
 
+## 두 게이트웨이
+
+허브의 문은 둘입니다. 이 게이트웨이는 사용자와 에이전트 사이에, [도구 게이트웨이](../tool_gateway/README.md)는 에이전트와 사내 도구 사이에 있습니다. 둘 다 같은 policy engine `<prefix>_pe`를 `ENFORCE`로 따르고, 호출자를 IAM(SigV4 서명)으로 확인합니다.
+
+```
+사용자 (demo_scenes/ask)
+  │  POST https://<게이트웨이 ID>.gateway.bedrock-agentcore.<리전>.amazonaws.com/<target>/invocations
+  ▼
+┌─ 에이전트 게이트웨이 <prefix>-agents ───────────────
+│   판정: entry_permit, review_permit, guard_secret, guard_prompt, stop_agent
+│   interceptor: 커스텀 가드레일 (붙어 있을 때)
+│   target: QualityAgent, ReleaseReview, DocsAdk …   (에이전트마다 하나, 심사의 Entry가 붙입니다)
+└──────────────────────────────────────────────────
+  │  InvokeAgentRuntime (게이트웨이 역할 <prefix>-agents-role)
+  ▼
+Runtime <prefix>_<에이전트>  ── 팀의 코드
+  │  hub_tools.call_tool("Parts___get_part_spec", …)   MCP tools/call, 에이전트 실행 역할로 서명
+  ▼
+┌─ 도구 게이트웨이 <prefix>-tools  (MCP) ─────────────
+│   판정: tool_<에이전트>_<Target>_<도구>  (실행 역할마다, 도구마다 permit)
+│   target: Quality, Parts, Release   (Terraform이 만듭니다)
+└──────────────────────────────────────────────────
+  │  lambda:InvokeFunction (게이트웨이 역할 <prefix>-tools-role)
+  ▼
+도구 Lambda (sample_tools, target 셋이 같은 Lambda)
+```
+
+```
+                     에이전트 게이트웨이            도구 게이트웨이
+이름                 <prefix>-agents               <prefix>-tools
+protocol type        없음 (HTTP)                   MCP
+target               Runtime (에이전트마다 하나)     Lambda (Quality, Parts, Release)
+target을 붙이는 것    호스팅 심사의 Entry (API)       Terraform
+action 이름          <Target>___POST:/invocations  <Target>___<tool>
+permit의 principal   누구나 (entry_permit)          그 에이전트의 실행 역할만
+interceptor          커스텀 가드레일                 없음
+호출하는 쪽           사용자, 심사의 TestCall          에이전트, 개발자 역할
+```
+
+정책이 요청을 판정하는 방법은 [전사 정책](../company_policy/README.md#정책이-요청을-판정하는-방법)에 있습니다. 진입 정책은 이 게이트웨이를 지날 때만 걸리고, Runtime을 직접 부르는 호출에는 걸리지 않습니다([한계](../../docs/limits.md)).
+
 ## 파일
 
 | 파일 | 역할 |
