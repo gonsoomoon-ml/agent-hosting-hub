@@ -54,7 +54,7 @@ make destroy           # 허브가 만든 것을 모두 지웁니다. 에이전�
 
 ```text
 agent-hosting-hub/
-├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy 등(아래 "일곱 명령")
+├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy 등(docs/getting-started.md의 "일곱 명령")
 ├── .env.example          # 허브의 세 값: 리전, 접두어, 모델
 │
 ├── platform_team/        # 플랫폼팀: 허브의 기반 자원과 운영 명령. 기능 하나가 폴더 하나입니다

@@ -56,7 +56,7 @@ The folders are split by who uses them. Below is the structure opened two levels
 
 ```text
 agent-hosting-hub/
-├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy and more ("Seven commands" below)
+├── Makefile              # make deploy, seed, preload, e2e, e2e-ops, destroy and more ("Seven commands" in docs/getting-started.md)
 ├── .env.example          # the hub's three values: region, prefix, model
 │
 ├── platform_team/        # platform team: the hub's base resources and the operations commands; one folder per feature
