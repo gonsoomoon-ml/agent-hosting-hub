@@ -6,6 +6,47 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 ⑫ "전사 정책 설정, 이상 에이전트 차단"입니다. ④ "에이전트에 도구 권한 부여"와 ⑥의 6a "요청 허용"의 permit도 이 engine에 들어갑니다.
 
+## 정책이 요청을 판정하는 방법
+
+게이트웨이는 요청을 받을 때마다 policy engine에 묻고, 그 결정대로 요청을 넘기거나 403으로 막습니다. Cedar의 규칙대로 맞는 `permit`이 없으면 거부하고, `forbid`가 하나라도 맞으면 `permit`이 있어도 거부합니다.
+
+```
+호출자 (IAM 역할로 서명된 요청)
+  │  "quality_agent에 이 질문을 보냅니다"
+  ▼
+에이전트 게이트웨이 <prefix>-agents
+  │  policy engine에 묻습니다
+  ▼
+policy engine <prefix>_pe
+  │  요청을 네 가지로 봅니다
+  │    principal  누가       arn:aws:sts::<account>:assumed-role/<역할>
+  │    action     무엇을     QualityAgent___POST:/invocations
+  │    resource   어디서     이 게이트웨이의 ARN
+  │    context    내용       질문(prompt)
+  │
+  │  이 요청에 맞는 정책을 모두 찾습니다
+  │    permit 맞음? ──아니요──▶ 거부 (기본 거부)
+  │       │ 예
+  │    forbid 맞음? ───예────▶ 거부 (forbid가 이깁니다)
+  │       │ 아니요
+  ▼       ▼
+허용 → 에이전트(Runtime)로 넘깁니다
+```
+
+같은 에이전트라도 걸린 정책에 따라 결정이 다릅니다. 정책의 이름과 거는 단계는 [호스팅 심사의 정책 이름](../hosting_review/README.md#정책-이름)에 있고, Cedar 문장은 `policy_templates/`에 있습니다.
+
+```
+상황                          맞는 permit       맞는 forbid     결과
+심사 중, 사용자가 부름          없음              -              거부 (기본 거부)
+심사 중, TestCall이 부름        review_permit     -              허용
+승인 뒤, 보통 질문              entry_permit      -              허용
+승인 뒤, access key가 든 질문   entry_permit      guard_secret   거부
+멈춘 뒤, 사용자가 부름          entry_permit      stop_agent     거부
+멈춘 뒤, TestCall이 부름        두 permit         없음           허용 (unless로 빠집니다)
+```
+
+permit을 더하면 문이 열리고, forbid를 더하면 다른 정책을 지우지 않아도 막힙니다. 멈추기와 재개는 forbid 하나를 걸고 지우는 일입니다. 도구 게이트웨이도 같은 engine으로 판정하고, 그 에이전트의 실행 역할에 준 `tool_<에이전트>_<Target>_<도구>` permit이 없는 도구는 부를 수 없습니다.
+
 ## 전사 정책 켜고 끄기
 
 전사 정책은 플랫폼팀이 에이전트 게이트웨이에 진입 target이 있는 모든 에이전트에 하나씩 거는 정책입니다. 지금은 `guard_prompt` 하나입니다. 프롬프트 공격(`PROMPT_INJECTION`, 신뢰도 0.4 초과)인 질문을 에이전트 게이트웨이에서 거부하고, 에이전트마다 이름은 `guard_prompt_<에이전트>`입니다.
