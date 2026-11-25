@@ -10,9 +10,9 @@
 - AWS 자격 증명. 허브는 IAM 역할, 정책 엔진, 게이트웨이, Lambda, CodeBuild, Step Functions, S3 bucket 등을 만듭니다. 관리자 권한의 자격 증명으로 확인했습니다.
 - 리전 `us-west-2`. 셸의 기본 리전이 다르면 `AWS_REGION=us-west-2`를 줍니다.
 - Amazon Bedrock 모델 사용 권한. 기본 모델은 추론 프로파일 `us.anthropic.claude-haiku-4-5-20251001-v1:0`입니다.
-- trace를 보려면 계정의 CloudWatch Transaction Search를 켜 둡니다. 계정에서 한 번 하는 설정이고, 허브는 이것을 켜지도 끄지도 않습니다. [모니터링](../platform_team/agent_monitoring/README.md#무엇이-어디에-남는가)
+- trace를 보려면 계정의 CloudWatch Transaction Search를 켜 둡니다. AgentCore 개발자 안내서는 이것을 계정에서 한 번 하는 설정으로 적습니다. 허브는 켜지도 끄지도 않고, 꺼진 계정에서는 해 보지 않았습니다. [모니터링](../platform_team/agent_monitoring/README.md#무엇이-어디에-남는가)
 
-이 저장소의 첫 공개 버전으로 올린 허브가 있으면, 그 버전의 코드로 `make destroy`를 돌려 지운 뒤 지금의 코드로 다시 올립니다.
+이 저장소의 첫 공개 버전으로 올린 허브가 있으면, 그 버전의 코드로 `make destroy`를 돌려 지운 뒤 지금의 코드로 다시 올립니다. 이 순서는 코드로 본 것이고, 그런 허브를 지금의 코드로 바꿔 본 적은 없습니다.
 
 ## `.env`
 
@@ -28,7 +28,7 @@
 - `.env`에서 읽는 것은 이 세 줄뿐입니다. 자격 증명을 적어 두어도 쓰이지 않습니다.
 - 값은 `make`의 명령줄(`make deploy DEMO_PREFIX=demo`), `.env`, 셸의 환경 변수, 기본값의 순서로 찾습니다.
 - 접두어는 소문자로 시작하는 2~10자의 소문자와 숫자입니다(`hub`, `demo2`). `harness`는 쓸 수 없습니다. AgentCore가 harness의 Runtime 이름에 쓰는 말이라 이름이 겹칩니다.
-- 에이전트가 올라와 있는 허브에서 `MODEL_ID`를 바꿔도 이미 있는 에이전트는 옛 모델을 씁니다. Runtime 에이전트는 새 버전을 제출하면 바뀌고, harness(`spec_assistant`)는 허브를 지우고 다시 올려야 바뀝니다. 코드가 그렇게 하고, AWS에서 모델을 바꿔 본 적은 없습니다.
+- 에이전트가 올라와 있는 허브에서 `MODEL_ID`를 바꿔도 이미 있는 에이전트는 옛 모델을 씁니다. Runtime 에이전트는 새 버전의 심사가 Deploy까지 가야 바뀝니다. Grant부터 Deploy까지는 돌고 있는 버전이 부를 수 있는 모델이 없고, 새 버전이 그 사이에 떨어지면 그 상태로 남습니다([심사가 실패했을 때](../platform_team/hosting_review/README.md#심사가-실패했을-때)). harness(`spec_assistant`)는 허브를 지우고 다시 올려야 바뀝니다. 코드가 그렇게 하고, AWS에서 모델을 바꿔 본 적은 없습니다.
 
 ## 일곱 명령
 
@@ -38,9 +38,9 @@
 | 2 | `make seed` | 공유 도구 레코드(`parts-tools`)를 카탈로그에 넣고 승인합니다. 개발자의 첫 검색이 이것을 찾습니다. | 6초 |
 | 3 | `make preload` | 에이전트 둘을 미리 올려 둡니다(아래 "미리 올려 둔 에이전트 둘"). 이미 있는 것은 그대로 둡니다. | 11~14분(660~810초). 다시 돌리면 3~8초 |
 | 4 | `dev_team/agent_template/publish.sh dev_team/<에이전트> [변형]` | 개발팀이 코드를 제출 버킷에 올리고 신청서를 카탈로그에 쓰고 승인을 요청합니다. 호스팅 심사가 자동으로 시작합니다. 개발팀 역할(`<prefix>-dev-role`)의 권한이면 됩니다. | 명령은 6초. 심사는 통과할 때 약 6분(356~387초), Scan에서 떨어질 때 31~38초 |
-| 5 | `make e2e` | 흐름 1(호스팅)을 처음부터 끝까지 확인합니다([확인한 것](checks.md#make-e2e가-확인하는-것)). 기록은 `e2e_checks/last-run.log`에 남습니다. | 약 14분(853~865초) |
+| 5 | `make e2e` | 흐름 1(호스팅)을 처음부터 끝까지 확인합니다([확인한 것](checks.md#make-e2e가-확인하는-것)). 기록은 `e2e_checks/last-run.log`에 남습니다. | 에이전트가 없는 허브에서 약 14분(853~865초) |
 | 6 | `make e2e-ops` | 흐름 2(운영)를 처음부터 끝까지 확인합니다([확인한 것](checks.md#make-e2e-ops가-확인하는-것)). `make e2e`가 끝난 허브에서 돌고, 그 안에서 `make preload`를 부릅니다. 기록은 `e2e_checks/last-run-ops.log`에 남습니다. | 약 33~35분(1956~2090초). 같은 허브에서 다시 돌리면 약 22분(1305초) |
-| 7 | `make destroy` | 허브가 만든 것을 모두 지웁니다([요금과 지우기](cost-and-cleanup.md#make-destroy가-지우는-것과-남기는-것)). 계획을 보여 주고 `yes`를 묻습니다. | 에이전트 둘이면 약 10분(566~595초), 넷이면 약 18분(1062~1081초) |
+| 7 | `make destroy` | 허브가 만든 것을 모두 지웁니다([요금과 지우기](cost-and-cleanup.md#make-destroy가-지우는-것과-남기는-것)). 계획을 보여 주고 `yes`를 묻습니다. | 에이전트 둘이면 약 10분(566~595초), 넷이면 약 18분(1081초) |
 
 - 시간은 2026-11-22와 2026-11-23의 실행(`us-west-2`, 접두어 `hub`)에서 잰 것입니다.
 - `make deploy`와 `make destroy`는 `AUTO_APPROVE=1`로만 돌렸습니다. `yes`를 묻는 대화와, 4번과 같은 일을 하는 `make publish AGENT=<에이전트>`는 확인하지 않았습니다.

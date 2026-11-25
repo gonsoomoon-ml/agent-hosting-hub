@@ -4,16 +4,40 @@
 
 이 샘플의 한계를 적습니다. 자세한 것은 각 기능의 문서에 있습니다. Omni 조회와 AWS 콘솔의 화면은 들어 있지 않습니다.
 
-- 배포 단계의 권한: 검사(Scan)의 역할은 제출물을 읽기만 합니다. 배포(Deploy)의 역할은 Runtime을 만들 수 있고(정책은 만들기를 `runtime/*`에 허락합니다. IAM이 만들기를 그 자원에 대어 보므로 자원으로는 허브의 이름으로 좁히지 못했습니다. AWS의 Service Authorization Reference(2026-11-22에 읽었습니다)는 두 만들기에 Runtime의 이름으로 거르는 조건 키를 적지 않습니다. 적힌 것은 태그, 인증 방식, 네트워크의 키이고 허브는 그 가운데 어느 것도 쓰지 않습니다), 허브의 Runtime을 고치고 읽을 수 있고, Runtime에 이름이 `<prefix>-agent-*-role`인 역할을 넘길 수 있고, Runtime ARN을 SSM에 쓸 수 있습니다(정책이 허락하는 SSM 값은 `/<prefix>/agents/<에이전트>/runtime_arn`뿐입니다). 역할, 정책, target을 만들거나 레코드를 승인하지는 못합니다. Grant는 이 이름의 역할을 권한 경계를 달아서만 만듭니다. 허브 밖에서 이 이름으로 만든 역할에는 경계가 없을 수 있지만, 그런 역할을 만들려면 계정의 IAM 권한이 있어야 하고 심사의 역할 가운데 그 권한을 가진 것은 없습니다. 남는 한계는 둘입니다. 배포 역할 하나가 모든 심사에 쓰이므로, 배포 build 안에서 코드를 실행할 수 있으면 허브의 다른 에이전트의 Runtime을 바꾸거나, 다른 에이전트의 실행 역할을 넘기거나, 다른 에이전트의 코드 패키지(제출 버킷의 `packages/` 아래)를 덮어쓰거나, 다른 에이전트의 `runtime_arn`을 쓸 수 있습니다(Runtime 버전은 저마다 코드 패키지의 object version을 가리키므로, 덮어써도 이미 만든 버전이 가리키는 코드 패키지는 그대로입니다. 2026-11-23에 명령이 출력한 줄에서는 심사들이 그 version을 넘겨 Runtime 셋을 만들고 하나를 네 번 고쳤고 거부가 없었습니다. Runtime의 코드 위치에 그 version이 적혀 있는 것은 같은 날 `GetAgentRuntime`을 AWS CLI로 손으로 읽어 봤고, 그 출력은 남기지 않았습니다. 같은 key를 덮어써 보지는 않았습니다. Entry는 그 에이전트의 Runtime이 아닌 ARN을 거부합니다). 또 정책은 이름이 `<prefix>_`로 시작하지 않는 Runtime의 만들기를 막지 않으므로, 그런 코드가 다른 이름의 Runtime을 만들 길이 열려 있습니다. 그런 만들기가 실제로 되는지는 해 보지 않았습니다. 그런 Runtime이 생기면 허브의 정리는 그것을 지우지 않습니다. [호스팅 심사, 알려진 한계](../platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
+## 진입의 통제
+
+- 진입 정책, 비밀값 검사, 전사 정책, 커스텀 가드레일, 멈춤 명령은 모두 에이전트 게이트웨이에 걸립니다. Runtime을 직접 부르는 길(`InvokeAgentRuntime`)과 harness 에이전트(`InvokeHarness`)에는 닿지 않습니다.
+- 멈춘 에이전트도 Runtime을 직접 부르면 답합니다. 2026-11-21에 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었습니다.
+- 에이전트 멈추기는 30분보다 오래 돌고 있는 세션을 찾지 못할 수 있습니다. [에이전트 멈추기와 재개, 한계](../platform_team/agent_stop/README.md#한계)
+- harness 에이전트(`spec_assistant`)는 진입 target이 없어 진입의 통제를 받지 않고, 멈춤 명령으로 멈출 수도 없습니다. 도구 호출만 도구 게이트웨이의 정책을 지납니다.
+- 서비스 모델의 `InvokeHarness`는 호출마다 도구, 쓸 수 있는 도구의 목록, 모델, 지시문을 받으므로, 그것을 부를 수 있는 사람은 이 값들을 바꿔 보낼 수 있습니다. 바꿔 보내는 것은 해 보지 않았습니다. 허브의 역할 가운데 `InvokeHarness`를 가진 것은 없습니다.
+- harness가 permit이 없는 도구를 부를 때 도구 게이트웨이가 거부하는지는 확인하지 않았습니다. 그 도구를 `allowedTools`에 더해 두 번 물었지만 모델이 부르지 않았습니다. [spec_assistant, 허브에서 받는 통제](../dev_team/preloaded_agents/spec_assistant/README.md#허브에서-받는-통제)
+- 커스텀 가드레일의 interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부하고, 경보가 알립니다. 답은 한 번에 오는 JSON만 확인했고, 스트리밍 응답은 확인하지 않았습니다. [커스텀 가드레일](../platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
+
+## 호스팅 심사
+
 - 시험 호출은 HTTP 상태만 보고 답의 내용은 보지 않습니다. [호스팅 심사, 시험 호출](../platform_team/hosting_review/README.md#알려진-한계-시험-호출)
-- 진입의 통제가 닿는 곳: 진입 정책, 비밀값 검사, 전사 정책, 커스텀 가드레일, 멈춤 명령은 모두 에이전트 게이트웨이에 걸립니다. Runtime을 직접 부르는 길(`InvokeAgentRuntime`)과 harness 에이전트(`InvokeHarness`)에는 닿지 않습니다(아래의 두 항목). 진입의 통제를 받으려면 에이전트 게이트웨이로 불러야 합니다.
-- 승인된 에이전트의 새 버전: Deploy가 끝나면 돌고 있는 코드가 새 버전으로 바뀌어 있다고 봅니다(2026-11-22의 실행에서 심사가 끝난 뒤 DEFAULT endpoint의 `liveVersion`이 새 버전이었고, 첫 호출이 새 코드에 닿았습니다. Deploy가 끝난 순간은 따로 보지 않았습니다). 그 뒤의 단계가 실패해도 되돌리지 않습니다. 그래서 새 버전은 시험 호출과 승인을 기다리지 않고 배포가 끝나면 바로 사용자의 호출을 받습니다. 이전 버전의 `entry_permit_<에이전트>`가 남아 있기 때문입니다(코드로 본 것입니다. 그 사이의 사용자 호출은 해 보지 않았습니다). 심사는 시험 호출 하나로 새 버전을 봅니다. 운영을 확인한 실행에서 사고 버전(`v2-loop`)도 시험 호출의 질문에는 반복하지 않아 심사를 지났고, 승인 뒤에 사건 질문을 받자 반복했습니다. Grant는 돌고 있는 에이전트의 실행 역할과 도구 정책을 새 신청서에 맞춥니다. 그래서 새 버전이 떨어지면 Grant가 더한 도구 정책은 남고 지운 정책은 되살아나지 않으며, Deploy가 끝났으면 떨어진 버전의 코드가 돕니다. 새 버전을 반려하면 레코드만 `REJECTED`가 되고 돌고 있는 에이전트는 그 상태 그대로입니다. 사용자를 막으려면 `stop.sh <에이전트>`를 돌리고, 팀이 고친 버전을 다시 제출합니다. 같은 레코드의 심사 둘이 겹치면 뒤의 것이 Read에서 멈춥니다. 도구가 바뀌는 새 버전, 떨어지는 새 버전, 겹치는 심사는 코드가 그렇게 하는 것이고 AWS에서는 해 보지 않았습니다. Read의 역할은 레코드를 읽고(`GetRegistryRecord`), 같은 레코드의 앞선 심사를 찾으려고 이 state machine의 실행을 나열하고 그 입력을 읽습니다(`states:ListExecutions`, `states:DescribeExecution`). 바꾸는 것은 없습니다. [호스팅 심사, 승인된 에이전트의 새 버전](../platform_team/hosting_review/README.md#승인된-에이전트의-새-버전), [심사가 실패했을 때](../platform_team/hosting_review/README.md#심사가-실패했을-때)
-- 반려의 한계: 심사가 도는 동안에는 반려가 거부합니다. [호스팅 심사, 반려의 한계](../platform_team/hosting_review/README.md#한계)
-- 개발팀 역할의 카탈로그 권한은 모든 레코드에 걸립니다. [개발팀의 권한](../platform_team/dev_access/README.md#카탈로그-권한의-범위)
-- 개발팀 역할 하나가 모든 팀에 쓰이므로, 개발자는 허브의 모든 에이전트의 Runtime 로그 줄을 읽을 수 있습니다(harness 에이전트의 것은 읽지 못합니다). [개발팀의 권한](../platform_team/dev_access/README.md#mcp-endpoint와-로그-권한)
 - 간접 의존성은 검사한 것과 배포한 것이 같다고 보장되지 않습니다. `requirements.txt`에 적은 줄은 검사와 배포가 같은 파일을 씁니다. [호스팅 심사, requirements.txt 규칙](../platform_team/hosting_review/README.md#requirementstxt-규칙)
+- 심사가 도는 동안에는 반려가 거부됩니다. [호스팅 심사, 반려의 한계](../platform_team/hosting_review/README.md#한계)
+- 배포(Deploy)의 역할 하나가 모든 심사에 쓰입니다. 배포 build 안에서 코드를 실행할 수 있으면 다른 에이전트의 Runtime을 바꾸거나, 그 실행 역할을 넘기거나, 그 코드 패키지(제출 버킷의 `packages/`)를 덮어쓰거나, 그 `runtime_arn`을 쓸 수 있습니다.
+- 배포 역할의 정책은 이름이 `<prefix>_`로 시작하지 않는 Runtime의 만들기를 막지 않습니다. 그런 Runtime은 허브의 정리가 지우지 않고, 실제로 만들어지는지는 해 보지 않았습니다. [호스팅 심사, 알려진 한계](../platform_team/hosting_review/README.md#알려진-한계-배포-단계의-권한)
+
+## 승인된 에이전트의 새 버전
+
+- 새 버전은 Deploy가 끝나면 시험 호출과 승인을 기다리지 않고 사용자의 호출을 받습니다. 이전 버전의 `entry_permit_<에이전트>`가 남아 있기 때문입니다.
+- 심사는 시험 호출 하나로 새 버전을 봅니다. 사고 버전(`v2-loop`)도 시험 호출에는 반복하지 않아 심사를 지났습니다.
+- 새 버전이 심사에서 떨어져도 되돌리지 않습니다. Grant가 바꾼 도구 정책은 그대로이고, Deploy가 끝났으면 떨어진 버전의 코드가 돕니다. [심사가 실패했을 때](../platform_team/hosting_review/README.md#심사가-실패했을-때)
+- 새 버전을 반려하면 레코드만 `REJECTED`가 됩니다. 사용자를 막으려면 `stop.sh <에이전트>`를 돌리고 고친 버전을 다시 제출합니다.
+- 같은 레코드의 심사 둘이 겹치면 뒤의 것이 Read에서 멈춥니다.
+- 승인 전의 사용자 호출, 도구가 바뀌는 새 버전, 떨어지는 새 버전, 겹치는 심사는 코드가 그렇게 하고 AWS에서는 해 보지 않았습니다. [호스팅 심사, 승인된 에이전트의 새 버전](../platform_team/hosting_review/README.md#승인된-에이전트의-새-버전)
+
+## 개발팀의 권한과 기록
+
+- 개발팀 역할의 카탈로그 권한은 모든 레코드에 걸립니다. [개발팀의 권한](../platform_team/dev_access/README.md#카탈로그-권한의-범위)
+- 개발팀 역할 하나가 모든 팀에 쓰이므로, 개발자는 모든 에이전트의 Runtime 로그 줄을 읽을 수 있습니다. harness 에이전트의 것은 읽지 못합니다. [개발팀의 권한](../platform_team/dev_access/README.md#mcp-endpoint와-로그-권한)
+- 에이전트의 실행 역할은 X-Ray에 trace를 `"*"`로 쓸 수 있고, namespace `bedrock-agentcore`의 메트릭이면 어느 것이든 쓸 수 있습니다. 그 namespace는 계정의 다른 에이전트도 씁니다. [호스팅 심사, 에이전트 실행 역할의 상한](../platform_team/hosting_review/README.md#에이전트-실행-역할의-상한권한-경계)
+- 2026-11-22에 span은 계정의 로그 그룹 `aws/spans`에 들어갔고, 모델의 토큰 수와 호출에 쓴 access key ID를 담았습니다. [모니터링, 에이전트의 trace](../platform_team/agent_monitoring/README.md#에이전트의-trace)
+
+## 예시 에이전트
+
 - `release_review`의 판정은 모델 호출 한 번입니다. [release_review, 한계](../dev_team/release_review/README.md#한계)
-- 커스텀 가드레일: interceptor Lambda가 실패하는 동안 에이전트 게이트웨이는 모든 요청을 거부합니다(경보가 알립니다). 에이전트의 답은 한 번에 오는 JSON만 확인했습니다. 스트리밍 응답에서 답 지점의 검사와 가리기가 어떻게 되는지는 확인하지 않았습니다. 에이전트를 둔 게이트웨이를 지나는 호출에서 막고 가리는 것은 운영을 확인한 실행에서 봤습니다. [커스텀 가드레일](../platform_team/custom_guardrail/README.md#확인한-것과-하지-않은-것)
-- 에이전트의 trace와 메트릭: 실행 역할은 X-Ray에 trace를 `"*"`로 쓸 수 있고(이 action들에는 자원 종류가 없습니다. 조건 키는 찾아보지 않았습니다), 메트릭은 namespace `bedrock-agentcore`에만 쓸 수 있습니다(그 namespace의 메트릭이면 어느 것이든). 그 namespace는 계정의 다른 에이전트도 씁니다. 2026-11-22의 실행(계정의 Transaction Search가 켜져 있었습니다)에서는 span이 계정의 로그 그룹 `aws/spans`에 들어갔고, 그 span에는 모델의 토큰 수와 호출에 쓴 access key ID가 있었습니다. [호스팅 심사, 에이전트 실행 역할의 상한](../platform_team/hosting_review/README.md#에이전트-실행-역할의-상한권한-경계), [모니터링, 에이전트의 trace](../platform_team/agent_monitoring/README.md#에이전트의-trace)
-- harness 에이전트(`spec_assistant`): 진입 target이 없어 진입의 통제(진입 정책, 비밀값 검사, 전사 정책, 커스텀 가드레일, 멈춤 명령)를 받지 않습니다. 도구 호출만 도구 게이트웨이의 정책을 지납니다. 서비스 모델의 `InvokeHarness`는 호출마다 도구, 쓸 수 있는 도구의 목록, 모델, 지시문을 받으므로, `InvokeHarness`를 부를 수 있는 사람은 그것들을 바꿔 보낼 수 있습니다. 운영을 확인한 실행에서 쓸 수 있는 도구의 목록(`allowedTools`)에 permit이 없는 도구 `@hub_tools/Quality___get_inspection_data`를 더해 두 번(두 실행에서 한 번씩) 물었을 때, 두 번 다 모델은 도구를 부르지 않고 검사 ID로 찾는 도구가 없다고 답했습니다. 그래서 도구 게이트웨이가 permit이 없는 이 역할의 호출을 거부하는지는 그때도 보지 못했습니다. 도구, 모델, 지시문을 바꿔 보내는 것은 해 보지 않았습니다. 허브의 역할 가운데 `InvokeHarness`를 가진 것은 없습니다. [spec_assistant, 허브에서 받는 통제](../dev_team/preloaded_agents/spec_assistant/README.md#허브에서-받는-통제)
-- 에이전트 멈추기: 에이전트 게이트웨이의 진입만 막으므로 Runtime을 직접 부르는 길은 남습니다(2026-11-21의 확인 실행에서 게이트웨이 진입에 forbid가 걸린 동안 Runtime을 직접 부르자 200이었습니다). harness 에이전트는 진입 target이 없어 이 명령으로 멈출 수 없습니다. 30분보다 오래 돌고 있는 세션은 찾지 못할 수 있습니다. 운영을 확인한 실행에서 두 명령을 돌렸습니다([확인한 것](checks.md#make-e2e-ops가-확인하는-것)의 "`make e2e-ops`가 확인하는 것"). harness는 멈춘 에이전트 옆에서 그대로 답했습니다. [에이전트 멈추기와 재개, 한계](../platform_team/agent_stop/README.md#한계)

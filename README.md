@@ -31,7 +31,7 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 - 4단계: 적용 모드로 올리면 같은 요청이 `release_review` 에이전트와 `docs_adk` 에이전트 모두 403이고, 커스텀 가드레일을 붙이기 전과 뒤에 코드명이 든 요청과 사번이 든 답이 어떻게 다른지 보입니다.
 - 5단계: 반복 호출하는 버전이 심사를 통과해 답하지 않고 도구 호출 경보가 울리며, 그 에이전트 하나만 멈추고 이웃은 답합니다. Claude Code가 로그와 코드를 읽어 원인을 찾고, 고친 버전이 멈춘 채로 승인되고, 재개하면 다시 답합니다.
 
-영상 파일은 이 저장소에 들어 있지 않습니다. 영상의 원본은 `demo_video/`에 있습니다. 장면마다의 스토리보드, 모든 자막이 든 편집 스크립트(`demo_video/scripts/build.py`), 개발자 PC(`demo_video/tools/dev_pc`)입니다. 어느 단계를 몇 번 녹화했고 무엇을 잘라 냈는지는 [`demo_video/README.md`](demo_video/README.md)에 있습니다. 영상을 녹화한 허브는 그 뒤에 지웠습니다. 허브를 올리고 확인하는 데(`make deploy`, `make e2e`, `make e2e-ops`)는 이 폴더도 `demo_scenes/`도 필요하지 않습니다.
+영상 파일은 이 저장소에 들어 있지 않습니다. 영상의 원본은 `demo_video/`에 있습니다. 장면마다의 스토리보드, 모든 자막이 든 편집 스크립트(`demo_video/scripts/build.py`), 개발자 PC(`demo_video/tools/dev_pc`)입니다. 영상을 만드는 방법은 [`demo_video/README.md`](demo_video/README.md)에 있습니다. 영상을 녹화한 허브는 그 뒤에 지웠습니다. 허브를 올리고 확인하는 데(`make deploy`, `make e2e`, `make e2e-ops`)는 이 폴더도 `demo_scenes/`도 필요하지 않습니다.
 
 2026-11-24에 같은 여섯 영상에 한국어 해설(Amazon Polly의 음성)과 빨간 강조 상자를 넣은 영상을 따로 만들었습니다(전체 영상 15분 16초). 해설은 화면에 보이는 것이나 이 저장소의 README에 적힌 것만 말합니다. 빨간 상자는 허브 화면과 Claude Code의 화면에 있고, 해설이 가리키는 곳 가운데 29곳을 둘러쌉니다. 개발자의 셸과 사용자의 셸 장면에는 상자가 없습니다. 이 영상도 저장소에 들어 있지 않습니다. 그 가운데 전체 영상은 YouTube에 올렸습니다(이 절 맨 위의 링크). 만든 법과 검사, 그 한계는 [`demo_video/README.md`](demo_video/README.md)에 있습니다. 만든 사람은 그 소리를 듣지 않았습니다.
 
@@ -102,3 +102,4 @@ agent-hosting-hub/
 | [영상처럼 따라 하기](docs/demo-guide.md) | 시연 영상의 순서를 자기 계정에서 손으로 따라 하는 안내 |
 | [영상을 만드는 것](demo_video/README.md) | 스토리보드, 녹화, 자막과 컷, 개발자 PC |
 | [영상에서 치는 명령](demo_scenes/README.md) | `ask`, `publish`, `search`, `logs`와 장면의 순서 |
+| [줄이기 전의 문서](https://github.com/gonsoomoon-ml/agent-hosting-hub/tree/docs-detailed-2026-11-25) | 실행마다 잰 시간과 본 것을 모두 적은 이전 버전입니다(태그 `docs-detailed-2026-11-25`). 지금의 문서는 2026-11-25에 줄였습니다 |
