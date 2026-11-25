@@ -4,11 +4,11 @@
 
 ## 개념도에서의 위치
 
-[개념도](../../docs/hosting-hub-concept.png)의 흐름 2의 "모니터링" 상자다. ⑩ "기록 수집"과 ⑪ "이상 탐지 알림"의 자리이다. ⑩으로는 게이트웨이 둘의 로그와 trace를 CloudWatch로 보내고, 사용량 보고가 메트릭을 읽는다. 에이전트의 trace는 호스팅 심사가 Runtime을 띄우는 방식(아래 "에이전트의 trace")에서 나온다. ⑪로는 알림 주제와 도구 호출 경보(CloudWatch alarm)를 만든다. 호스팅 심사가 실패할 때(④-1 "심사 실패 알림")도 이 주제로 알린다.
+[개념도](../../docs/hosting-hub-concept.png)의 흐름 2의 "모니터링" 상자다. ⑩ "기록 수집"과 ⑪ "이상 탐지 알림"의 자리이다. ⑩으로는 게이트웨이 둘의 로그와 trace를 CloudWatch로 보내고, 사용량 보고가 메트릭을 읽는다. 에이전트의 trace는 호스팅 심사가 Runtime을 실행하는 방식(아래 "에이전트의 trace")에서 나온다. ⑪로는 알림 주제와 도구 호출 경보(CloudWatch alarm)를 만든다. 호스팅 심사가 실패할 때(④-1 "심사 실패 알림")도 이 주제로 알린다.
 
-## 도구 호출 알람
+## 도구 호출 경보
 
-에이전트 하나가 같은 질문을 쉬지 않고 다시 묻는 사고를 플랫폼팀에 알린다. 그런 에이전트는 다시 물을 때마다 도구를 부르므로, 한 도구가 1분에 불리는 횟수가 평소보다 훨씬 많아진다. 알람은 알리기만 한다. 에이전트를 멈추는 것은 플랫폼팀의 명령이다([에이전트 멈추기와 재개](../agent_stop/README.md)).
+에이전트 하나가 같은 질문을 쉬지 않고 다시 묻는 사고를 플랫폼팀에 알린다. 그런 에이전트는 다시 물을 때마다 도구를 부르므로, 한 도구가 1분에 불리는 횟수가 평소보다 훨씬 많아진다. 경보는 알리기만 한다. 에이전트를 멈추는 것은 플랫폼팀의 명령이다([에이전트 멈추기와 재개](../agent_stop/README.md)).
 
 | | |
 |---|---|
@@ -18,26 +18,26 @@
 | 데이터가 없는 분 | 정상으로 본다(`notBreaching`). 아무도 그 도구를 부르지 않은 분이다 |
 | 알리는 곳 | 알림 주제 `<prefix>-alerts` |
 
-메트릭은 그 도구를 부른 모든 호출을 세고, 부른 에이전트를 나눠 세지 않는다. 이 리포의 에이전트 가운데 신청서(`agent.json`)에 이 도구를 적은 것은 `quality_agent` 하나다(에이전트 템플릿은 예시로 적어 둔다). 그래서 이 허브에서 알람이 울리면 `quality_agent`의 호출이다. 이것은 단위 시험(`tests/test_terraform_platform.py`)이 지킨다. 다른 에이전트에도 이 도구를 주면 알람은 그 에이전트의 호출도 함께 센다.
+메트릭은 그 도구를 부른 모든 호출을 세고, 부른 에이전트를 나눠 세지 않는다. 이 리포의 에이전트 가운데 신청서(`agent.json`)에 이 도구를 적은 것은 `quality_agent` 하나다(에이전트 템플릿은 예시로 적어 둔다). 그래서 이 허브에서 경보가 울리면 `quality_agent`의 호출이다. 이것은 단위 테스트(`tests/test_terraform_platform.py`)가 지킨다. 다른 에이전트에도 이 도구를 주면 경보는 그 에이전트의 호출도 함께 센다.
 
 ### 임계값을 정한 근거
 
-2026-11-22의 두 실행에서, 사고의 되풀이(Strands로 만든 `quality_agent`에게 같은 질문을 쉬지 않고 다시 묻는 것, 모델은 Claude Haiku 4.5)는 루프 안에 온전히 든 1분 동안 도구를 47번과 39번 불렀다. 한 번 물을 때마다 도구 호출이 하나였다. 도구 게이트웨이의 `Invocations`(`Name=Quality___get_inspection_data`)도 같은 수를 보였고, 그 분이 끝나고 약 1분 뒤에 읽을 수 있었다([확인 시험](../../e2e_checks/spikes/README.md#결정)의 `LOOP_RATE`).
+2026-11-22의 두 실행에서, 사고의 반복(Strands로 만든 `quality_agent`에게 같은 질문을 쉬지 않고 다시 묻는 것, 모델은 Claude Haiku 4.5)은 루프 안에 온전히 든 1분 동안 도구를 47번과 39번 불렀다. 한 번 물을 때마다 도구 호출이 하나였다. 도구 게이트웨이의 `Invocations`(`Name=Quality___get_inspection_data`)도 같은 수를 보였고, 그 분이 끝나고 약 1분 뒤에 읽을 수 있었다([확인 테스트](../../e2e_checks/spikes/README.md#결정)의 `LOOP_RATE`).
 
-임계값 19는 낮은 쪽인 39의 절반이고, 5보다 작아지지 않게 했다(`max(5, 39 // 2)`). 되풀이의 빠르기는 모델이 답하는 빠르기에 달려 있으므로, 모델이나 때가 바뀌면 1분의 횟수도 바뀐다. 절반으로 둔 것은 되풀이가 그만큼 느려져도 울리게 하려는 것이다. 평소에는 질문 하나가 이 도구를 한두 번 부르므로, 사람이 묻는 1분은 임계값에 크게 못 미친다. 평소의 1분 호출 수는 재지 않았다.
+임계값 19는 낮은 쪽인 39의 절반이고, 5보다 작아지지 않게 했다(`max(5, 39 // 2)`). 반복의 빠르기는 모델이 답하는 빠르기에 달려 있으므로, 모델이나 때가 바뀌면 1분의 횟수도 바뀐다. 절반으로 둔 것은 반복이 그만큼 느려져도 울리게 하려는 것이다. 평소에는 질문 하나가 이 도구를 한두 번 부르므로, 사람이 묻는 1분은 임계값에 크게 못 미친다. 평소의 1분 호출 수는 재지 않았다.
 
-### 토큰과 CPU에 알람을 걸지 않는 이유
+### 토큰과 CPU에 경보를 걸지 않는 이유
 
-- 토큰: Amazon Bedrock이 CloudWatch에 남기는 토큰 수(네임스페이스 `AWS/Bedrock`의 `InputTokenCount`, `OutputTokenCount`)는 모델(`ModelId`)로 나뉘고, 부른 쪽으로는 나뉘지 않는다(Amazon Bedrock 사용 설명서 "Monitor `bedrock-runtime` inference using CloudWatch metrics", 2026-11-22에 읽었다). 허브의 에이전트는 모두 같은 모델(`MODEL_ID`)을 부르므로, 이 수에 건 알람은 어느 에이전트가 쓰는지 말하지 못한다. 여기서는 확인하지 않았다.
+- 토큰: Amazon Bedrock이 CloudWatch에 남기는 토큰 수(네임스페이스 `AWS/Bedrock`의 `InputTokenCount`, `OutputTokenCount`)는 모델(`ModelId`)로 나뉘고, 부른 쪽으로는 나뉘지 않는다(Amazon Bedrock 사용 설명서 "Monitor `bedrock-runtime` inference using CloudWatch metrics", 2026-11-22에 읽었다). 허브의 에이전트는 모두 같은 모델(`MODEL_ID`)을 부르므로, 이 수에 건 경보는 어느 에이전트가 쓰는지 말하지 못한다. 여기서는 확인하지 않았다.
 - CPU: Runtime마다의 사용량 메트릭(`CPUUsed-vCPUHours`)은 있지만, AgentCore 개발자 안내서("AgentCore generated runtime observability data", 같은 날 읽었다)는 사용량 데이터가 60분까지 늦을 수 있다고 적는다. 1분 단위로 알아야 하는 사고에는 늦다. 여기서는 확인하지 않았다.
 
-도구 호출 수는 되풀이 한 번에 하나씩 늘고, 그 분이 끝나고 약 1분 뒤에 읽혔다(위의 실행). 그래서 알람을 이 수에 건다.
+도구 호출 수는 반복 한 번에 하나씩 늘고, 그 분이 끝나고 약 1분 뒤에 읽혔다(위의 실행). 그래서 경보를 이 수에 건다.
 
 ### 확인한 것과 하지 않은 것
 
-2026-11-22에 에이전트 없이 허브의 틀만 올렸다(`AUTO_APPROVE=1 make deploy`, 227초, `us-west-2`, 접두어 `hub`). 알람 `hub-tool-calls`가 만들어졌고, AWS가 돌려준 설정은 위의 표와 같았다(차원 다섯, `Sum`, 60초, 1번, `GreaterThanThreshold` 19, `notBreaching`, 알림 주제 `hub-alerts`). 상태는 알람이 만들어지고 93초 뒤에 `OK`가 되었고, 그 사유는 `no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]`였다. 그 도구를 부른 호출이 없었으므로 데이터가 없는 분을 정상으로 본 것이다. 곧바로 `make deploy`를 한 번 더 돌리면 바뀐 것이 없었다(`0 added, 0 changed, 0 destroyed`). 그 뒤의 `AUTO_APPROVE=1 make destroy`(148초)는 마지막 줄이 `still present: nothing`이었고(`CloudWatch alarms: none`), 알람 `hub-tool-calls`가 남지 않은 것을 목록으로도 확인했다.
+2026-11-22에 에이전트 없이 허브의 기반 자원만 배포했다(`AUTO_APPROVE=1 make deploy`, 227초, `us-west-2`, 접두어 `hub`). 경보 `hub-tool-calls`가 만들어졌고, AWS가 돌려준 설정은 위의 표와 같았다(차원 다섯, `Sum`, 60초, 1번, `GreaterThanThreshold` 19, `notBreaching`, 알림 주제 `hub-alerts`). 상태는 경보가 만들어지고 93초 뒤에 `OK`가 되었고, 그 사유는 `no datapoints were received for 1 period and 1 missing datapoint was treated as [NonBreaching]`였다. 그 도구를 부른 호출이 없었으므로 데이터가 없는 분을 정상으로 본 것이다. 곧바로 `make deploy`를 한 번 더 돌리면 바뀐 것이 없었다(`0 added, 0 changed, 0 destroyed`). 그 뒤의 `AUTO_APPROVE=1 make destroy`(148초)는 마지막 줄이 `still present: nothing`이었고(`CloudWatch alarms: none`), 경보 `hub-tool-calls`가 남지 않은 것을 목록으로도 확인했다.
 
-2026-11-22의 운영 확인(`make e2e-ops`, 같은 리전과 접두어)에서 사고 버전의 `quality_agent`에게 사건 질문을 한 번 보냈다(호출자는 20초 뒤에 포기했다). 되풀이는 22:11(UTC)의 1분과, 멈출 때까지의 22:12에 도구를 42번과 38번 불렀고, 이 알람의 메트릭도 그 두 분에 42와 38이었다. 알람은 22:12:17에 `OK`에서 `ALARM`이 되었고(`Threshold Crossed: 1 datapoint [42.0 (22/11/26 22:11:00)] was greater than the threshold (19.0).`), 그 알림이 알림 주제를 지나 호출 86초 뒤에 확인용 큐에 왔다. 에이전트를 멈춘 뒤 22:19:17에 다시 `OK`가 되었다.
+2026-11-22의 운영 확인(`make e2e-ops`, 같은 리전과 접두어)에서 사고 버전의 `quality_agent`에게 사건 질문을 한 번 보냈다(호출자는 20초 뒤에 포기했다). 반복은 22:11(UTC)의 1분과, 멈출 때까지의 22:12에 도구를 42번과 38번 불렀고, 이 경보의 메트릭도 그 두 분에 42와 38이었다. 경보는 22:12:17에 `OK`에서 `ALARM`이 되었고(`Threshold Crossed: 1 datapoint [42.0 (22/11/26 22:11:00)] was greater than the threshold (19.0).`), 그 알림이 알림 주제를 지나 호출 86초 뒤에 확인용 큐에 왔다. 에이전트를 멈춘 뒤 22:19:17에 다시 `OK`가 되었다.
 
 확인하지 않은 것: 다른 에이전트가 이 도구를 함께 쓸 때의 횟수, 평소의 1분 호출 수.
 
@@ -61,11 +61,11 @@
 
 ## 에이전트의 trace
 
-호스팅 심사의 배포 단계는 Runtime을 진입점 `["opentelemetry-instrument", "main.py"]`로 띄운다. 팀의 `main.py`를 OpenTelemetry로 감싸 띄우는 것이고, AWS 문서가 코드 배포에 쓰는 방식이다(AgentCore 개발자 안내서 "Direct code deployment for Python", 2026-11-22에 읽었다). `opentelemetry-instrument`는 ADOT 패키지 `aws-opentelemetry-distro`에 들어 있다. 에이전트 템플릿과 두 에이전트의 `requirements.txt`가 이 패키지를 0.24.0(2026-11-22에 PyPI의 최신)으로 고정한다. 에이전트의 실행 역할은 trace를 X-Ray로 보낼 수 있고, 메트릭은 namespace `bedrock-agentcore`에만 쓸 수 있다([호스팅 심사, 에이전트 실행 역할의 상한](../hosting_review/README.md#에이전트-실행-역할의-상한권한-경계)).
+호스팅 심사의 배포 단계는 Runtime을 진입점 `["opentelemetry-instrument", "main.py"]`로 실행한다. 팀의 `main.py`를 OpenTelemetry로 감싸 실행하는 것이고, AWS 문서가 코드 배포에 쓰는 방식이다(AgentCore 개발자 안내서 "Direct code deployment for Python", 2026-11-22에 읽었다). `opentelemetry-instrument`는 ADOT 패키지 `aws-opentelemetry-distro`에 들어 있다. 에이전트 템플릿과 두 에이전트의 `requirements.txt`가 이 패키지를 0.24.0(2026-11-22에 PyPI의 최신)으로 고정한다. 에이전트의 실행 역할은 trace를 X-Ray로 보낼 수 있고, 메트릭은 namespace `bedrock-agentcore`에만 쓸 수 있다([호스팅 심사, 에이전트 실행 역할의 상한](../hosting_review/README.md#에이전트-실행-역할의-상한권한-경계)).
 
 2026-11-22의 실행(`us-west-2`, 접두어 `hub`, 계정의 Transaction Search는 켜져 있었다)에서 `release_review` 하나를 올리고, 심사가 끝난 뒤 에이전트 게이트웨이로 세 번 불렀다(세 번 모두 세션 ID 헤더에 같은 값을 실었다). 본 것은 다음과 같다.
 
-- 패키지를 더한 뒤에도 심사가 `SUCCEEDED`였다(381초). 검사의 `pip-audit`(2.10.1)는 `No known vulnerabilities found`였고, 배포의 코드 묶음은 41,466,931바이트였다(패키지를 더하기 전에는 약 31 MB). 새 Runtime은 231초 뒤에 `READY`였고, 심사의 시험 호출과 세 호출이 모두 200이었다. 감싼 진입점으로도 에이전트가 떴다.
+- 패키지를 더한 뒤에도 심사가 `SUCCEEDED`였다(381초). 검사의 `pip-audit`(2.10.1)는 `No known vulnerabilities found`였고, 배포의 코드 패키지는 41,466,931바이트였다(패키지를 더하기 전에는 약 31 MB). 새 Runtime은 231초 뒤에 `READY`였고, 심사의 시험 호출과 세 호출이 모두 200이었다. 감싼 진입점으로도 에이전트가 떴다.
 - span은 계정의 로그 그룹 `aws/spans`에 들어갔고, 세 호출이 끝나고 약 1분 뒤에 보였다. 호출 하나에 span이 셋이었다. `POST /invocations`(Starlette 계측), `invoke_agent LangGraph`(ADOT의 LangChain 계측), `chat us.anthropic.claude-haiku-4-5-20251001-v1:0`(botocore의 bedrock-runtime 계측)이다.
 - span 한 줄은 JSON이다. 맨 위의 필드는 `attributes`, `durationNano`, `endTimeUnixNano`, `flags`, `kind`, `name`, `parentSpanId`, `resource`, `scope`, `spanId`, `startTimeUnixNano`, `status`, `traceId`였다. 세션 ID는 `attributes.session.id`에 있었다. 헤더 `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id`로 보낸 값 그대로였고, 헤더 없이 부른 심사의 시험 호출은 UUID였다. `resource.attributes`에는 Runtime ID가 든 `cloud.resource_id`(endpoint ARN)와 `aws.log.group.names`가 있었다. `chat` span의 `attributes`에는 모델의 입력과 출력 토큰 수(`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`)와, 그 호출에 쓴 자격 증명의 access key ID(`aws.auth.account.access_key`)가 있었다. `aws/spans`를 읽을 수 있는 사람은 이 값들을 본다.
 - Runtime의 로그 그룹에도 stream `spans`가 생겼지만 비어 있었다. AgentCore 개발자 안내서("Add observability to your Amazon Bedrock AgentCore resources", 2026-11-22에 읽었다)는 지원하는 리전에서 새로 만든 에이전트의 span이 이 stream으로 가고, 그러려면 실행 역할이 그 로그 그룹에 `logs:PutResourcePolicy`를 가져야 한다고 적는다. 허브의 실행 역할에는 그 권한이 없다(위의 링크에 이유가 있다). 이 실행의 span이 `aws/spans`로 간 까닭이 그것인지는 확인하지 않았다.
@@ -100,7 +100,7 @@ AgentCore는 게이트웨이의 로그를 보낼 곳을 스스로 만들지 않�
 platform_team/agent_monitoring/usage.sh [minutes]      # minutes: 지난 몇 분(정수, 기본 60)
 ```
 
-허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다. 읽기만 한다. 표 둘을 찍는다. 첫째는 올라와 있는 에이전트(이름이 `<prefix>_<에이전트>`인 Runtime. harness 에이전트는 AgentCore가 그 harness를 돌리는 Runtime `harness_<prefix>_<에이전트>`로 찾고, 그 Runtime의 이름으로 메트릭을 읽는다)마다 불린 수, 새 세션 수, 오류 수, vCPU-시간, GB-시간이다. 둘째는 카탈로그의 도구마다 도구 게이트웨이로 불린 수다. 메트릭마다 그 창 안의 1분 값을 모두 더한다. 값이 없는 메트릭은 0이다.
+허브의 접두어와 리전은 `make`와 같은 규칙으로 리포의 `.env`에서 읽는다. 읽기만 한다. 표 둘을 출력한다. 첫째는 올라와 있는 에이전트(이름이 `<prefix>_<에이전트>`인 Runtime. harness 에이전트는 AgentCore가 그 harness를 돌리는 Runtime `harness_<prefix>_<에이전트>`로 찾고, 그 Runtime의 이름으로 메트릭을 읽는다)마다 불린 수, 새 세션 수, 오류 수, vCPU-시간, GB-시간이다. 둘째는 카탈로그의 도구마다 도구 게이트웨이로 불린 수다. 메트릭마다 그 창 안의 1분 값을 모두 더한다. 값이 없는 메트릭은 0이다.
 
 2026-11-22의 실행에서 `usage.sh 30`(19:13:18)은 아래와 같았다. 세 호출에 더해 30분 안에 있던 심사의 시험 호출(호출 하나, 세션 하나)까지 셌으므로 4와 2다. 1분 값은 19:10에 1, 19:11에 3이었다. 그 직후의 `usage.sh 2`는 `release_review 3 1 0`이었다.
 
@@ -131,7 +131,7 @@ Python에서 쓰는 함수는 셋이다(`usage_report.py`).
 
 ## 확인하지 않은 것(관측)
 
-- 도구 게이트웨이의 로그 줄과 span, 도구 표에 0이 아닌 값, `quality_agent`(Strands)의 span은 같은 날의 운영 확인에서 봤다(위와 아래 "사용량 보고"). `quality_agent`의 span은 `aws/spans`에 있었고, `session_summary`가 세션 여덟을 찾았다(되풀이하던 사고의 세션 하나에 span 729개, 22:10:58부터 22:12:51까지).
+- 도구 게이트웨이의 로그 줄과 span, 도구 표에 0이 아닌 값, `quality_agent`(Strands)의 span은 같은 날의 운영 확인에서 봤다(위와 아래 "사용량 보고"). `quality_agent`의 span은 `aws/spans`에 있었고, `session_summary`가 세션 여덟을 찾았다(반복하던 사고의 세션 하나에 span 729개, 22:10:58부터 22:12:51까지).
 - Omni와 CloudWatch의 GenAI Observability 화면으로 이 데이터를 보는 것.
 - 사용량 보고를 플랫폼팀이 아닌 역할로 돌리는 것. 실행에서는 관리자 자격 증명으로 돌렸다.
 
@@ -142,4 +142,4 @@ Python에서 쓰는 함수는 셋이다(`usage_report.py`).
 | `terraform/` | SNS 주제, SQS 수신함과 그 접근 정책, 구독(SQS, 고르면 메일), 도구 호출 경보 `<prefix>-tool-calls`, 게이트웨이 둘의 로그 그룹과 로그 전달(source, destination, delivery), 그 전달을 위한 자원 정책 `<prefix>-gateway-logs`. 입력은 `prefix`, `alert_email`, `tool_gateway_arn`, `agent_gateway_arn`, `watched_tool`, `tool_calls_per_minute`. 내보내는 값은 `topic_arn`, `tool_alarm_name`. |
 | `usage_report.py` | 사용량 보고(`usage`, `tool_calls`, `session_summary`)와 그 명령. 메트릭과 span을 읽기만 한다. |
 | `usage.sh` | 사용량 보고 명령. `.env`를 `make`와 같은 규칙으로 읽고 `usage_report.py`를 돌린다. |
-| `agent_logs.py` | 에이전트의 Runtime 로그 그룹에서 가장 새 줄을 오래된 줄부터 찍는다(`demo_scenes/logs`). 로그 그룹을 `DescribeLogGroups`로 찾고 `FilterLogEvents`로 읽는다(`runtime-logs-` 스트림만. `otel-rt-logs`의 복사본은 읽지 않는다). SSM을 읽지 않는다. 2026-11-23에 개발팀 역할로 AWS에서 돌렸다(`docs_adk`의 줄을 읽었고, 그 역할에 주지 않은 harness 에이전트 `spec_assistant`의 로그 그룹은 거부를 한 줄로 찍었다). |
+| `agent_logs.py` | 에이전트의 Runtime 로그 그룹에서 가장 새 줄을 오래된 줄부터 출력한다(`demo_scenes/logs`). 로그 그룹을 `DescribeLogGroups`로 찾고 `FilterLogEvents`로 읽는다(`runtime-logs-` 스트림만. `otel-rt-logs`의 복사본은 읽지 않는다). SSM을 읽지 않는다. 2026-11-23에 개발팀 역할로 AWS에서 돌렸다(`docs_adk`의 줄을 읽었고, 그 역할에 주지 않은 harness 에이전트 `spec_assistant`의 로그 그룹은 거부를 한 줄로 출력했다). |

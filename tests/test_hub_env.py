@@ -163,7 +163,7 @@ def test_the_model_id_default_is_the_same_in_every_place_it_is_written():
     platform = (ROOT / "platform_team" / "terraform" / "variables.tf").read_text()
     tf = re.search(r'variable\s+"model_id"\s*{[^}]*default\s*=\s*"([^"]+)"', platform).group(1)
     assert makefile == example == tf == config.DEFAULT_MODEL_ID
-    assert f"`{config.DEFAULT_MODEL_ID}`" in (ROOT / "README.md").read_text()
+    assert f"`{config.DEFAULT_MODEL_ID}`" in (ROOT / "docs" / "getting-started.md").read_text()
     review = (ROOT / "platform_team" / "hosting_review" / "terraform" / "variables.tf").read_text()
     assert "default" not in re.search(r'variable\s+"model_id"\s*{(.*?)\n}\n', review, re.S).group(1)   # the module's copy
 

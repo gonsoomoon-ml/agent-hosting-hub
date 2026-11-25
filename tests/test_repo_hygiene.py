@@ -68,8 +68,8 @@ def _text_files() -> list[pathlib.Path]:
 
 
 def test_every_picture_a_readme_names_is_in_the_repo():
-    """A README that names a picture (as a link, an image or a path in code ticks) names one that is in the repo, and
-    the two pictures of the top-level READMEs are the ones in docs/."""
+    """A README that names a picture (as a link, an image or a path in code ticks) names one that is in the repo. The
+    top-level READMEs show the concept picture; the page on the structure shows both pictures."""
     named = re.compile(r"[\w./-]+\.(?:png|jpg|jpeg|svg|gif)\b")
     missing = []
     for md in (f for f in repo_files() if f.suffix == ".md"):
@@ -80,10 +80,11 @@ def test_every_picture_a_readme_names_is_in_the_repo():
                 missing.append((str(md.relative_to(ROOT)), name))
     assert missing == []
     for readme in ("README.md", "README.en.md"):
-        text = (ROOT / readme).read_text(encoding="utf-8")
-        for picture in ("docs/hosting-hub-concept.png", "docs/hosting-hub-system.png"):
-            assert picture in text, f"{readme} does not show {picture}"
-            assert (ROOT / picture).stat().st_size > 10_000
+        assert "](docs/hosting-hub-concept.png)" in (ROOT / readme).read_text(encoding="utf-8")
+    page = (ROOT / "docs/architecture.md").read_text(encoding="utf-8")
+    for picture in ("hosting-hub-concept.png", "hosting-hub-system.png"):
+        assert f"]({picture})" in page, f"docs/architecture.md does not show {picture}"
+        assert (ROOT / "docs" / picture).stat().st_size > 10_000
 
 
 def test_every_concept_picture_sentence_points_at_the_picture_in_the_repo():
@@ -181,8 +182,10 @@ def test_the_spikes_are_records_that_no_command_runs():
     assert users == []
 
 
-# ---------------------------------------------------------------- the top-level READMEs' folder tree and code walk
-READMES = {"README.md": ("## 코드 따라 읽기", "## 사전 요건"), "README.en.md": ("## Reading the code", "## Requirements")}
+# ---------------------------------------------------------------- the top-level READMEs and the pages under docs/
+READMES = ("README.md", "README.en.md")
+PAGES = ("getting-started.md", "commands.md", "checks.md", "cost-and-cleanup.md", "limits.md", "architecture.md",
+         "demo-guide.md")
 
 
 def _tree_folders(text: str) -> set[str]:
@@ -215,22 +218,13 @@ def test_the_readmes_folder_tree_is_the_repos():
         assert folders - tree == set(), f"the README's tree leaves out folders of {team}/"
 
 
-def _walk_names(readme: str) -> tuple[set[str], set[str], set[str]]:
-    """The files, functions and Terraform resources the walk through the code names in code ticks."""
-    start, end = READMES[readme]
-    body = (ROOT / readme).read_text(encoding="utf-8").split(start, 1)[1].split(end, 1)[0]
+def test_the_code_the_walk_through_names_is_there():
+    """Every file, function and Terraform resource named in the walk through the code (docs/architecture.md) exists."""
+    body = (ROOT / "docs/architecture.md").read_text(encoding="utf-8").split("## 코드 따라 읽기", 1)[1]
     ticks = set(re.findall(r"`([^`]+)`", body))
     files = {t for t in ticks if "/" in t and "<" not in t}
     functions = {t[:-2] for t in ticks if t.endswith("()")}
     resources = {t for t in ticks if re.fullmatch(r"aws_\w+\.\w+", t)}
-    return files, functions, resources
-
-
-def test_the_code_the_readmes_walk_through_is_there():
-    """Every file, function and Terraform resource named in the walk through the code exists, and both languages
-    name the same ones."""
-    files, functions, resources = _walk_names("README.md")
-    assert _walk_names("README.en.md") == (files, functions, resources)
     assert len(files) >= 6 and len(functions) >= 6 and resources
     assert [f for f in sorted(files) if not (ROOT / f).is_file()] == []
     code = "\n".join((ROOT / f).read_text(encoding="utf-8") for f in sorted(files))
@@ -239,9 +233,20 @@ def test_the_code_the_readmes_walk_through_is_there():
         assert f'resource "{kind}" "{label}"' in code
 
 
-def test_the_two_readmes_have_the_same_number_of_sections():
+def test_the_readme_is_short_and_the_two_languages_have_the_same_sections():
+    """The top-level README is the way in; what is long lives in the pages under docs/."""
+    korean = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert korean.count("\n") <= 150 and len(korean) <= 8000
     counts = {name: len(re.findall(r"^## ", (ROOT / name).read_text(encoding="utf-8"), re.M)) for name in READMES}
-    assert counts["README.md"] == counts["README.en.md"] >= 12
+    assert counts["README.md"] == counts["README.en.md"] >= 4
+
+
+def test_the_readmes_link_every_page_under_docs():
+    pages = sorted(f.name for f in (ROOT / "docs").glob("*.md"))
+    assert pages == sorted(PAGES)
+    for readme in READMES:
+        text = (ROOT / readme).read_text(encoding="utf-8")
+        assert [p for p in pages if f"](docs/{p})" not in text] == [], f"{readme} does not link every page under docs/"
 
 
 def _anchor(heading: str) -> str:
@@ -250,19 +255,41 @@ def _anchor(heading: str) -> str:
     return text.replace(" ", "-")
 
 
-def test_the_guides_links_lead_to_files_and_headings_in_the_repo():
-    """The guide to follow the demo by hand is linked from both READMEs, and every link in it leads to a file of the
-    repo and, where it names one, to a heading of that file."""
-    guide = ROOT / "docs/demo-guide.md"
-    for readme in READMES:
-        assert "](docs/demo-guide.md)" in (ROOT / readme).read_text(encoding="utf-8")
-    links = re.findall(r"\]\(([^)#\s]+)(?:#([^)\s]+))?\)", guide.read_text(encoding="utf-8"))
-    assert len(links) >= 6
-    for target, anchor in links:
-        if target.startswith("http"):
-            continue
-        file = (guide.parent / target).resolve()
-        assert file.is_file(), f"the guide links {target}, which is not in the repo"
-        if anchor:
-            headings = re.findall(r"^#+ (.+)$", file.read_text(encoding="utf-8"), re.M)
-            assert anchor in {_anchor(h) for h in headings}, f"the guide links #{anchor}, which {target} does not have"
+def test_every_link_in_the_readmes_and_the_pages_leads_to_a_file_and_a_heading():
+    """A relative link in a top-level README or in a page under docs/ leads to a file of the repo and, where it names
+    one, to a heading of that file."""
+    sources = [ROOT / name for name in READMES] + [ROOT / "docs" / name for name in PAGES]
+    seen = 0
+    for source in sources:
+        for target, anchor in re.findall(r"\]\(([^)#\s]*)(?:#([^)\s]+))?\)", source.read_text(encoding="utf-8")):
+            if target.startswith("http"):
+                continue
+            file = (source.parent / target).resolve() if target else source
+            where = f"{source.relative_to(ROOT)} links {target}#{anchor or ''}"
+            assert file.exists(), f"{where}, which is not in the repo"
+            if anchor:
+                headings = re.findall(r"^#+ (.+)$", file.read_text(encoding="utf-8"), re.M)
+                assert anchor in {_anchor(h) for h in headings}, f"{where}, a heading the file does not have"
+            seen += 1
+    assert seen >= 60
+
+
+# ---------------------------------------------------------------- the demo video's address
+VIDEO = "https://youtu.be/cp0YKgAmrxM"
+
+
+def test_the_documents_link_one_video():
+    """The narrated demo video is on YouTube under one address. Every YouTube link in the documents is that address,
+    both top-level READMEs carry it in their first lines and on the poster, and the page on the video's build carries
+    it. A video that is uploaded anew gets a new address, and then every place has to follow."""
+    links = {}
+    for md in (f for f in repo_files() if f.suffix == ".md"):
+        found = re.findall(r"https?://(?:www\.)?(?:youtu\.be|youtube\.com)/[^\s)>\]]+", md.read_text(encoding="utf-8"))
+        if found:
+            links[str(md.relative_to(ROOT))] = set(found)
+    assert set().union(*links.values()) == {VIDEO}
+    assert {"README.md", "README.en.md", "demo_video/README.md"} <= set(links)
+    for readme in ("README.md", "README.en.md"):
+        text = (ROOT / readme).read_text(encoding="utf-8")
+        assert VIDEO in "\n".join(text.splitlines()[:5]), f"{readme} does not link the video in its first lines"
+        assert f"](demo_video/poster.png)]({VIDEO})" in text, f"{readme}: the poster does not lead to the video"
