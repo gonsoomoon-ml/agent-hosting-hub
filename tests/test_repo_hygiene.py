@@ -175,7 +175,7 @@ def test_the_spikes_are_records_that_no_command_runs():
     readme = (ROOT / "e2e_checks/spikes/README.md").read_text(encoding="utf-8")
     for name in ("spike_cli_in_codebuild.py", "spike_terraform/", "spike_operations.py"):
         assert name in readme
-    assert "2026-11-22" in readme and "돌리지 않는다" in readme
+    assert "2026-11-22" in readme and "돌리지 않습니다" in readme
     users = [str(f.relative_to(ROOT)) for f in _text_files()
              if "e2e_checks/spikes/" not in str(f) and f.suffix != ".md" and f.name != "test_repo_hygiene.py"
              and re.search(r"spike_(?:cli_in_codebuild|terraform|operations)", f.read_text(encoding="utf-8", errors="ignore"))]
