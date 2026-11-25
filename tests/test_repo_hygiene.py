@@ -272,3 +272,24 @@ def test_every_link_in_the_readmes_and_the_pages_leads_to_a_file_and_a_heading()
                 assert anchor in {_anchor(h) for h in headings}, f"{where}, a heading the file does not have"
             seen += 1
     assert seen >= 60
+
+
+# ---------------------------------------------------------------- the demo video's address
+VIDEO = "https://youtu.be/cp0YKgAmrxM"
+
+
+def test_the_documents_link_one_video():
+    """The narrated demo video is on YouTube under one address. Every YouTube link in the documents is that address,
+    both top-level READMEs carry it in their first lines and on the poster, and the page on the video's build carries
+    it. A video that is uploaded anew gets a new address, and then every place has to follow."""
+    links = {}
+    for md in (f for f in repo_files() if f.suffix == ".md"):
+        found = re.findall(r"https?://(?:www\.)?(?:youtu\.be|youtube\.com)/[^\s)>\]]+", md.read_text(encoding="utf-8"))
+        if found:
+            links[str(md.relative_to(ROOT))] = set(found)
+    assert set().union(*links.values()) == {VIDEO}
+    assert {"README.md", "README.en.md", "demo_video/README.md"} <= set(links)
+    for readme in ("README.md", "README.en.md"):
+        text = (ROOT / readme).read_text(encoding="utf-8")
+        assert VIDEO in "\n".join(text.splitlines()[:5]), f"{readme} does not link the video in its first lines"
+        assert f"](demo_video/poster.png)]({VIDEO})" in text, f"{readme}: the poster does not lead to the video"

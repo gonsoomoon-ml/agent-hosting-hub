@@ -1,6 +1,6 @@
 # AI 에이전트 호스팅 허브
 
-한국어 | [English](README.en.md)
+한국어 | [English](README.en.md) | [시연 영상 (YouTube)](https://youtu.be/cp0YKgAmrxM)
 
 Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳에 올리고 관리하는 허브를 만든다.
 플랫폼팀은 허브(게이트웨이, 정책, 카탈로그)를 만들고, 개발팀은 에이전트를 만들어 허브에 올린다.
@@ -14,7 +14,9 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 
 ## 영상
 
-![허브의 시연 영상의 한 장면: release_review의 호스팅 심사가 일곱 단계를 지나는 화면](demo_video/poster.png)
+[![허브의 시연 영상의 한 장면: release_review의 호스팅 심사가 일곱 단계를 지나는 화면](demo_video/poster.png)](https://youtu.be/cp0YKgAmrxM)
+
+해설이 든 전체 영상(15분 16초, 한국어 해설과 자막)은 YouTube에서 볼 수 있다: <https://youtu.be/cp0YKgAmrxM>. 위의 그림을 눌러도 열린다.
 
 허브를 시연하는 영상을 2026-11-23에 녹화했다. 전체 영상(10분 50초)과 단계별 영상 다섯(55초에서 3분 31초)이 있고, 위의 그림은 전체 영상의 한 장면이다.
 
@@ -26,6 +28,8 @@ Amazon Bedrock AgentCore 위에서 여러 개발팀의 AI 에이전트를 한곳
 - 5단계: 반복 호출하는 버전이 심사를 통과해 답하지 않고 도구 호출 경보가 울리며, 그 에이전트 하나만 멈추고 이웃은 답한다. Claude Code가 로그와 코드를 읽어 원인을 찾고, 고친 버전이 멈춘 채로 승인되고, 재개하면 다시 답한다.
 
 영상 파일은 이 저장소에 들어 있지 않다. 영상의 원본은 `demo_video/`에 있다. 장면마다의 스토리보드, 모든 자막이 든 편집 스크립트(`demo_video/scripts/build.py`), 개발자 PC(`demo_video/tools/dev_pc`)다. 어느 단계를 몇 번 녹화했고 무엇을 잘라 냈는지는 [`demo_video/README.md`](demo_video/README.md)에 있다. 영상을 녹화한 허브는 그 뒤에 지웠다. 허브를 올리고 확인하는 데(`make deploy`, `make e2e`, `make e2e-ops`)는 이 폴더도 `demo_scenes/`도 필요하지 않다.
+
+2026-11-24에 같은 여섯 영상에 한국어 해설(Amazon Polly의 음성)과 빨간 강조 상자를 넣은 영상을 따로 만들었다(전체 영상 15분 16초). 해설은 화면에 보이는 것이나 이 저장소의 README에 적힌 것만 말한다. 빨간 상자는 허브 화면과 Claude Code의 화면에 있고, 해설이 가리키는 곳 가운데 29곳을 둘러싼다. 개발자의 셸과 사용자의 셸 장면에는 상자가 없다. 이 영상도 저장소에 들어 있지 않다. 그 가운데 전체 영상은 YouTube에 올렸다(이 절 맨 위의 링크). 만든 법과 검사, 그 한계는 [`demo_video/README.md`](demo_video/README.md)에 있다. 만든 사람은 그 소리를 듣지 않았다.
 
 ## 빠른 시작
 

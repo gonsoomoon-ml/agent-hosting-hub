@@ -1,6 +1,6 @@
 # AI Agent Hosting Hub
 
-[한국어](README.md) | English
+[한국어](README.md) | English | [Demo video (YouTube, in Korean)](https://youtu.be/cp0YKgAmrxM)
 
 This is a short English version of the Korean [README.md](README.md), with the same sections. The detailed pages under `docs/`, the other READMEs, the pictures and the video are in Korean only (the hub screen has an English switch).
 
@@ -16,9 +16,11 @@ The concept picture draws the two flows as boxes and numbered arrows. Flow 1 (ho
 
 ## The video
 
-![A frame of the hub's demo video: release_review's hosting review passing the seven steps](demo_video/poster.png)
+[![A frame of the hub's demo video: release_review's hosting review passing the seven steps](demo_video/poster.png)](https://youtu.be/cp0YKgAmrxM)
 
-A video that demonstrates the hub was recorded on 2026-11-23. There is a full video (10 minutes 50 seconds) and five videos, one per stage (55 seconds to 3 minutes 31 seconds), and the picture above is one frame of the full reel.
+The full video with the narration (15 minutes 16 seconds; narration and captions in Korean) is on YouTube: <https://youtu.be/cp0YKgAmrxM>. Clicking the picture above opens it too.
+
+A video that demonstrates the hub was recorded on 2026-11-23. There is a full video (10 minutes 50 seconds) and five videos, one per stage (55 seconds to 3 minutes 31 seconds), and the picture above is one frame of the full video.
 
 - Preparation: the hub screen's home.
 - Stage 1: Claude Code on the developer PC finds the shared tools in the catalog's MCP server and makes the files of `quality_agent` from the standard template (it does not run or upload them), and the developer applies for `release_review` and the vulnerable version of `quality_agent`.
@@ -28,6 +30,8 @@ A video that demonstrates the hub was recorded on 2026-11-23. There is a full vi
 - Stage 5: a version that repeats its tool call passes the review but does not answer, and the tool-call alarm goes off; only that one agent is stopped and its neighbors answer. Claude Code reads the logs and the code and points to the cause, the fixed version is approved while still stopped, and after it is resumed it answers again.
 
 The video file is not in this repository. The sources of the video are in `demo_video/`: the storyboard of each scene, the editing script that holds every caption (`demo_video/scripts/build.py`), and the developer PC (`demo_video/tools/dev_pc`). Which stage was recorded how many times and what was cut is in [`demo_video/README.md`](demo_video/README.md). The hub the video was recorded on was deleted afterwards. Putting the hub up and checking it (`make deploy`, `make e2e`, `make e2e-ops`) needs neither this folder nor `demo_scenes/`.
+
+On 2026-11-24 the same six videos were made a second time with a Korean narration (an Amazon Polly voice) and red highlight boxes (the full video is 15 minutes 16 seconds). The narration says only what the screen shows or what a README of this repository states. The red boxes are on the hub's pages and on Claude Code's screen, where they surround 29 of the places the narration points at. The scenes in the developer's shell and the user's shell have none. These videos are not in the repository either. Of them, the full video is on YouTube (the link at the top of this section). How they are built, their checks and the limits of those checks are in [`demo_video/README.md`](demo_video/README.md) (in Korean). The person who built them did not listen to the sound.
 
 ## Quick start
 
