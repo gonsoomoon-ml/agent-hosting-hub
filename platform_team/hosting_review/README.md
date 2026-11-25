@@ -6,6 +6,52 @@
 
 [개념도](../../docs/hosting-hub-concept.png)의 흐름 1의 "호스팅 심사" 상자입니다. ③ "심사 시작"에서 시작해 ④ "에이전트에 도구 권한 부여"(Grant), ⑤ "에이전트 배포"(Deploy), ⑥의 6a "요청 허용"과 6b "승인 표시"(Approve)를 하고, 실패하면 ④-1 "심사 실패 알림"(점선)으로 빠집니다. Read와 Scan은 상자 안의 "자동 점검"입니다.
 
+## 흐름
+
+```
+개발팀: publish.sh my_agent
+  │  카탈로그 레코드 → PENDING_APPROVAL
+  ▼
+EventBridge rule <prefix>-on-submit
+  │
+  ▼
+Step Functions <prefix>-review   (순서와 실패 갈림만 맡고, 일은 단계마다 따로 합니다)
+  │
+  ├─1 Read      Lambda     신청서를 확인합니다 (이름, 칸의 모양, 정책 이름 48자)
+  ├─2 Scan      CodeBuild  제출 코드를 풀어 검사합니다 (requirements.txt 규칙, pip-audit)
+  ├─3 Grant     Lambda     실행 역할과 도구 정책을 만듭니다 (권한 경계 안에서만)
+  ├─4 Deploy    CodeBuild  Runtime <prefix>_<에이전트>를 만들거나 고칩니다
+  ├─5 Entry     Lambda     에이전트 게이트웨이에 target을 만들고 review_permit, guard_secret을 겁니다
+  ├─6 TestCall  Lambda     에이전트를 두 번 불러 봅니다
+  └─7 Approve   Lambda     entry_permit을 걸고 레코드를 APPROVED로 바꿉니다
+                   │
+                   ▼
+           사용자가 에이전트를 부를 수 있습니다
+
+어느 단계든 실패하면
+  → 알림 주제 <prefix>-alerts: "Hosting review failed at <단계>"
+  → 레코드는 PENDING_APPROVAL에 남고, 허브는 되돌리지 않습니다
+  → 플랫폼팀: reject.sh <에이전트> "<사유>" → REJECTED가 되고, 심사가 남긴 것을 지웁니다
+```
+
+제출된 코드를 여는 단계와 권한을 주는 단계를 나눴습니다. 그래서 제출된 코드가 스스로 권한을 얻을 수 없습니다.
+
+```
+제출된 코드를 여는 단계      Scan, Deploy  (CodeBuild)
+  └─ 역할에 권한을 주는 action이 없습니다
+     → 코드에 무엇이 들어 있어도 권한을 만들 수 없습니다
+
+권한을 주는 단계             Grant, Entry, Approve  (Lambda)
+  └─ 제출된 코드를 열지 않습니다
+     → 신청서에 적힌 칸만 보고 권한을 줍니다
+
+같은 코드
+  └─ Scan과 Deploy는 신청서에 적힌 S3 object version 하나만 읽습니다
+     → 검사한 코드와 배포하는 코드가 같습니다
+```
+
+실패했을 때 남는 것과 할 일은 [심사가 실패했을 때](#심사가-실패했을-때)와 [반려](#반려)에 있습니다.
+
 ## 일곱 단계
 
 | # | 단계 | AWS 서비스 | 하는 일 | 실패하는 경우 |
